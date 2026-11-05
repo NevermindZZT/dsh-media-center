@@ -306,7 +306,7 @@ export class MediaEngine {
   }
 
   // Scan a directory recursively and import videos into multi-level folders
-  async scanAndImportDirectory(dirPath, rootFolderId = null) {
+  async scanAndImportDirectory(dirPath, targetParentFolderId = null) {
     if (!fs.existsSync(dirPath)) {
       throw new Error(`Directory does not exist: ${dirPath}`);
     }
@@ -329,7 +329,7 @@ export class MediaEngine {
           if (videoExts.has(ext)) {
             // Determine folder
             const folderRelPath = relativePrefix ? `${rootDirName}/${relativePrefix}` : rootDirName;
-            const folder = this.db.ensureFolder(folderRelPath, currentDir);
+            const folder = this.db.ensureFolder(folderRelPath, currentDir, targetParentFolderId);
 
             // Probe video parameters
             const meta = await this.probeVideo(fullPath);

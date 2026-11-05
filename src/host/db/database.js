@@ -203,19 +203,29 @@ export class VideoDatabase {
   }
 
   // ================= Folder Methods =================
-  ensureFolder(relativePath, sourceDirPath = null) {
-    // relativePath e.g. "甘南环线旅游/扎尕那"
+  ensureFolder(relativePath, sourceDirPath = null, baseParentId = null) {
+    // relativePath e.g. "扎尕那" or "1004-洛克之路"
     const parts = relativePath.split(/[/\\]/).filter(Boolean);
     if (parts.length === 0) return null;
 
     let parentId = null;
     let accumulatedPath = '';
     let currentFolder = null;
+    let baseLevel = 0;
+
+    if (baseParentId) {
+      const baseParent = this.db.prepare('SELECT * FROM folders WHERE id = ?').get(baseParentId);
+      if (baseParent) {
+        parentId = baseParent.id;
+        accumulatedPath = baseParent.relative_path;
+        baseLevel = baseParent.level;
+      }
+    }
 
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       accumulatedPath = accumulatedPath ? `${accumulatedPath}/${part}` : part;
-      const level = i + 1;
+      const level = baseLevel + i + 1;
 
       let row = this.db.prepare('SELECT * FROM folders WHERE relative_path = ?').get(accumulatedPath);
       if (!row) {

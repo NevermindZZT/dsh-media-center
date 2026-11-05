@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
       clapperboard: (props) => h('svg', {
         width: props?.size || 16, height: props?.size || 16, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('rect', { x: 2, y: 4, width: 20, height: 16, rx: 2 }),
         h('line', { x1: 2, y1: 8, x2: 22, y2: 8 }),
@@ -36,14 +36,14 @@ window.__ModuleLoader__.load({
       folder: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z' })
       ),
       folderPlus: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z' }),
         h('line', { x1: 12, y1: 11, x2: 12, y2: 17 }),
@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
       film: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('rect', { x: 2, y: 2, width: 20, height: 20, rx: 2.18 }),
         h('line', { x1: 7, y1: 2, x2: 7, y2: 22 }),
@@ -67,14 +67,14 @@ window.__ModuleLoader__.load({
         width: props?.size || 12, height: props?.size || 12, viewBox: '0 0 24 24',
         fill: props?.fill || 'currentColor', stroke: props?.color || 'currentColor', strokeWidth: 2,
         strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('polygon', { points: '5 3 19 12 5 21 5 3' })
       ),
       settings: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('circle', { cx: 12, cy: 12, r: 3 }),
         h('path', { d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z' })
@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
       scissors: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('circle', { cx: 6, cy: 6, r: 3 }),
         h('circle', { cx: 6, cy: 18, r: 3 }),
@@ -93,7 +93,7 @@ window.__ModuleLoader__.load({
       sparkles: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'm12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z' }),
         h('path', { d: 'M5 3v4' }),
@@ -104,7 +104,7 @@ window.__ModuleLoader__.load({
       plus: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('line', { x1: 12, y1: 5, x2: 12, y2: 19 }),
         h('line', { x1: 5, y1: 12, x2: 19, y2: 12 })
@@ -112,7 +112,7 @@ window.__ModuleLoader__.load({
       upload: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
         h('polyline', { points: '17 8 12 3 7 8' }),
@@ -121,7 +121,7 @@ window.__ModuleLoader__.load({
       trash: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('polyline', { points: '3 6 5 6 21 6' }),
         h('path', { d: 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' }),
@@ -131,7 +131,7 @@ window.__ModuleLoader__.load({
       move: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'm5 9-3 3 3 3' }),
         h('path', { d: 'm9 5 3-3 3 3' }),
@@ -143,14 +143,14 @@ window.__ModuleLoader__.load({
       check: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('polyline', { points: '20 6 9 17 4 12' })
       ),
       arrowLeft: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('line', { x1: 19, y1: 12, x2: 5, y2: 12 }),
         h('polyline', { points: '12 19 5 12 12 5' })
@@ -158,7 +158,7 @@ window.__ModuleLoader__.load({
       moreVertical: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('circle', { cx: 12, cy: 12, r: 1.5, fill: 'currentColor' }),
         h('circle', { cx: 12, cy: 5, r: 1.5, fill: 'currentColor' }),
@@ -167,16 +167,30 @@ window.__ModuleLoader__.load({
       moreHorizontal: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('circle', { cx: 12, cy: 12, r: 1.5, fill: 'currentColor' }),
         h('circle', { cx: 5, cy: 12, r: 1.5, fill: 'currentColor' }),
         h('circle', { cx: 19, cy: 12, r: 1.5, fill: 'currentColor' })
       ),
+      chevronDown: (props) => h('svg', {
+        width: props?.size || 13, height: props?.size || 13, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
+      },
+        h('polyline', { points: '6 9 12 15 18 9' })
+      ),
+      chevronRight: (props) => h('svg', {
+        width: props?.size || 13, height: props?.size || 13, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
+      },
+        h('polyline', { points: '9 18 15 12 9 6' })
+      ),
       music: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'M9 18V5l12-2v13' }),
         h('circle', { cx: 6, cy: 18, r: 3 }),
@@ -185,7 +199,7 @@ window.__ModuleLoader__.load({
       volumeX: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('polygon', { points: '11 5 6 9 2 9 2 15 6 15 11 19 11 5' }),
         h('line', { x1: 23, y1: 9, x2: 17, y2: 15 }),
@@ -194,14 +208,14 @@ window.__ModuleLoader__.load({
       messageSquare: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' })
       ),
       hardDrive: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('line', { x1: 22, y1: 12, x2: 2, y2: 12 }),
         h('path', { d: 'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z' }),
@@ -211,22 +225,15 @@ window.__ModuleLoader__.load({
       arrowUp: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('line', { x1: 12, y1: 19, x2: 12, y2: 5 }),
         h('polyline', { points: '5 12 12 5 19 12' })
       ),
-      chevronRight: (props) => h('svg', {
-        width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
-        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
-      },
-        h('polyline', { points: '9 18 15 12 9 6' })
-      ),
       compass: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('circle', { cx: 12, cy: 12, r: 10 }),
         h('polygon', { points: '16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76' })
@@ -234,7 +241,7 @@ window.__ModuleLoader__.load({
       edit: (props) => h('svg', {
         width: props?.size || 13, height: props?.size || 13, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('path', { d: 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7' }),
         h('path', { d: 'M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z' })
@@ -242,7 +249,7 @@ window.__ModuleLoader__.load({
       grid: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('rect', { x: 3, y: 3, width: 7, height: 7 }),
         h('rect', { x: 14, y: 3, width: 7, height: 7 }),
@@ -252,9 +259,22 @@ window.__ModuleLoader__.load({
       zap: (props) => h('svg', {
         width: props?.size || 12, height: props?.size || 12, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
       },
         h('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' })
+      ),
+      loader: (props) => h('svg', {
+        width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: {
+          display: 'inline-block',
+          verticalAlign: 'middle',
+          flexShrink: 0,
+          animation: 'spin 1s linear infinite'
+        }
+      },
+        h('style', null, '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'),
+        h('path', { d: 'M21 12a9 9 0 1 1-6.219-8.56' })
       )
     };
 
@@ -279,6 +299,13 @@ window.__ModuleLoader__.load({
       // Responsive state (mobile: < 840px)
       const isMobile = useIsMobile(840);
       const [mobileTab, setMobileTab] = useState('videos'); // 'folders' | 'videos' | 'detail'
+
+      // Left sidebar resizable width (desktop)
+      const [sidebarWidth, setSidebarWidth] = useState(260);
+      const isDraggingRef = useRef(false);
+
+      // Folder collapse state
+      const [collapsedFolderIds, setCollapsedFolderIds] = useState(new Set());
 
       // Data state
       const [status, setStatus] = useState(null);
@@ -311,6 +338,10 @@ window.__ModuleLoader__.load({
       const [activeVideoMenuId, setActiveVideoMenuId] = useState(null);
       const [singleMoveVideoId, setSingleMoveVideoId] = useState(null);
 
+      // Import Loading state (Prevents repeated submission and gives immediate feedback)
+      const [isImporting, setIsImporting] = useState(false);
+      const [importNotice, setImportNotice] = useState('');
+
       // AI Analysis Running States
       const [aiAnalyzingId, setAiAnalyzingId] = useState(null);
       const [isBatchAiAnalyzing, setIsBatchAiAnalyzing] = useState(false);
@@ -341,13 +372,14 @@ window.__ModuleLoader__.load({
       const [aiPromptTemplate, setAiPromptTemplate] = useState('');
       const [defaultPromptText, setDefaultPromptText] = useState('');
 
-      // Visual Filesystem Browser state
+      // Visual Filesystem Browser state (supports multi-selection)
       const [importTab, setImportTab] = useState('browse'); // 'browse' | 'manual'
       const [browserData, setBrowserData] = useState(null);
       const [browserLoading, setBrowserLoading] = useState(false);
-      const [selectedBrowserFile, setSelectedBrowserFile] = useState(null);
+      const [selectedBrowserFiles, setSelectedBrowserFiles] = useState(new Set()); // Set of selected filePaths
 
-      // Video Player ref
+      // Workbench root & Video Player refs
+      const workbenchRef = useRef(null);
       const videoRef = useRef(null);
 
       // Close open context menus on global click
@@ -358,6 +390,30 @@ window.__ModuleLoader__.load({
         };
         window.addEventListener('click', handleClickOutside);
         return () => window.removeEventListener('click', handleClickOutside);
+      }, []);
+
+      // Sidebar drag-to-resize listener with accurate relative clientX calculation
+      useEffect(() => {
+        const handleMouseMove = (e) => {
+          if (!isDraggingRef.current || !workbenchRef.current) return;
+          const rect = workbenchRef.current.getBoundingClientRect();
+          // Accurately calculate relative position from workbench left edge!
+          const relativeX = e.clientX - rect.left;
+          const newW = Math.max(180, Math.min(600, relativeX));
+          setSidebarWidth(newW);
+        };
+        const handleMouseUp = () => {
+          if (isDraggingRef.current) {
+            isDraggingRef.current = false;
+            document.body.style.userSelect = '';
+          }
+        };
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+          window.removeEventListener('mousemove', handleMouseMove);
+          window.removeEventListener('mouseup', handleMouseUp);
+        };
       }, []);
 
       // Flatten folder list for dropdowns
@@ -375,6 +431,22 @@ window.__ModuleLoader__.load({
         traverse(folders);
         return list;
       }, [folders]);
+
+      // Currently selected folder object
+      const currentSelectedFolder = useMemo(() => {
+        if (!selectedFolderId) return null;
+        const findNode = (items) => {
+          for (const item of items) {
+            if (item.id === selectedFolderId) return item;
+            if (item.children && item.children.length > 0) {
+              const res = findNode(item.children);
+              if (res) return res;
+            }
+          }
+          return null;
+        };
+        return findNode(folders);
+      }, [folders, selectedFolderId]);
 
       // 1. Load System Status
       const loadStatus = async () => {
@@ -452,7 +524,6 @@ window.__ModuleLoader__.load({
             setIsEditingShots(false);
             setIsEditingAudio(false);
             setIsEditingMeta(false);
-            // On mobile, auto navigate to detail view when video is chosen
             if (isMobile) {
               setMobileTab('detail');
             }
@@ -479,7 +550,7 @@ window.__ModuleLoader__.load({
       // 6. Load Local Filesystem Directory for Browser
       const loadBrowseDir = async (dirPath) => {
         setBrowserLoading(true);
-        setSelectedBrowserFile(null);
+        setSelectedBrowserFiles(new Set());
         try {
           const url = dirPath
             ? `/api/video-manager/fs/browse?dir=${encodeURIComponent(dirPath)}`
@@ -497,6 +568,25 @@ window.__ModuleLoader__.load({
         }
       };
 
+      // Toggle select for one video file in browser
+      const toggleBrowserFile = (filePath) => {
+        const next = new Set(selectedBrowserFiles);
+        if (next.has(filePath)) next.delete(filePath);
+        else next.add(filePath);
+        setSelectedBrowserFiles(next);
+      };
+
+      // Toggle select all video files in current browsing directory
+      const toggleSelectAllBrowserFiles = () => {
+        const allFiles = (browserData && browserData.video_files) || [];
+        if (allFiles.length === 0) return;
+        if (selectedBrowserFiles.size === allFiles.length) {
+          setSelectedBrowserFiles(new Set());
+        } else {
+          setSelectedBrowserFiles(new Set(allFiles.map(f => f.path)));
+        }
+      };
+
       useEffect(() => {
         loadStatus();
         loadFolders();
@@ -511,6 +601,15 @@ window.__ModuleLoader__.load({
         if (isMobile) {
           setMobileTab('videos');
         }
+      };
+
+      // Toggle folder collapse
+      const toggleFolderCollapse = (folderId, e) => {
+        e.stopPropagation();
+        const next = new Set(collapsedFolderIds);
+        if (next.has(folderId)) next.delete(folderId);
+        else next.add(folderId);
+        setCollapsedFolderIds(next);
       };
 
       // Direct Multi-modal AI Video Analysis
@@ -785,15 +884,23 @@ window.__ModuleLoader__.load({
         }
       };
 
+      // Scan directory with feedback & parent_id propagation
       const handleScanDirectory = async (customPath) => {
+        if (isImporting) return; // Prevent double submit
         const targetPath = (customPath || scanDirPath || '').trim();
         if (!targetPath) return;
-        setLoading(true);
+
+        setIsImporting(true);
+        setImportNotice('正在抽取视频参数并生成 4x4 故事板大图，请稍候...');
+
         try {
           const res = await fetch('/api/video-manager/folders/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ directory_path: targetPath })
+            body: JSON.stringify({
+              directory_path: targetPath,
+              parent_id: selectedFolderId || null
+            })
           });
           const data = await res.json();
           if (data.success) {
@@ -807,22 +914,31 @@ window.__ModuleLoader__.load({
         } catch (e) {
           alert('扫描异常: ' + e.message);
         } finally {
-          setLoading(false);
+          setIsImporting(false);
+          setImportNotice('');
         }
       };
 
-      const handleImportSingleFile = async (filePath) => {
-        if (!filePath) return;
-        setLoading(true);
+      // Import selected video files directly (supports multiple / select all)
+      const handleImportSelectedFiles = async (filePathsOverride) => {
+        const targetPaths = filePathsOverride || Array.from(selectedBrowserFiles);
+        if (isImporting || !targetPaths || targetPaths.length === 0) return;
+
+        setIsImporting(true);
+        setImportNotice(`正在导入 ${targetPaths.length} 个视频并抽取故事板，请稍候...`);
+
         try {
           const res = await fetch('/api/video-manager/videos/import-files', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_paths: [filePath], folder_id: selectedFolderId || null })
+            body: JSON.stringify({
+              file_paths: targetPaths,
+              folder_id: selectedFolderId || null
+            })
           });
           const data = await res.json();
           if (data.success) {
-            alert(`视频已成功导入！`);
+            alert(`成功导入 ${data.imported_count} 个视频！`);
             setShowScanModal(false);
             loadFolders();
             loadVideos(selectedFolderId, searchQuery, statusFilter);
@@ -832,7 +948,8 @@ window.__ModuleLoader__.load({
         } catch (e) {
           alert('导入异常: ' + e.message);
         } finally {
-          setLoading(false);
+          setIsImporting(false);
+          setImportNotice('');
         }
       };
 
@@ -905,7 +1022,8 @@ window.__ModuleLoader__.load({
         fontWeight: 500,
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '6px'
+        gap: '6px',
+        flexShrink: 0
       };
 
       const buttonSecondaryStyle = {
@@ -918,7 +1036,8 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '6px'
+        gap: '6px',
+        flexShrink: 0
       };
 
       const buttonGhostStyle = {
@@ -931,7 +1050,8 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        flexShrink: 0
       };
 
       const buttonDangerStyle = {
@@ -944,7 +1064,8 @@ window.__ModuleLoader__.load({
         cursor: 'pointer',
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '6px'
+        gap: '6px',
+        flexShrink: 0
       };
 
       const workbenchStyle = {
@@ -977,15 +1098,18 @@ window.__ModuleLoader__.load({
         position: 'relative'
       };
 
-      // Desktop vs Mobile responsive column styles
+      // Desktop Resizable vs Mobile column styles
       const leftColStyle = {
-        width: isMobile ? '100%' : '240px',
+        width: isMobile ? '100%' : `${sidebarWidth}px`,
+        minWidth: isMobile ? '100%' : '180px',
+        maxWidth: isMobile ? '100%' : '500px',
         borderRight: isMobile ? 'none' : '1px solid var(--dsw-alias-border-l1)',
         display: (!isMobile || mobileTab === 'folders') ? 'flex' : 'none',
         flexDirection: 'column',
         backgroundColor: 'var(--dsw-alias-bg-layer-1)',
         height: '100%',
-        overflowY: 'auto'
+        overflowY: 'auto',
+        overflowX: 'hidden'
       };
 
       const midColStyle = {
@@ -1032,7 +1156,6 @@ window.__ModuleLoader__.load({
         zIndex: 2000
       };
 
-      // Modal responsive card style
       const modalCardStyle = {
         width: isMobile ? '95vw' : '660px',
         maxWidth: '95vw',
@@ -1091,15 +1214,17 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // Render Folder Recursive Tree
+      // Render Folder Recursive Tree (with Collapse/Expand & Icon Shrink Protection)
       const renderFolderNode = (folder, depth = 0) => {
         const isSelected = selectedFolderId === folder.id;
         const isMenuOpen = activeFolderMenuId === folder.id;
+        const hasChildren = folder.children && folder.children.length > 0;
+        const isCollapsed = collapsedFolderIds.has(folder.id);
 
         return h('div', { key: folder.id, style: { position: 'relative' } },
           h('div', {
             style: {
-              padding: `8px 8px 8px ${10 + depth * 14}px`,
+              padding: `7px 6px 7px ${6 + depth * 12}px`,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -1113,21 +1238,55 @@ window.__ModuleLoader__.load({
             },
             onClick: () => handleFolderSelect(folder.id)
           },
-            h('span', {
+            // Left block: Collapse arrow + Folder icon + Text (Guaranteed flexShrink: 0 on icons!)
+            h('div', {
               style: {
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                fontWeight: isSelected ? 600 : 400
+                gap: '4px',
+                flex: 1,
+                minWidth: 0,
+                overflow: 'hidden'
               }
             },
-              Icon.folder({ size: 14, color: isSelected ? '#2563eb' : '#3b82f6' }),
-              folder.name
+              // Expand/Collapse Triangle
+              hasChildren
+                ? h('button', {
+                    title: isCollapsed ? '展开子目录' : '折叠子目录',
+                    onClick: (e) => toggleFolderCollapse(folder.id, e),
+                    style: {
+                      background: 'none',
+                      border: 'none',
+                      padding: '2px',
+                      cursor: 'pointer',
+                      color: 'var(--dsw-alias-label-secondary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      flexShrink: 0
+                    }
+                  },
+                    isCollapsed ? Icon.chevronRight({ size: 11 }) : Icon.chevronDown({ size: 11 })
+                  )
+                : h('span', { style: { width: '15px', flexShrink: 0 } }),
+              // Fixed-size Folder Icon (Never squeezed out!)
+              h('span', { style: { flexShrink: 0, display: 'inline-flex', alignItems: 'center' } },
+                Icon.folder({ size: 14, color: isSelected ? '#2563eb' : '#3b82f6' })
+              ),
+              // Name with ellipsis and title tooltip
+              h('span', {
+                title: folder.name,
+                style: {
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontWeight: isSelected ? 600 : 400,
+                  flex: 1
+                }
+              }, folder.name)
             ),
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } },
+
+            // Right block: Counts + More Menu Button
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '3px', flexShrink: 0 } },
               h('span', {
                 style: {
                   fontSize: '11px',
@@ -1143,14 +1302,14 @@ window.__ModuleLoader__.load({
                   e.stopPropagation();
                   setActiveFolderMenuId(isMenuOpen ? null : folder.id);
                 },
-                style: { ...buttonGhostStyle, padding: '4px' }
+                style: { ...buttonGhostStyle, padding: '2px 4px' }
               }, Icon.moreVertical({ size: 13 }))
             )
           ),
 
           // Folder Popup Menu
           isMenuOpen && h('div', {
-            style: { ...contextMenuStyle, top: '30px', right: '10px' },
+            style: { ...contextMenuStyle, top: '28px', right: '10px' },
             onClick: (e) => e.stopPropagation()
           },
             h('div', {
@@ -1183,12 +1342,13 @@ window.__ModuleLoader__.load({
             }, Icon.trash({ size: 12, color: '#ef4444' }), '删除分类')
           ),
 
-          folder.children && folder.children.length > 0 &&
+          // Render Children when NOT collapsed
+          hasChildren && !isCollapsed &&
             h('div', null, folder.children.map(child => renderFolderNode(child, depth + 1)))
         );
       };
 
-      return h('div', { style: workbenchStyle },
+      return h('div', { ref: workbenchRef, style: workbenchStyle },
         // Topbar
         h('div', { style: topbarStyle },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
@@ -1217,7 +1377,7 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        // Mobile View Navigation Switcher (Only visible on small screen / mobile)
+        // Mobile View Navigation Switcher
         isMobile && h('div', {
           style: {
             display: 'flex',
@@ -1259,7 +1419,7 @@ window.__ModuleLoader__.load({
         h('div', { style: bodyStyle },
           // Left Column: Folders
           h('div', { style: leftColStyle },
-            h('div', { style: { padding: '10px', display: 'flex', gap: '6px' } },
+            h('div', { style: { padding: '10px', display: 'flex', gap: '6px', flexShrink: 0 } },
               h('button', {
                 style: { ...buttonPrimaryStyle, flex: 1 },
                 onClick: () => {
@@ -1270,24 +1430,25 @@ window.__ModuleLoader__.load({
               h('button', {
                 style: buttonSecondaryStyle,
                 onClick: () => {
-                  setNewFolderParentId('');
+                  setNewFolderParentId(selectedFolderId || '');
                   setShowNewFolderModal(true);
                 }
               }, Icon.plus({ size: 13 }), '分类')
             ),
             h('div', {
               style: {
-                padding: '8px 12px',
+                padding: '8px 10px',
                 cursor: 'pointer',
                 backgroundColor: selectedFolderId === null ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
                 color: 'var(--dsw-alias-label-primary)',
                 fontSize: '13px',
                 fontWeight: 500,
                 borderRadius: '5px',
-                margin: '2px 6px',
+                margin: '2px 4px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px'
+                gap: '8px',
+                flexShrink: 0
               },
               onClick: () => handleFolderSelect(null)
             },
@@ -1298,6 +1459,25 @@ window.__ModuleLoader__.load({
               folders.map(f => renderFolderNode(f))
             )
           ),
+
+          // Resizer Handle (Between Left and Middle Column on Desktop)
+          !isMobile && h('div', {
+            style: {
+              width: '5px',
+              backgroundColor: 'transparent',
+              cursor: 'col-resize',
+              transition: 'background-color 0.15s ease',
+              flexShrink: 0,
+              zIndex: 10
+            },
+            onMouseEnter: (e) => e.currentTarget.style.backgroundColor = '#2563eb',
+            onMouseLeave: (e) => { if (!isDraggingRef.current) e.currentTarget.style.backgroundColor = 'transparent'; },
+            onMouseDown: (e) => {
+              isDraggingRef.current = true;
+              document.body.style.userSelect = 'none';
+              e.preventDefault();
+            }
+          }),
 
           // Middle Column: Video Grid with Batch Operations & Audit Tags
           h('div', { style: midColStyle },
@@ -2438,7 +2618,7 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        // 3. Upgraded Import Modal
+        // 3. Upgraded Import Modal with Parent Folder Display & Loading Feedback
         showScanModal && h('div', { style: modalOverlayStyle },
           h('div', { style: modalCardStyle },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' } },
@@ -2449,13 +2629,56 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', gap: '6px' } },
                 h('button', {
                   style: importTab === 'browse' ? buttonPrimaryStyle : buttonSecondaryStyle,
+                  disabled: isImporting,
                   onClick: () => setImportTab('browse')
                 }, Icon.compass({ size: 13 }), '图形化选择'),
                 h('button', {
                   style: importTab === 'manual' ? buttonPrimaryStyle : buttonSecondaryStyle,
+                  disabled: isImporting,
                   onClick: () => setImportTab('manual')
                 }, Icon.edit({ size: 13 }), '手动填路径')
               )
+            ),
+
+            // Target Parent Folder Indicator (Fixes issue #2)
+            h('div', {
+              style: {
+                padding: '6px 10px',
+                backgroundColor: 'rgba(37, 99, 235, 0.08)',
+                border: '1px solid rgba(37, 99, 235, 0.25)',
+                borderRadius: '5px',
+                fontSize: '11px',
+                color: 'var(--dsw-alias-label-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }
+            },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                h('span', { style: { color: '#3b82f6', fontWeight: 600 } }, '归属分类:'),
+                h('span', null, currentSelectedFolder ? `将作为「${currentSelectedFolder.name}」的子目录导入` : '根目录 (作为顶级分类导入)')
+              ),
+              h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '10px' } },
+                selectedFolderId ? '在左侧点击其他分类可切换' : ''
+              )
+            ),
+
+            // Loading notification banner when importing
+            isImporting && h('div', {
+              style: {
+                padding: '8px 12px',
+                backgroundColor: 'rgba(234, 179, 8, 0.12)',
+                border: '1px solid rgba(234, 179, 8, 0.3)',
+                borderRadius: '5px',
+                color: '#eab308',
+                fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }
+            },
+              Icon.loader({ size: 14, color: '#eab308' }),
+              importNotice || '正在处理中，请稍候...'
             ),
 
             // Tab 1: Visual Browser
@@ -2464,6 +2687,7 @@ window.__ModuleLoader__.load({
                 (browserData.drive_roots || []).map((d, i) =>
                   h('button', {
                     key: 'drive_' + i,
+                    disabled: isImporting,
                     style: { ...buttonSecondaryStyle, padding: '3px 8px', fontSize: '11px' },
                     onClick: () => loadBrowseDir(d.path)
                   }, Icon.hardDrive({ size: 12 }), d.name)
@@ -2471,6 +2695,7 @@ window.__ModuleLoader__.load({
                 (browserData.quick_places || []).map((p, i) =>
                   h('button', {
                     key: 'quick_' + i,
+                    disabled: isImporting,
                     style: { ...buttonSecondaryStyle, padding: '3px 8px', fontSize: '11px' },
                     onClick: () => loadBrowseDir(p.path)
                   }, Icon.folder({ size: 12 }), p.name)
@@ -2490,6 +2715,7 @@ window.__ModuleLoader__.load({
                 }
               },
                 browserData.parent_path && h('button', {
+                  disabled: isImporting,
                   style: { ...buttonSecondaryStyle, padding: '2px 6px', fontSize: '11px' },
                   onClick: () => loadBrowseDir(browserData.parent_path)
                 }, Icon.arrowUp({ size: 12 }), '上一级'),
@@ -2537,7 +2763,7 @@ window.__ModuleLoader__.load({
                             },
                             onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
                             onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
-                            onClick: () => loadBrowseDir(folder.path)
+                            onClick: () => { if (!isImporting) loadBrowseDir(folder.path); }
                           },
                             h('span', { style: { fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '6px' } },
                               Icon.folder({ size: 14, color: '#3b82f6' }),
@@ -2557,8 +2783,40 @@ window.__ModuleLoader__.load({
                             )
                           )
                         ),
+                        // Video Files Header with Select All
+                        (browserData.video_files || []).length > 0 && h('div', {
+                          style: {
+                            padding: '6px 10px',
+                            backgroundColor: 'var(--dsw-alias-bg-layer-2)',
+                            borderRadius: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: '11px',
+                            marginTop: (browserData.folders || []).length > 0 ? '6px' : '0',
+                            marginBottom: '4px'
+                          }
+                        },
+                          h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } },
+                            h('input', {
+                              type: 'checkbox',
+                              disabled: isImporting,
+                              checked: (browserData.video_files || []).length > 0 && selectedBrowserFiles.size === browserData.video_files.length,
+                              onChange: toggleSelectAllBrowserFiles,
+                              style: { cursor: 'pointer' }
+                            }),
+                            h('span', { style: { fontWeight: 500 } },
+                              `全选当前目录所有视频 (${selectedBrowserFiles.size}/${browserData.video_files.length})`
+                            )
+                          ),
+                          selectedBrowserFiles.size > 0 && h('span', { style: { color: '#2563eb', fontWeight: 600 } },
+                            `已选 ${selectedBrowserFiles.size} 项`
+                          )
+                        ),
+
+                        // Video File Items with Multi-select Checkbox
                         (browserData.video_files || []).map(file => {
-                          const isSelectedFile = selectedBrowserFile && selectedBrowserFile.path === file.path;
+                          const isSelected = selectedBrowserFiles.has(file.path);
                           return h('div', {
                             key: file.path,
                             style: {
@@ -2568,22 +2826,43 @@ window.__ModuleLoader__.load({
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'space-between',
-                              backgroundColor: isSelectedFile ? '#2563eb' : 'transparent',
-                              color: isSelectedFile ? '#ffffff' : 'var(--dsw-alias-label-primary)',
+                              backgroundColor: isSelected ? 'rgba(37, 99, 235, 0.12)' : 'transparent',
+                              border: isSelected ? '1px solid rgba(37, 99, 235, 0.3)' : '1px solid transparent',
                               fontSize: '12px'
                             },
-                            onMouseEnter: (e) => { if (!isSelectedFile) e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)'; },
-                            onMouseLeave: (e) => { if (!isSelectedFile) e.currentTarget.style.backgroundColor = isSelectedFile ? '#2563eb' : 'transparent'; },
-                            onClick: () => setSelectedBrowserFile(isSelectedFile ? null : file)
+                            onMouseEnter: (e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)'; },
+                            onMouseLeave: (e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; },
+                            onClick: () => { if (!isImporting) toggleBrowserFile(file.path); }
                           },
-                            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
-                              Icon.film({ size: 14, color: isSelectedFile ? '#fff' : '#3b82f6' }),
-                              `${file.name} [${file.ext}]`
+                            h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 } },
+                              h('input', {
+                                type: 'checkbox',
+                                checked: isSelected,
+                                disabled: isImporting,
+                                onChange: () => {},
+                                onClick: (e) => {
+                                  e.stopPropagation();
+                                  if (!isImporting) toggleBrowserFile(file.path);
+                                },
+                                style: { cursor: 'pointer', flexShrink: 0 }
+                              }),
+                              Icon.film({ size: 14, color: isSelected ? '#2563eb' : '#3b82f6' }),
+                              h('span', {
+                                title: file.name,
+                                style: {
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                  color: isSelected ? '#2563eb' : 'var(--dsw-alias-label-primary)',
+                                  fontWeight: isSelected ? 600 : 400
+                                }
+                              }, `${file.name} [${file.ext}]`)
                             ),
                             h('span', {
                               style: {
                                 fontSize: '11px',
-                                color: isSelectedFile ? '#fff' : 'var(--dsw-alias-label-secondary)'
+                                color: 'var(--dsw-alias-label-secondary)',
+                                flexShrink: 0
                               }
                             }, formatFileSize(file.size))
                           );
@@ -2596,23 +2875,36 @@ window.__ModuleLoader__.load({
 
               // Action Toolbar
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '6px' } },
-                selectedBrowserFile
-                  ? h('div', { style: { fontSize: '12px', color: '#2563eb', fontWeight: 500 } }, `已选: ${selectedBrowserFile.name}`)
-                  : h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '未选特定视频，将导入当前文件夹内所有视频'),
+                selectedBrowserFiles.size > 0
+                  ? h('div', { style: { fontSize: '12px', color: '#2563eb', fontWeight: 600 } },
+                      `已选 ${selectedBrowserFiles.size} 个视频文件`
+                    )
+                  : h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } },
+                      '未勾选特定视频，将扫描导入当前文件夹及所有子目录'
+                    ),
                 h('div', { style: { display: 'flex', gap: '8px' } },
                   h('button', {
                     style: buttonSecondaryStyle,
+                    disabled: isImporting,
                     onClick: () => setShowScanModal(false)
                   }, '取消'),
-                  selectedBrowserFile
+                  selectedBrowserFiles.size > 0
                     ? h('button', {
                         style: buttonPrimaryStyle,
-                        onClick: () => handleImportSingleFile(selectedBrowserFile.path)
-                      }, Icon.upload({ size: 13 }), '导入所选视频文件')
+                        disabled: isImporting,
+                        onClick: () => handleImportSelectedFiles()
+                      },
+                        isImporting ? Icon.loader({ size: 13, color: '#fff' }) : Icon.upload({ size: 13 }),
+                        isImporting ? '导入处理中...' : `导入所选视频 (${selectedBrowserFiles.size}个)`
+                      )
                     : h('button', {
                         style: buttonPrimaryStyle,
+                        disabled: isImporting,
                         onClick: () => handleScanDirectory(browserData ? browserData.current_path : null)
-                      }, Icon.upload({ size: 13 }), '扫描导入当前文件夹')
+                      },
+                        isImporting ? Icon.loader({ size: 13, color: '#fff' }) : Icon.upload({ size: 13 }),
+                        isImporting ? '扫描处理中...' : '扫描导入当前文件夹'
+                      )
                 )
               )
             ),
@@ -2625,6 +2917,7 @@ window.__ModuleLoader__.load({
               h('input', {
                 type: 'text',
                 value: scanDirPath,
+                disabled: isImporting,
                 onChange: (e) => setScanDirPath(e.target.value),
                 placeholder: '例如: D:\\Footages\\甘南环线旅游',
                 style: { ...inputStyle, padding: '8px', fontSize: '13px' }
@@ -2632,12 +2925,17 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' } },
                 h('button', {
                   style: buttonSecondaryStyle,
+                  disabled: isImporting,
                   onClick: () => setShowScanModal(false)
                 }, '取消'),
                 h('button', {
                   style: buttonPrimaryStyle,
+                  disabled: isImporting,
                   onClick: () => handleScanDirectory(scanDirPath)
-                }, Icon.upload({ size: 13 }), '开始扫描导入')
+                },
+                  isImporting ? Icon.loader({ size: 13, color: '#fff' }) : Icon.upload({ size: 13 }),
+                  isImporting ? '扫描处理中...' : '开始扫描导入'
+                )
               )
             )
           )

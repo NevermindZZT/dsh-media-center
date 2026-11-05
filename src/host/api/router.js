@@ -152,7 +152,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         if (!body.directory_path) {
           return jsonResponse(res, { success: false, error: 'directory_path is required' }, 400);
         }
-        const scanResult = await mediaEngine.scanAndImportDirectory(body.directory_path);
+        const scanResult = await mediaEngine.scanAndImportDirectory(body.directory_path, body.parent_id || null);
         return jsonResponse(res, { success: true, ...scanResult });
       }
 
