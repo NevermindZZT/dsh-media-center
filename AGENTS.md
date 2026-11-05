@@ -14,10 +14,12 @@
 3. **允许清理的范围**：
    删除操作**仅允许清除 SQLite 数据库中的相关记录**，以及 `.dsh-video-manager/cache/` 下由本插件生成的临时衍生缓存（故事板大图 `storyboards/`、分镜关键帧 `keyframes/`、导出的草稿 `exports/`）。
 
-### 🛑 Git 提交纪律规范 (No Direct Commit Without Verification)
-- **严禁改动后直接私自执行 `git commit`！**
-- 每次代码或功能修改完成后，必须先在当前会话中呈现修改结果并由**用户亲自在 Web 界面或环境中验证**。
-- **只有在用户明确下达提交指令**（如“提交”、“可以 commit 了”、“打 tag 吧”等）后，Agent 方可执行 `git add` 和 `git commit`。未获明确批准前，保持工作区改动待核对状态。
+### 🛑 Git 提交与版本管理纪律规范 (Strict Commit & Versioning Rules)
+1. **必须验证后方可提交**：
+   严禁改动后私自执行 `git commit`！每次代码修改完成后，必须先在当前会话中呈现修改结果并由**用户亲自在 Web 界面或环境中验证**。
+2. **严禁擅自修改版本号与打 Tag**：
+   当用户下达“提交”、“提交改动”等常规指令时，**只执行普通的 `git add` 和 `git commit`**，**严禁擅自修改 package.json 版本号，严禁擅自创建 git tag**！
+   只有在用户**明确要求“改动版本号为 X”或“打 tag X”**时，方可修改版本号并打标签。未获明确指令前，版本号与 Tag 保持原样不变。
 
 ---
 

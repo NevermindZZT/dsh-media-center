@@ -4,6 +4,19 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const { useState, useEffect, useRef, useMemo, createElement: h } = React;
 
+    // --- Responsive Hook for Mobile Screen Detection ---
+    function useIsMobile(breakpoint = 840) {
+      const [isMobile, setIsMobile] = useState(
+        typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
+      );
+      useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < breakpoint);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+      }, [breakpoint]);
+      return isMobile;
+    }
+
     // --- Official Vector SVG Icons (No Emojis) ---
     const Icon = {
       clapperboard: (props) => h('svg', {
@@ -134,6 +147,14 @@ window.__ModuleLoader__.load({
       },
         h('polyline', { points: '20 6 9 17 4 12' })
       ),
+      arrowLeft: (props) => h('svg', {
+        width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle' }
+      },
+        h('line', { x1: 19, y1: 12, x2: 5, y2: 12 }),
+        h('polyline', { points: '12 19 5 12 12 5' })
+      ),
       moreVertical: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
@@ -234,22 +255,6 @@ window.__ModuleLoader__.load({
         style: { display: 'inline-block', verticalAlign: 'middle' }
       },
         h('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' })
-      ),
-      cpu: (props) => h('svg', {
-        width: props?.size || 12, height: props?.size || 12, viewBox: '0 0 24 24', fill: 'none',
-        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
-        style: { display: 'inline-block', verticalAlign: 'middle' }
-      },
-        h('rect', { x: 4, y: 4, width: 16, height: 16, rx: 2 }),
-        h('rect', { x: 9, y: 9, width: 6, height: 6 }),
-        h('line', { x1: 9, y1: 1, x2: 9, y2: 4 }),
-        h('line', { x1: 15, y1: 1, x2: 15, y2: 4 }),
-        h('line', { x1: 9, y1: 20, x2: 9, y2: 23 }),
-        h('line', { x1: 15, y1: 20, x2: 15, y2: 23 }),
-        h('line', { x1: 20, y1: 9, x2: 23, y2: 9 }),
-        h('line', { x1: 20, y1: 14, x2: 23, y2: 14 }),
-        h('line', { x1: 1, y1: 9, x2: 4, y2: 9 }),
-        h('line', { x1: 1, y1: 14, x2: 4, y2: 14 })
       )
     };
 
@@ -269,8 +274,12 @@ window.__ModuleLoader__.load({
       return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
     }
 
-    // --- Main Workbench View Component ---
+    // --- Main Workbench View Component with Mobile Responsive Layout ---
     function VideoManagerWorkbench() {
+      // Responsive state (mobile: < 840px)
+      const isMobile = useIsMobile(840);
+      const [mobileTab, setMobileTab] = useState('videos'); // 'folders' | 'videos' | 'detail'
+
       // Data state
       const [status, setStatus] = useState(null);
       const [folders, setFolders] = useState([]);
@@ -410,7 +419,9 @@ window.__ModuleLoader__.load({
           if (data.success) {
             setVideos(data.videos || []);
             if (data.videos.length > 0 && (!selectedVideo || !data.videos.find(v => v.id === selectedVideo.id))) {
-              loadVideoDetail(data.videos[0].id);
+              if (!isMobile) {
+                loadVideoDetail(data.videos[0].id);
+              }
             }
           }
         } catch (e) {
@@ -441,6 +452,10 @@ window.__ModuleLoader__.load({
             setIsEditingShots(false);
             setIsEditingAudio(false);
             setIsEditingMeta(false);
+            // On mobile, auto navigate to detail view when video is chosen
+            if (isMobile) {
+              setMobileTab('detail');
+            }
           }
         } catch (e) {
           console.error('Failed to load video detail', e);
@@ -493,6 +508,9 @@ window.__ModuleLoader__.load({
         setSelectedFolderId(folderId);
         setSelectedVideoIds(new Set());
         loadVideos(folderId, searchQuery, statusFilter);
+        if (isMobile) {
+          setMobileTab('videos');
+        }
       };
 
       // Direct Multi-modal AI Video Analysis
@@ -622,6 +640,7 @@ window.__ModuleLoader__.load({
           if (data.success) {
             if (selectedVideo && selectedVideo.id === videoId) {
               setSelectedVideo(null);
+              if (isMobile) setMobileTab('videos');
             }
             loadFolders();
             loadVideos(selectedFolderId, searchQuery, statusFilter);
@@ -940,44 +959,53 @@ window.__ModuleLoader__.load({
       };
 
       const topbarStyle = {
-        height: '48px',
+        minHeight: '48px',
         borderBottom: '1px solid var(--dsw-alias-border-l1)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 16px',
-        backgroundColor: 'var(--dsw-alias-bg-layer-1)'
+        padding: '0 12px',
+        backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+        flexWrap: 'wrap',
+        gap: '6px'
       };
 
       const bodyStyle = {
         display: 'flex',
         flex: 1,
-        overflow: 'hidden'
+        overflow: 'hidden',
+        position: 'relative'
       };
 
+      // Desktop vs Mobile responsive column styles
       const leftColStyle = {
-        width: '240px',
-        borderRight: '1px solid var(--dsw-alias-border-l1)',
-        display: 'flex',
+        width: isMobile ? '100%' : '240px',
+        borderRight: isMobile ? 'none' : '1px solid var(--dsw-alias-border-l1)',
+        display: (!isMobile || mobileTab === 'folders') ? 'flex' : 'none',
         flexDirection: 'column',
-        backgroundColor: 'var(--dsw-alias-bg-layer-1)'
+        backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+        height: '100%',
+        overflowY: 'auto'
       };
 
       const midColStyle = {
         flex: 1,
-        display: 'flex',
+        width: isMobile ? '100%' : 'auto',
+        display: (!isMobile || mobileTab === 'videos') ? 'flex' : 'none',
         flexDirection: 'column',
-        borderRight: '1px solid var(--dsw-alias-border-l1)',
+        borderRight: isMobile ? 'none' : '1px solid var(--dsw-alias-border-l1)',
         backgroundColor: 'var(--dsw-alias-bg-base)',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        height: '100%'
       };
 
       const rightColStyle = {
-        width: '440px',
-        display: 'flex',
+        width: isMobile ? '100%' : '440px',
+        display: (!isMobile || mobileTab === 'detail') ? 'flex' : 'none',
         flexDirection: 'column',
         backgroundColor: 'var(--dsw-alias-bg-layer-1)',
-        overflowY: 'auto'
+        overflowY: 'auto',
+        height: '100%'
       };
 
       const inputStyle = {
@@ -1004,13 +1032,14 @@ window.__ModuleLoader__.load({
         zIndex: 2000
       };
 
+      // Modal responsive card style
       const modalCardStyle = {
-        width: '680px',
-        maxWidth: '92vw',
-        maxHeight: '85vh',
+        width: isMobile ? '95vw' : '660px',
+        maxWidth: '95vw',
+        maxHeight: isMobile ? '90vh' : '85vh',
         backgroundColor: 'var(--dsw-alias-bg-layer-1)',
         color: 'var(--dsw-alias-label-primary)',
-        padding: '20px',
+        padding: isMobile ? '14px' : '20px',
         borderRadius: '10px',
         border: '1px solid var(--dsw-alias-border-l2)',
         boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
@@ -1062,7 +1091,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // Render Folder Recursive Tree with Action Menu Button
+      // Render Folder Recursive Tree
       const renderFolderNode = (folder, depth = 0) => {
         const isSelected = selectedFolderId === folder.id;
         const isMenuOpen = activeFolderMenuId === folder.id;
@@ -1070,7 +1099,7 @@ window.__ModuleLoader__.load({
         return h('div', { key: folder.id, style: { position: 'relative' } },
           h('div', {
             style: {
-              padding: `7px 8px 7px ${10 + depth * 14}px`,
+              padding: `8px 8px 8px ${10 + depth * 14}px`,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -1078,7 +1107,7 @@ window.__ModuleLoader__.load({
               backgroundColor: isSelected ? 'rgba(37,99,235,0.12)' : 'transparent',
               color: isSelected ? '#2563eb' : 'var(--dsw-alias-label-primary)',
               borderRadius: '5px',
-              margin: '2px 6px',
+              margin: '2px 4px',
               fontSize: '13px',
               transition: 'background 0.15s ease'
             },
@@ -1114,14 +1143,14 @@ window.__ModuleLoader__.load({
                   e.stopPropagation();
                   setActiveFolderMenuId(isMenuOpen ? null : folder.id);
                 },
-                style: { ...buttonGhostStyle, padding: '2px 4px' }
+                style: { ...buttonGhostStyle, padding: '4px' }
               }, Icon.moreVertical({ size: 13 }))
             )
           ),
 
           // Folder Popup Menu
           isMenuOpen && h('div', {
-            style: { ...contextMenuStyle, top: '28px', right: '12px' },
+            style: { ...contextMenuStyle, top: '30px', right: '10px' },
             onClick: (e) => e.stopPropagation()
           },
             h('div', {
@@ -1162,13 +1191,13 @@ window.__ModuleLoader__.load({
       return h('div', { style: workbenchStyle },
         // Topbar
         h('div', { style: topbarStyle },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
             Icon.clapperboard({ size: 18, color: '#3b82f6' }),
-            h('span', { style: { fontSize: '15px', fontWeight: 600 } }, '视频素材与分镜资产库'),
+            h('span', { style: { fontSize: '14px', fontWeight: 600 } }, '视频素材与分镜资产库'),
             status && status.binaries && h('span', {
               style: {
-                fontSize: '11px',
-                padding: '2px 8px',
+                fontSize: '10px',
+                padding: '2px 6px',
                 borderRadius: '4px',
                 backgroundColor: 'var(--dsw-alias-bg-layer-2)',
                 color: status.binaries.available ? '#22c55e' : '#eab308',
@@ -1176,7 +1205,7 @@ window.__ModuleLoader__.load({
               }
             }, status.binaries.available ? 'FFmpeg 就绪' : 'FFmpeg 未配置')
           ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             h('button', {
               style: buttonSecondaryStyle,
               onClick: () => setShowSettingsModal(true)
@@ -1184,8 +1213,46 @@ window.__ModuleLoader__.load({
             h('button', {
               style: buttonPrimaryStyle,
               onClick: () => setShowExportModal(true)
-            }, Icon.scissors({ size: 13 }), '导出剪辑工程')
+            }, Icon.scissors({ size: 13 }), isMobile ? '导出' : '导出剪辑工程')
           )
+        ),
+
+        // Mobile View Navigation Switcher (Only visible on small screen / mobile)
+        isMobile && h('div', {
+          style: {
+            display: 'flex',
+            backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+            borderBottom: '1px solid var(--dsw-alias-border-l1)',
+            padding: '4px 8px',
+            gap: '6px'
+          }
+        },
+          [
+            { id: 'folders', label: '分类目录', icon: Icon.folder({ size: 13 }) },
+            { id: 'videos', label: `素材列表 (${videos.length})`, icon: Icon.grid({ size: 13 }) },
+            { id: 'detail', label: '视频详情', icon: Icon.film({ size: 13 }) }
+          ].map(tab => {
+            const isActive = mobileTab === tab.id;
+            return h('button', {
+              key: tab.id,
+              onClick: () => setMobileTab(tab.id),
+              style: {
+                flex: 1,
+                padding: '7px 4px',
+                border: 'none',
+                borderRadius: '5px',
+                backgroundColor: isActive ? '#2563eb' : 'var(--dsw-alias-bg-layer-2)',
+                color: isActive ? '#ffffff' : 'var(--dsw-alias-label-primary)',
+                fontSize: '12px',
+                fontWeight: isActive ? 600 : 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px'
+              }
+            }, tab.icon, tab.label);
+          })
         ),
 
         // Body
@@ -1237,12 +1304,13 @@ window.__ModuleLoader__.load({
             // Filter Bar
             h('div', {
               style: {
-                padding: '8px 16px',
+                padding: '8px 12px',
                 borderBottom: '1px solid var(--dsw-alias-border-l1)',
                 display: 'flex',
-                gap: '10px',
+                gap: '8px',
                 alignItems: 'center',
-                backgroundColor: 'var(--dsw-alias-bg-layer-1)'
+                backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+                flexWrap: isMobile ? 'wrap' : 'nowrap'
               }
             },
               h('input', {
@@ -1251,7 +1319,7 @@ window.__ModuleLoader__.load({
                 value: searchQuery,
                 onChange: (e) => setSearchQuery(e.target.value),
                 onKeyDown: (e) => { if (e.key === 'Enter') loadVideos(selectedFolderId, searchQuery, statusFilter); },
-                style: { ...inputStyle, flex: 1 }
+                style: { ...inputStyle, flex: 1, minWidth: '160px' }
               }),
               h('select', {
                 value: statusFilter,
@@ -1270,13 +1338,15 @@ window.__ModuleLoader__.load({
             // Batch Action Toolbar
             h('div', {
               style: {
-                padding: '6px 16px',
+                padding: '6px 12px',
                 borderBottom: '1px solid var(--dsw-alias-border-l1)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 backgroundColor: selectedVideoIds.size > 0 ? 'rgba(37,99,235,0.08)' : 'transparent',
-                fontSize: '12px'
+                fontSize: '12px',
+                flexWrap: 'wrap',
+                gap: '6px'
               }
             },
               h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' } },
@@ -1287,20 +1357,20 @@ window.__ModuleLoader__.load({
                 }),
                 h('span', null, `全选 (${selectedVideoIds.size}/${videos.length})`)
               ),
-              selectedVideoIds.size > 0 && h('div', { style: { display: 'flex', gap: '8px' } },
+              selectedVideoIds.size > 0 && h('div', { style: { display: 'flex', gap: '6px' } },
                 h('button', {
                   style: buttonPrimaryStyle,
                   disabled: isBatchAiAnalyzing,
                   onClick: handleBatchAiAnalyze
-                }, Icon.sparkles({ size: 12 }), isBatchAiAnalyzing ? '批量分析中...' : `批量 AI 分析 (${selectedVideoIds.size})`),
+                }, Icon.sparkles({ size: 12 }), isBatchAiAnalyzing ? '分析中...' : `批量 AI 分析 (${selectedVideoIds.size})`),
                 h('button', {
                   style: buttonSecondaryStyle,
                   onClick: () => setShowBatchMoveModal(true)
-                }, Icon.move({ size: 12 }), '批量移动'),
+                }, Icon.move({ size: 12 }), '移动'),
                 h('button', {
                   style: buttonDangerStyle,
                   onClick: handleBatchDelete
-                }, Icon.trash({ size: 12 }), '批量移出')
+                }, Icon.trash({ size: 12 }), '移出')
               )
             ),
 
@@ -1309,10 +1379,10 @@ window.__ModuleLoader__.load({
               style: {
                 flex: 1,
                 overflowY: 'auto',
-                padding: '16px',
+                padding: isMobile ? '8px' : '16px',
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                gap: '14px',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))',
+                gap: '12px',
                 alignContent: 'start'
               }
             },
@@ -1332,7 +1402,7 @@ window.__ModuleLoader__.load({
                     cursor: 'pointer',
                     overflow: 'visible',
                     display: 'flex',
-                    flexDirection: 'column',
+                    flexDirection: isMobile ? 'row' : 'column',
                     position: 'relative',
                     transition: 'all 0.15s ease',
                     boxShadow: isSelected ? '0 4px 12px rgba(37,99,235,0.2)' : 'none'
@@ -1341,14 +1411,16 @@ window.__ModuleLoader__.load({
                   // Storyboard / Thumbnail
                   h('div', {
                     style: {
-                      height: '120px',
+                      width: isMobile ? '130px' : '100%',
+                      height: isMobile ? '95px' : '120px',
                       backgroundColor: 'rgba(0,0,0,0.5)',
                       position: 'relative',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       overflow: 'hidden',
-                      borderRadius: '6px 6px 0 0'
+                      borderRadius: isMobile ? '6px 0 0 6px' : '6px 6px 0 0',
+                      flexShrink: 0
                     }
                   },
                     // Checkbox
@@ -1358,36 +1430,13 @@ window.__ModuleLoader__.load({
                       onClick: (e) => toggleVideoSelect(v.id, e),
                       style: {
                         position: 'absolute',
-                        top: '8px',
-                        left: '8px',
+                        top: '6px',
+                        left: '6px',
                         zIndex: 10,
                         cursor: 'pointer',
                         transform: 'scale(1.15)'
                       }
                     }),
-                    // More Button
-                    h('button', {
-                      title: '更多操作',
-                      onClick: (e) => {
-                        e.stopPropagation();
-                        setActiveVideoMenuId(isMenuOpen ? null : v.id);
-                      },
-                      style: {
-                        position: 'absolute',
-                        top: '6px',
-                        right: '6px',
-                        zIndex: 10,
-                        backgroundColor: 'rgba(0,0,0,0.6)',
-                        border: 'none',
-                        borderRadius: '4px',
-                        padding: '4px 6px',
-                        cursor: 'pointer',
-                        color: '#fff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                      }
-                    }, Icon.moreVertical({ size: 12 })),
                     // Storyboard image
                     v.storyboard_path
                       ? h('img', {
@@ -1395,17 +1444,17 @@ window.__ModuleLoader__.load({
                           style: { width: '100%', height: '100%', objectFit: 'cover' },
                           alt: v.file_name
                         })
-                      : h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' } }, '无故事板大图'),
+                      : h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px' } }, '无故事板大图'),
                     // Duration badge
                     h('span', {
                       style: {
                         position: 'absolute',
-                        bottom: '6px',
-                        right: '6px',
+                        bottom: '4px',
+                        right: '4px',
                         backgroundColor: 'rgba(0,0,0,0.75)',
                         color: '#fff',
-                        fontSize: '10px',
-                        padding: '1px 5px',
+                        fontSize: '9px',
+                        padding: '1px 4px',
                         borderRadius: '3px'
                       }
                     }, formatDuration(v.duration)),
@@ -1413,14 +1462,14 @@ window.__ModuleLoader__.load({
                     h('span', {
                       style: {
                         position: 'absolute',
-                        bottom: '6px',
-                        left: '6px',
+                        bottom: '4px',
+                        left: '4px',
                         backgroundColor: isCurrentAnalyzing
                           ? '#f59e0b'
                           : v.status === 'analyzed' ? '#22c55e' : 'var(--dsw-alias-bg-layer-2)',
                         color: '#fff',
-                        fontSize: '10px',
-                        padding: '2px 6px',
+                        fontSize: '9px',
+                        padding: '1px 5px',
                         borderRadius: '3px',
                         fontWeight: 500
                       }
@@ -1429,7 +1478,7 @@ window.__ModuleLoader__.load({
 
                   // Popup Menu
                   isMenuOpen && h('div', {
-                    style: { ...contextMenuStyle, top: '32px', right: '6px' },
+                    style: { ...contextMenuStyle, top: isMobile ? '24px' : '32px', right: '6px' },
                     onClick: (e) => e.stopPropagation()
                   },
                     h('div', {
@@ -1464,19 +1513,39 @@ window.__ModuleLoader__.load({
                   ),
 
                   // Meta Info with Audit Pill
-                  h('div', { style: { padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '4px' } },
-                    h('div', {
-                      style: {
-                        fontWeight: 600,
-                        fontSize: '13px',
-                        color: 'var(--dsw-alias-label-primary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      },
-                      title: v.file_name
-                    }, v.file_name),
-                    h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', display: 'flex', justifyContent: 'space-between' } },
+                  h('div', {
+                    style: {
+                      padding: '8px 10px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px',
+                      flex: 1,
+                      overflow: 'hidden'
+                    }
+                  },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+                      h('div', {
+                        style: {
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          color: 'var(--dsw-alias-label-primary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          flex: 1
+                        },
+                        title: v.file_name
+                      }, v.file_name),
+                      h('button', {
+                        title: '更多操作',
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          setActiveVideoMenuId(isMenuOpen ? null : v.id);
+                        },
+                        style: { ...buttonGhostStyle, padding: '2px 4px' }
+                      }, Icon.moreVertical({ size: 13 }))
+                    ),
+                    h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', display: 'flex', gap: '8px' } },
                       h('span', null, `${v.width}x${v.height}`),
                       h('span', null, `${v.fps} fps`),
                       h('span', null, v.codec || 'MP4')
@@ -1500,7 +1569,7 @@ window.__ModuleLoader__.load({
                       Icon.zap({ size: 10, color: '#3b82f6' }),
                       `${(v.ai_latency_ms ? v.ai_latency_ms / 1000 : 0).toFixed(1)}s`,
                       '·',
-                      `${v.ai_total_tokens || 0} tokens`,
+                      `${v.ai_total_tokens || 0} tok`,
                       '·',
                       v.ai_model
                     ),
@@ -1511,7 +1580,10 @@ window.__ModuleLoader__.load({
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',
-                        marginTop: '2px'
+                        marginTop: '2px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
                       }
                     },
                       Icon.folder({ size: 11 }),
@@ -1527,8 +1599,32 @@ window.__ModuleLoader__.load({
           h('div', { style: rightColStyle },
             selectedVideo
               ? h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+                  // Mobile Header with Return Button
+                  isMobile && h('div', {
+                    style: {
+                      padding: '6px 10px',
+                      backgroundColor: 'var(--dsw-alias-bg-layer-2)',
+                      borderBottom: '1px solid var(--dsw-alias-border-l1)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }
+                  },
+                    h('button', {
+                      style: { ...buttonSecondaryStyle, padding: '4px 8px', fontSize: '11px' },
+                      onClick: () => setMobileTab('videos')
+                    }, Icon.arrowLeft({ size: 12 }), '返回素材列表'),
+                    h('span', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '当前预览与分析')
+                  ),
                   // Video Player
-                  h('div', { style: { width: '100%', height: '200px', backgroundColor: '#000', position: 'relative' } },
+                  h('div', {
+                    style: {
+                      width: '100%',
+                      height: isMobile ? '180px' : '200px',
+                      backgroundColor: '#000',
+                      position: 'relative'
+                    }
+                  },
                     h('video', {
                       ref: videoRef,
                       src: `/api/video-manager/videos/${selectedVideo.id}/stream`,
@@ -1547,7 +1643,7 @@ window.__ModuleLoader__.load({
                       position: 'relative'
                     }
                   },
-                    h('div', { style: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '320px' } },
+                    h('div', { style: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: isMobile ? '240px' : '320px' } },
                       selectedVideo.file_name
                     ),
                     h('button', {
@@ -1657,7 +1753,7 @@ window.__ModuleLoader__.load({
                             onClick: () => handleAiAnalyze(selectedVideo.id)
                           },
                             Icon.sparkles({ size: 12 }),
-                            aiAnalyzingId === selectedVideo.id ? 'AI 分析中...' : 'AI 深度分析'
+                            aiAnalyzingId === selectedVideo.id ? '分析中...' : 'AI 深度分析'
                           )
                         )
                       ),
@@ -2051,7 +2147,7 @@ window.__ModuleLoader__.load({
                         }, Icon.edit({ size: 12 }), '编辑信息')
                       ),
 
-                      // AI Analysis Audit Card (Requested by user)
+                      // AI Analysis Audit Card
                       selectedVideo.ai_model && h('div', {
                         style: {
                           backgroundColor: 'rgba(59, 130, 246, 0.08)',
@@ -2257,7 +2353,7 @@ window.__ModuleLoader__.load({
                     color: 'var(--dsw-alias-label-secondary)',
                     fontSize: '13px'
                   }
-                }, '请在中栏选择一个视频')
+                }, '请在素材列表中选择一个视频')
           )
         ),
 
@@ -2265,7 +2361,7 @@ window.__ModuleLoader__.load({
 
         // 1. Rename Folder Modal
         renamingFolder && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: '400px' } },
+          h('div', { style: { ...modalCardStyle, width: isMobile ? '92vw' : '400px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               Icon.edit({ size: 18, color: '#3b82f6' }),
               h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '重命名分类目录')
@@ -2294,7 +2390,7 @@ window.__ModuleLoader__.load({
 
         // 2. Batch Move Folder Modal
         showBatchMoveModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: '420px' } },
+          h('div', { style: { ...modalCardStyle, width: isMobile ? '92vw' : '420px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               Icon.move({ size: 18, color: '#3b82f6' }),
               h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } },
@@ -2345,10 +2441,10 @@ window.__ModuleLoader__.load({
         // 3. Upgraded Import Modal
         showScanModal && h('div', { style: modalOverlayStyle },
           h('div', { style: modalCardStyle },
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 Icon.upload({ size: 18, color: '#3b82f6' }),
-                h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '导入视频素材')
+                h('h3', { style: { margin: 0, fontSize: '15px', fontWeight: 600 } }, '导入视频素材')
               ),
               h('div', { style: { display: 'flex', gap: '6px' } },
                 h('button', {
@@ -2413,7 +2509,7 @@ window.__ModuleLoader__.load({
               h('div', {
                 style: {
                   flex: 1,
-                  minHeight: '220px',
+                  minHeight: isMobile ? '160px' : '220px',
                   maxHeight: '320px',
                   overflowY: 'auto',
                   border: '1px solid var(--dsw-alias-border-l1)',
@@ -2499,9 +2595,9 @@ window.__ModuleLoader__.load({
               ),
 
               // Action Toolbar
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '6px' } },
                 selectedBrowserFile
-                  ? h('div', { style: { fontSize: '12px', color: '#2563eb', fontWeight: 500 } }, `已选文件: ${selectedBrowserFile.name}`)
+                  ? h('div', { style: { fontSize: '12px', color: '#2563eb', fontWeight: 500 } }, `已选: ${selectedBrowserFile.name}`)
                   : h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '未选特定视频，将导入当前文件夹内所有视频'),
                 h('div', { style: { display: 'flex', gap: '8px' } },
                   h('button', {
@@ -2549,7 +2645,7 @@ window.__ModuleLoader__.load({
 
         // 4. Settings Modal with AI Config & Prompt Template
         showSettingsModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: '600px' } },
+          h('div', { style: { ...modalCardStyle, width: isMobile ? '95vw' : '600px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               Icon.settings({ size: 18, color: '#3b82f6' }),
               h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '插件设置与 AI 分析配置')
@@ -2560,7 +2656,7 @@ window.__ModuleLoader__.load({
               // Section 1: FFmpeg
               h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
                 h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '1. 媒体引擎环境 (FFmpeg / FFprobe)'),
-                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
                   h('div', null,
                     h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFmpeg 绝对路径:'),
                     h('input', {
@@ -2590,7 +2686,7 @@ window.__ModuleLoader__.load({
                 h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
                   '默认自动继承当前 DSH 的多模态视觉模型（Zero-Plus），亦可在此单独指定模型或兼容端点。'
                 ),
-                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
                   h('div', null,
                     h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'AI 视觉模型名称:'),
                     h('select', {
@@ -2653,7 +2749,7 @@ window.__ModuleLoader__.load({
 
         // 5. New Folder Modal
         showNewFolderModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: '400px' } },
+          h('div', { style: { ...modalCardStyle, width: isMobile ? '92vw' : '400px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               Icon.folderPlus({ size: 18, color: '#3b82f6' }),
               h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '新建分类目录')
@@ -2690,7 +2786,7 @@ window.__ModuleLoader__.load({
 
         // 6. Export Modal
         showExportModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: '460px' } },
+          h('div', { style: { ...modalCardStyle, width: isMobile ? '92vw' : '460px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               Icon.scissors({ size: 18, color: '#3b82f6' }),
               h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '导出剪辑软件工程')
