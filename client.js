@@ -1638,20 +1638,24 @@ window.__ModuleLoader__.load({
                         borderRadius: '3px'
                       }
                     }, formatDuration(v.duration)),
-                    // Status Badge
+                    // Status Badge (High-contrast on any thumbnail in both light & dark themes)
                     h('span', {
                       style: {
                         position: 'absolute',
                         bottom: '4px',
                         left: '4px',
                         backgroundColor: isCurrentAnalyzing
-                          ? '#f59e0b'
-                          : v.status === 'analyzed' ? '#22c55e' : 'var(--dsw-alias-bg-layer-2)',
-                        color: '#fff',
+                          ? 'rgba(245, 158, 11, 0.9)'
+                          : v.status === 'analyzed'
+                            ? 'rgba(34, 197, 94, 0.9)'
+                            : 'rgba(51, 65, 85, 0.88)', // Slate-700 solid dark gray, never white in light theme
+                        color: '#ffffff',
+                        border: '1px solid rgba(255, 255, 255, 0.18)',
                         fontSize: '9px',
                         padding: '1px 5px',
                         borderRadius: '3px',
-                        fontWeight: 500
+                        fontWeight: 500,
+                        backdropFilter: 'blur(2px)'
                       }
                     }, isCurrentAnalyzing ? '分析中...' : (v.status === 'analyzed' ? '已分析' : '待分析'))
                   ),

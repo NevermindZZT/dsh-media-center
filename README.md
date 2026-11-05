@@ -12,6 +12,19 @@
 
 ---
 
+## 架构与深度设计文档
+
+本项目具备完整的系统架构体系与设计规范，详细的技术剖析与接口契约请参阅：
+👉 [**系统架构与深度设计规范文档 (docs/ARCHITECTURE.md)**](docs/ARCHITECTURE.md)
+
+- **[核心架构设计原则与红线](docs/ARCHITECTURE.md#2-核心架构设计原则与红线)**：物理源文件绝对只读 (Zero-Data-Loss)、Node 24 原生 ESM + 内置 node:sqlite 零编译依赖、4x4 故事板雪碧图节约 90%+ 视觉 Token、双轨驱动架构。
+- **[分层系统架构](docs/ARCHITECTURE.md#3-分层系统架构)**：Host 端（API/MediaEngine/AI/DB/Exporter）与 Client 端（React 响应式三栏工作台）深度协同。
+- **[核心数据模型与存储规范](docs/ARCHITECTURE.md#4-核心数据模型与存储规范)**：SQLite Schema、多级目录树、AI 分析耗时/Token 审计字段。
+- **[关键业务流水线设计](docs/ARCHITECTURE.md#5-关键业务流水线设计)**：素材镜像导入、视听特征提取、直驱多模态分析、Agent 剪辑召回、剪映/FCPXML/EDL 工程导出。
+- **[Web 工作台与响应式设计](docs/ARCHITECTURE.md#6-web-工作台-client-ui-架构与响应式设计)**：桌面端 Resizable Splitter 调宽算法、移动端小屏断点（`< 840px`）单栏流式分段。
+
+---
+
 ## 核心特性
 
 - 📁 **多级目录树资产组织**：
