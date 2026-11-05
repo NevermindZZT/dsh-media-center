@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
 
-export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService }) {
+export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer }) {
   const jsonResponse = (res, data, status = 200) => {
     const body = Buffer.from(JSON.stringify(data));
     res.writeHead(status, {
@@ -264,6 +264,73 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
           video: updated,
           storyboard_path: storyboardPath
         });
+      }
+
+      // 11.1 Directly Trigger Multi-modal AI Video Analysis: POST /api/video-manager/videos/:id/ai-analyze
+      const aiAnalyzeMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/ai-analyze$/);
+      if (aiAnalyzeMatch && method === 'POST') {
+        const videoId = aiAnalyzeMatch[1];
+        try {
+          db.upsertVideo({ id: videoId, status: 'analyzing' });
+          const result = await videoAiAnalyzer.analyzeVideo(videoId);
+          return jsonResponse(res, result);
+        } catch (e) {
+          db.upsertVideo({ id: videoId, status: 'error' });
+          console.error('[ai-analyze] Error:', e);
+          return jsonResponse(res, { success: false, error: e.message }, 500);
+        }
+      }
+
+      // 11.2 Batch Multi-modal AI Video Analysis: POST /api/video-manager/videos/batch-ai-analyze
+      if (pathname === '/api/video-manager/videos/batch-ai-analyze' && method === 'POST') {
+        const body = await parseJsonBody(req);
+        if (!Array.isArray(body.video_ids) || body.video_ids.length === 0) {
+          return jsonResponse(res, { success: false, error: 'video_ids array is required' }, 400);
+        }
+        const results = [];
+        let succeeded = 0;
+        for (const vid of body.video_ids) {
+          try {
+            db.upsertVideo({ id: vid, status: 'analyzing' });
+            const r = await videoAiAnalyzer.analyzeVideo(vid);
+            results.push({ video_id: vid, success: true, audit: r.audit });
+            succeeded++;
+          } catch (e) {
+            db.upsertVideo({ id: vid, status: 'error' });
+            results.push({ video_id: vid, success: false, error: e.message });
+          }
+        }
+        return jsonResponse(res, {
+          success: true,
+          total: body.video_ids.length,
+          succeeded,
+          results
+        });
+      }
+
+      // 11.3 AI Settings: GET /api/video-manager/ai-settings
+      if (pathname === '/api/video-manager/ai-settings' && method === 'GET') {
+        const cfg = videoAiAnalyzer.resolveAiConfig();
+        const defaultPrompt = videoAiAnalyzer.getDefaultPromptTemplate();
+        return jsonResponse(res, {
+          success: true,
+          base_url: cfg.baseUrl,
+          model: cfg.model,
+          has_api_key: !!cfg.apiKey,
+          custom_prompt: cfg.customPrompt || '',
+          default_prompt: defaultPrompt
+        });
+      }
+
+      // 11.4 AI Settings: POST /api/video-manager/ai-settings
+      if (pathname === '/api/video-manager/ai-settings' && method === 'POST') {
+        const body = await parseJsonBody(req);
+        if (body.base_url !== undefined) db.setSetting('ai_base_url', body.base_url);
+        if (body.api_key !== undefined) db.setSetting('ai_api_key', body.api_key);
+        if (body.model !== undefined) db.setSetting('ai_model', body.model);
+        if (body.prompt_template !== undefined) db.setSetting('ai_prompt_template', body.prompt_template);
+        const cfg = videoAiAnalyzer.resolveAiConfig();
+        return jsonResponse(res, { success: true, config: cfg });
       }
 
       // 12. Video Storyboard Image: GET /api/video-manager/videos/:id/storyboard

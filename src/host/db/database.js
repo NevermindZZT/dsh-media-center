@@ -95,11 +95,30 @@ export class VideoDatabase {
         user_notes TEXT,
         tags TEXT DEFAULT '[]',
         storyboard_path TEXT,
+        ai_model TEXT,
+        ai_prompt_tokens INTEGER DEFAULT 0,
+        ai_completion_tokens INTEGER DEFAULT 0,
+        ai_total_tokens INTEGER DEFAULT 0,
+        ai_latency_ms INTEGER DEFAULT 0,
+        ai_analyzed_at TEXT,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
       );
     `);
+
+    // Migration: ensure new AI audit columns exist on existing databases
+    try {
+      const videoCols = this.db.prepare("PRAGMA table_info(videos)").all().map(c => c.name);
+      if (!videoCols.includes('ai_model')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_model TEXT;");
+      if (!videoCols.includes('ai_prompt_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_prompt_tokens INTEGER DEFAULT 0;");
+      if (!videoCols.includes('ai_completion_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_completion_tokens INTEGER DEFAULT 0;");
+      if (!videoCols.includes('ai_total_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_total_tokens INTEGER DEFAULT 0;");
+      if (!videoCols.includes('ai_latency_ms')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_latency_ms INTEGER DEFAULT 0;");
+      if (!videoCols.includes('ai_analyzed_at')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_analyzed_at TEXT;");
+    } catch (e) {
+      console.warn('[VideoDatabase] Video table migration warning:', e.message);
+    }
 
     // 4. Video Shots Table (Storyboards / Scenes)
     this.db.exec(`
@@ -371,6 +390,12 @@ export class VideoDatabase {
           user_notes = COALESCE(?, user_notes),
           tags = COALESCE(?, tags),
           storyboard_path = COALESCE(?, storyboard_path),
+          ai_model = COALESCE(?, ai_model),
+          ai_prompt_tokens = COALESCE(?, ai_prompt_tokens),
+          ai_completion_tokens = COALESCE(?, ai_completion_tokens),
+          ai_total_tokens = COALESCE(?, ai_total_tokens),
+          ai_latency_ms = COALESCE(?, ai_latency_ms),
+          ai_analyzed_at = COALESCE(?, ai_analyzed_at),
           updated_at = ?
         WHERE id = ?
       `).run(
@@ -390,6 +415,12 @@ export class VideoDatabase {
         videoData.user_notes ?? null,
         videoData.tags ? (typeof videoData.tags === 'string' ? videoData.tags : JSON.stringify(videoData.tags)) : null,
         videoData.storyboard_path ?? null,
+        videoData.ai_model ?? null,
+        videoData.ai_prompt_tokens ?? null,
+        videoData.ai_completion_tokens ?? null,
+        videoData.ai_total_tokens ?? null,
+        videoData.ai_latency_ms ?? null,
+        videoData.ai_analyzed_at ?? null,
         now,
         existing.id
       );
@@ -399,8 +430,10 @@ export class VideoDatabase {
         INSERT INTO videos (
           id, folder_id, file_name, file_path, file_size, duration,
           width, height, fps, codec, bitrate, audio_channels, sample_rate,
-          status, summary, user_notes, tags, storyboard_path, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          status, summary, user_notes, tags, storyboard_path,
+          ai_model, ai_prompt_tokens, ai_completion_tokens, ai_total_tokens, ai_latency_ms, ai_analyzed_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         videoData.folder_id ?? null,
@@ -420,6 +453,12 @@ export class VideoDatabase {
         videoData.user_notes ?? null,
         videoData.tags ? (typeof videoData.tags === 'string' ? videoData.tags : JSON.stringify(videoData.tags)) : '[]',
         videoData.storyboard_path ?? null,
+        videoData.ai_model ?? null,
+        videoData.ai_prompt_tokens ?? 0,
+        videoData.ai_completion_tokens ?? 0,
+        videoData.ai_total_tokens ?? 0,
+        videoData.ai_latency_ms ?? 0,
+        videoData.ai_analyzed_at ?? null,
         now,
         now
       );

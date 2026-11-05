@@ -227,6 +227,29 @@ window.__ModuleLoader__.load({
         h('rect', { x: 14, y: 3, width: 7, height: 7 }),
         h('rect', { x: 14, y: 14, width: 7, height: 7 }),
         h('rect', { x: 3, y: 14, width: 7, height: 7 })
+      ),
+      zap: (props) => h('svg', {
+        width: props?.size || 12, height: props?.size || 12, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle' }
+      },
+        h('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' })
+      ),
+      cpu: (props) => h('svg', {
+        width: props?.size || 12, height: props?.size || 12, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle' }
+      },
+        h('rect', { x: 4, y: 4, width: 16, height: 16, rx: 2 }),
+        h('rect', { x: 9, y: 9, width: 6, height: 6 }),
+        h('line', { x1: 9, y1: 1, x2: 9, y2: 4 }),
+        h('line', { x1: 15, y1: 1, x2: 15, y2: 4 }),
+        h('line', { x1: 9, y1: 20, x2: 9, y2: 23 }),
+        h('line', { x1: 15, y1: 20, x2: 15, y2: 23 }),
+        h('line', { x1: 20, y1: 9, x2: 23, y2: 9 }),
+        h('line', { x1: 20, y1: 14, x2: 23, y2: 14 }),
+        h('line', { x1: 1, y1: 9, x2: 4, y2: 9 }),
+        h('line', { x1: 1, y1: 14, x2: 4, y2: 14 })
       )
     };
 
@@ -279,6 +302,10 @@ window.__ModuleLoader__.load({
       const [activeVideoMenuId, setActiveVideoMenuId] = useState(null);
       const [singleMoveVideoId, setSingleMoveVideoId] = useState(null);
 
+      // AI Analysis Running States
+      const [aiAnalyzingId, setAiAnalyzingId] = useState(null);
+      const [isBatchAiAnalyzing, setIsBatchAiAnalyzing] = useState(false);
+
       // Editing states for Right Panel
       const [isEditingShots, setIsEditingShots] = useState(false);
       const [isEditingAudio, setIsEditingAudio] = useState(false);
@@ -297,6 +324,13 @@ window.__ModuleLoader__.load({
       const [newFolderParentId, setNewFolderParentId] = useState('');
       const [exportFormat, setExportFormat] = useState('jianying');
       const [exportName, setExportName] = useState('初剪序列_01');
+
+      // AI Settings form states
+      const [aiBaseUrlInput, setAiBaseUrlInput] = useState('');
+      const [aiApiKeyInput, setAiApiKeyInput] = useState('');
+      const [aiModelInput, setAiModelInput] = useState('zero-plus');
+      const [aiPromptTemplate, setAiPromptTemplate] = useState('');
+      const [defaultPromptText, setDefaultPromptText] = useState('');
 
       // Visual Filesystem Browser state
       const [importTab, setImportTab] = useState('browse'); // 'browse' | 'manual'
@@ -404,7 +438,6 @@ window.__ModuleLoader__.load({
             setEditingAudio(data.video.audio ? JSON.parse(JSON.stringify(data.video.audio)) : {
               bpm: 120, bgm_type: '无', bgm_mood: '自然', transcripts: []
             });
-            // Reset edit states to view mode by default
             setIsEditingShots(false);
             setIsEditingAudio(false);
             setIsEditingMeta(false);
@@ -414,7 +447,21 @@ window.__ModuleLoader__.load({
         }
       };
 
-      // 5. Load Local Filesystem Directory for Browser
+      // 5. Load AI Settings
+      const loadAiSettings = async () => {
+        try {
+          const res = await fetch('/api/video-manager/ai-settings');
+          const data = await res.json();
+          if (data.success) {
+            setAiBaseUrlInput(data.base_url || '');
+            setAiModelInput(data.model || 'zero-plus');
+            setAiPromptTemplate(data.custom_prompt || data.default_prompt || '');
+            setDefaultPromptText(data.default_prompt || '');
+          }
+        } catch {}
+      };
+
+      // 6. Load Local Filesystem Directory for Browser
       const loadBrowseDir = async (dirPath) => {
         setBrowserLoading(true);
         setSelectedBrowserFile(null);
@@ -439,12 +486,89 @@ window.__ModuleLoader__.load({
         loadStatus();
         loadFolders();
         loadVideos(null, '', '');
+        loadAiSettings();
       }, []);
 
       const handleFolderSelect = (folderId) => {
         setSelectedFolderId(folderId);
         setSelectedVideoIds(new Set());
         loadVideos(folderId, searchQuery, statusFilter);
+      };
+
+      // Direct Multi-modal AI Video Analysis
+      const handleAiAnalyze = async (videoId) => {
+        if (!videoId) return;
+        setAiAnalyzingId(videoId);
+        try {
+          const res = await fetch(`/api/video-manager/videos/${videoId}/ai-analyze`, { method: 'POST' });
+          const data = await res.json();
+          if (data.success) {
+            const audit = data.audit;
+            const sec = (audit.latency_ms / 1000).toFixed(2);
+            alert(`AI 分析完成！\n- 视觉模型: ${audit.model}\n- 分析耗时: ${sec} 秒\n- Token 消耗: ${audit.total_tokens} (输入: ${audit.prompt_tokens}, 输出: ${audit.completion_tokens})`);
+            setSelectedVideo(data.video);
+            loadVideoDetail(videoId);
+            loadVideos(selectedFolderId, searchQuery, statusFilter);
+          } else {
+            alert('AI 分析失败: ' + (data.error || '未知错误'));
+          }
+        } catch (e) {
+          alert('AI 分析请求异常: ' + e.message);
+        } finally {
+          setAiAnalyzingId(null);
+        }
+      };
+
+      // Batch AI Video Analysis
+      const handleBatchAiAnalyze = async () => {
+        const ids = Array.from(selectedVideoIds);
+        if (ids.length === 0) return;
+        if (!confirm(`确定要对选中的 ${ids.length} 个视频依次发起多模态 AI 深度分析吗？\n（将自动生成故事板大图并调用视觉模型切分分镜与提取内容）`)) {
+          return;
+        }
+        setIsBatchAiAnalyzing(true);
+        try {
+          const res = await fetch('/api/video-manager/videos/batch-ai-analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_ids: ids })
+          });
+          const data = await res.json();
+          if (data.success) {
+            alert(`批量 AI 分析完成！\n共提交 ${data.total} 个视频，成功完成 ${data.succeeded} 个！`);
+            setSelectedVideoIds(new Set());
+            loadVideos(selectedFolderId, searchQuery, statusFilter);
+            if (selectedVideo) loadVideoDetail(selectedVideo.id);
+          } else {
+            alert('批量分析失败: ' + data.error);
+          }
+        } catch (e) {
+          alert('批量分析请求异常: ' + e.message);
+        } finally {
+          setIsBatchAiAnalyzing(false);
+        }
+      };
+
+      // Save AI Settings
+      const handleSaveAiSettings = async () => {
+        try {
+          const res = await fetch('/api/video-manager/ai-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              base_url: aiBaseUrlInput,
+              api_key: aiApiKeyInput || undefined,
+              model: aiModelInput,
+              prompt_template: aiPromptTemplate
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            alert('AI 分析模型与提示词配置已成功保存！');
+          }
+        } catch (e) {
+          alert('保存 AI 设置失败: ' + e.message);
+        }
       };
 
       // Folder Rename
@@ -624,27 +748,6 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const handleTriggerAnalyze = async (videoId) => {
-        if (!videoId) return;
-        setLoading(true);
-        try {
-          const res = await fetch(`/api/video-manager/videos/${videoId}/analyze`, { method: 'POST' });
-          const data = await res.json();
-          if (data.success) {
-            setSelectedVideo(data.video);
-            loadVideoDetail(videoId);
-            loadVideos(selectedFolderId, searchQuery, statusFilter);
-            loadFolders();
-          } else {
-            alert('分析失败: ' + (data.error || '未知错误'));
-          }
-        } catch (e) {
-          alert('请求分析出错: ' + e.message);
-        } finally {
-          setLoading(false);
-        }
-      };
-
       const handleSaveSettings = async () => {
         try {
           const res = await fetch('/api/video-manager/settings', {
@@ -654,6 +757,7 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.success) {
+            await handleSaveAiSettings();
             setShowSettingsModal(false);
             loadStatus();
           }
@@ -900,9 +1004,8 @@ window.__ModuleLoader__.load({
         zIndex: 2000
       };
 
-      // Guaranteed Theme Adaptive Card
       const modalCardStyle = {
-        width: '660px',
+        width: '680px',
         maxWidth: '92vw',
         maxHeight: '85vh',
         backgroundColor: 'var(--dsw-alias-bg-layer-1)',
@@ -917,7 +1020,6 @@ window.__ModuleLoader__.load({
         overflow: 'hidden'
       };
 
-      // Floating Context Menu Style
       const contextMenuStyle = {
         position: 'absolute',
         backgroundColor: 'var(--dsw-alias-bg-layer-1)',
@@ -1006,7 +1108,6 @@ window.__ModuleLoader__.load({
                   color: 'var(--dsw-alias-label-secondary)'
                 }
               }, `${folder.analyzedCount}/${folder.videoCount}`),
-              // More Action Menu Button
               h('button', {
                 title: '分类操作',
                 onClick: (e) => {
@@ -1131,7 +1232,7 @@ window.__ModuleLoader__.load({
             )
           ),
 
-          // Middle Column: Video Grid with Batch Operations
+          // Middle Column: Video Grid with Batch Operations & Audit Tags
           h('div', { style: midColStyle },
             // Filter Bar
             h('div', {
@@ -1166,7 +1267,7 @@ window.__ModuleLoader__.load({
               )
             ),
 
-            // Batch Action Toolbar (Visible when at least 1 video is checked)
+            // Batch Action Toolbar
             h('div', {
               style: {
                 padding: '6px 16px',
@@ -1188,13 +1289,18 @@ window.__ModuleLoader__.load({
               ),
               selectedVideoIds.size > 0 && h('div', { style: { display: 'flex', gap: '8px' } },
                 h('button', {
+                  style: buttonPrimaryStyle,
+                  disabled: isBatchAiAnalyzing,
+                  onClick: handleBatchAiAnalyze
+                }, Icon.sparkles({ size: 12 }), isBatchAiAnalyzing ? '批量分析中...' : `批量 AI 分析 (${selectedVideoIds.size})`),
+                h('button', {
                   style: buttonSecondaryStyle,
                   onClick: () => setShowBatchMoveModal(true)
-                }, Icon.move({ size: 12 }), '批量移动到分类'),
+                }, Icon.move({ size: 12 }), '批量移动'),
                 h('button', {
                   style: buttonDangerStyle,
                   onClick: handleBatchDelete
-                }, Icon.trash({ size: 12 }), '批量移出素材库')
+                }, Icon.trash({ size: 12 }), '批量移出')
               )
             ),
 
@@ -1214,6 +1320,7 @@ window.__ModuleLoader__.load({
                 const isSelected = selectedVideo && selectedVideo.id === v.id;
                 const isChecked = selectedVideoIds.has(v.id);
                 const isMenuOpen = activeVideoMenuId === v.id;
+                const isCurrentAnalyzing = aiAnalyzingId === v.id;
 
                 return h('div', {
                   key: v.id,
@@ -1244,7 +1351,7 @@ window.__ModuleLoader__.load({
                       borderRadius: '6px 6px 0 0'
                     }
                   },
-                    // Batch Select Checkbox
+                    // Checkbox
                     h('input', {
                       type: 'checkbox',
                       checked: isChecked,
@@ -1258,7 +1365,7 @@ window.__ModuleLoader__.load({
                         transform: 'scale(1.15)'
                       }
                     }),
-                    // Video Card More Action Menu Button (Replacing direct trash button)
+                    // More Button
                     h('button', {
                       title: '更多操作',
                       onClick: (e) => {
@@ -1308,21 +1415,32 @@ window.__ModuleLoader__.load({
                         position: 'absolute',
                         bottom: '6px',
                         left: '6px',
-                        backgroundColor: v.status === 'analyzed' ? '#22c55e' : 'var(--dsw-alias-bg-layer-2)',
+                        backgroundColor: isCurrentAnalyzing
+                          ? '#f59e0b'
+                          : v.status === 'analyzed' ? '#22c55e' : 'var(--dsw-alias-bg-layer-2)',
                         color: '#fff',
                         fontSize: '10px',
                         padding: '2px 6px',
                         borderRadius: '3px',
                         fontWeight: 500
                       }
-                    }, v.status === 'analyzed' ? '已分析' : '待分析')
+                    }, isCurrentAnalyzing ? '分析中...' : (v.status === 'analyzed' ? '已分析' : '待分析'))
                   ),
 
-                  // Video Card Popup Menu
+                  // Popup Menu
                   isMenuOpen && h('div', {
                     style: { ...contextMenuStyle, top: '32px', right: '6px' },
                     onClick: (e) => e.stopPropagation()
                   },
+                    h('div', {
+                      style: contextMenuItemStyle,
+                      onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
+                      onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
+                      onClick: () => {
+                        setActiveVideoMenuId(null);
+                        handleAiAnalyze(v.id);
+                      }
+                    }, Icon.sparkles({ size: 12, color: '#3b82f6' }), '直接 AI 深度分析'),
                     h('div', {
                       style: contextMenuItemStyle,
                       onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
@@ -1335,15 +1453,6 @@ window.__ModuleLoader__.load({
                       }
                     }, Icon.move({ size: 12 }), '移动到分类...'),
                     h('div', {
-                      style: contextMenuItemStyle,
-                      onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
-                      onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
-                      onClick: () => {
-                        setActiveVideoMenuId(null);
-                        handleTriggerAnalyze(v.id);
-                      }
-                    }, Icon.sparkles({ size: 12 }), 'AI 重新切分分析'),
-                    h('div', {
                       style: { ...contextMenuItemStyle, color: '#ef4444' },
                       onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)',
                       onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
@@ -1354,7 +1463,7 @@ window.__ModuleLoader__.load({
                     }, Icon.trash({ size: 12, color: '#ef4444' }), '移出素材库')
                   ),
 
-                  // Meta Info
+                  // Meta Info with Audit Pill
                   h('div', { style: { padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '4px' } },
                     h('div', {
                       style: {
@@ -1372,16 +1481,40 @@ window.__ModuleLoader__.load({
                       h('span', null, `${v.fps} fps`),
                       h('span', null, v.codec || 'MP4')
                     ),
+                    // Audit Pill Badge
+                    v.ai_model && h('div', {
+                      style: {
+                        fontSize: '10px',
+                        color: '#3b82f6',
+                        backgroundColor: 'rgba(59,130,246,0.08)',
+                        border: '1px solid rgba(59,130,246,0.2)',
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        marginTop: '2px',
+                        width: 'fit-content'
+                      }
+                    },
+                      Icon.zap({ size: 10, color: '#3b82f6' }),
+                      `${(v.ai_latency_ms ? v.ai_latency_ms / 1000 : 0).toFixed(1)}s`,
+                      '·',
+                      `${v.ai_total_tokens || 0} tokens`,
+                      '·',
+                      v.ai_model
+                    ),
                     v.folder_path && h('div', {
                       style: {
                         fontSize: '11px',
-                        color: '#3b82f6',
+                        color: 'var(--dsw-alias-label-secondary)',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '4px'
+                        gap: '4px',
+                        marginTop: '2px'
                       }
                     },
-                      Icon.folder({ size: 12 }),
+                      Icon.folder({ size: 11 }),
                       v.folder_path
                     )
                   )
@@ -1390,7 +1523,7 @@ window.__ModuleLoader__.load({
             )
           ),
 
-          // Right Column: Detail Workstation with Clean View Mode & Edit Switch
+          // Right Column: Detail Workstation
           h('div', { style: rightColStyle },
             selectedVideo
               ? h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
@@ -1417,7 +1550,6 @@ window.__ModuleLoader__.load({
                     h('div', { style: { fontWeight: 600, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '320px' } },
                       selectedVideo.file_name
                     ),
-                    // More Button replacing direct red delete button
                     h('button', {
                       title: '素材选项',
                       onClick: (e) => {
@@ -1501,7 +1633,6 @@ window.__ModuleLoader__.load({
                             : h('button', {
                                 style: buttonSecondaryStyle,
                                 onClick: () => {
-                                  // Add new shot in edit mode
                                   const newIndex = editingShots.length + 1;
                                   const lastShot = editingShots[editingShots.length - 1];
                                   const start = lastShot ? lastShot.end_time : 0;
@@ -1521,24 +1652,17 @@ window.__ModuleLoader__.load({
                                 }
                               }, Icon.plus({ size: 12 }), '新增分镜'),
                           h('button', {
-                            style: {
-                              padding: '4px 10px',
-                              backgroundColor: 'rgba(59, 130, 246, 0.12)',
-                              color: '#3b82f6',
-                              border: '1px solid rgba(59, 130, 246, 0.3)',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            },
-                            onClick: () => handleTriggerAnalyze(selectedVideo.id)
-                          }, Icon.sparkles({ size: 12 }), 'AI 重新切分')
+                            style: buttonPrimaryStyle,
+                            disabled: aiAnalyzingId === selectedVideo.id,
+                            onClick: () => handleAiAnalyze(selectedVideo.id)
+                          },
+                            Icon.sparkles({ size: 12 }),
+                            aiAnalyzingId === selectedVideo.id ? 'AI 分析中...' : 'AI 深度分析'
+                          )
                         )
                       ),
 
-                      // Shots List: Render in View Mode OR Edit Mode
+                      // Shots List
                       editingShots.map((shot, idx) =>
                         h('div', {
                           key: idx,
@@ -1603,7 +1727,16 @@ window.__ModuleLoader__.load({
                                       backgroundColor: 'var(--dsw-alias-bg-base)',
                                       color: 'var(--dsw-alias-label-secondary)'
                                     }
-                                  }, shot.camera_movement || '固定')
+                                  }, shot.camera_movement || '固定'),
+                                  shot.quality_score && h('span', {
+                                    style: {
+                                      fontSize: '10px',
+                                      padding: '1px 5px',
+                                      borderRadius: '3px',
+                                      backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                                      color: '#22c55e'
+                                    }
+                                  }, `★ ${shot.quality_score}`)
                                 ),
                             h('div', { style: { display: 'flex', gap: '4px' } },
                               h('button', {
@@ -1619,7 +1752,7 @@ window.__ModuleLoader__.load({
                             )
                           ),
 
-                          // Edit inputs (Shown ONLY in edit mode)
+                          // Edit inputs
                           isEditingShots && h('div', { style: { display: 'flex', gap: '6px' } },
                             h('select', {
                               value: shot.shot_type || '中景',
@@ -1657,7 +1790,7 @@ window.__ModuleLoader__.load({
                             })
                           ),
 
-                          // Description: Plain text in View mode, Textarea in Edit mode
+                          // Description
                           isEditingShots
                             ? h('textarea', {
                                 rows: 2,
@@ -1686,7 +1819,6 @@ window.__ModuleLoader__.load({
                         h('button', {
                           style: { ...buttonSecondaryStyle, flex: 1, justifyContent: 'center' },
                           onClick: () => {
-                            // Cancel edit and reload
                             setIsEditingShots(false);
                             loadVideoDetail(selectedVideo.id);
                           }
@@ -1909,7 +2041,7 @@ window.__ModuleLoader__.load({
                       )
                     ),
 
-                    // Tab 3: Meta & Manual Notes
+                    // Tab 3: Meta, Audit & Notes
                     activeTab === 'meta' && editingMeta && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
                       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
                         h('span', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '视频资产属性与备注'),
@@ -1917,6 +2049,34 @@ window.__ModuleLoader__.load({
                           style: buttonSecondaryStyle,
                           onClick: () => setIsEditingMeta(true)
                         }, Icon.edit({ size: 12 }), '编辑信息')
+                      ),
+
+                      // AI Analysis Audit Card (Requested by user)
+                      selectedVideo.ai_model && h('div', {
+                        style: {
+                          backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                          border: '1px solid rgba(59, 130, 246, 0.25)',
+                          borderRadius: '6px',
+                          padding: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          fontSize: '11px'
+                        }
+                      },
+                        h('div', { style: { fontWeight: 600, color: '#3b82f6', display: 'flex', alignItems: 'center', gap: '5px' } },
+                          Icon.zap({ size: 13, color: '#3b82f6' }),
+                          'AI 深度分析审计报告'
+                        ),
+                        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', color: 'var(--dsw-alias-label-primary)' } },
+                          h('div', null, h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '分析模型: '), selectedVideo.ai_model),
+                          h('div', null, h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '执行耗时: '), `${((selectedVideo.ai_latency_ms || 0) / 1000).toFixed(2)} 秒`),
+                          h('div', null, h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, 'Token 消耗: '), `${selectedVideo.ai_total_tokens || 0} tokens`),
+                          h('div', null, h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '输入 / 输出: '), `${selectedVideo.ai_prompt_tokens || 0} / ${selectedVideo.ai_completion_tokens || 0}`)
+                        ),
+                        selectedVideo.ai_analyzed_at && h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '10px' } },
+                          `分析时间: ${selectedVideo.ai_analyzed_at.replace('T', ' ').slice(0, 19)}`
+                        )
                       ),
 
                       isEditingMeta
@@ -2040,7 +2200,7 @@ window.__ModuleLoader__.load({
                         : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' } },
                             h('div', { style: { padding: '8px 10px', backgroundColor: 'var(--dsw-alias-bg-layer-2)', borderRadius: '6px' } },
                               h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px', marginBottom: '3px' } }, '全片剧情与画面摘要 (Summary)'),
-                              h('div', { style: { lineHeight: '1.5' } }, selectedVideo.summary || '暂无全局摘要，可点击上方「编辑」手动补充或发起 AI 分析')
+                              h('div', { style: { lineHeight: '1.5' } }, selectedVideo.summary || '暂无全局摘要，可点击上方「AI 深度分析」或「编辑」手动补充')
                             ),
                             h('div', { style: { padding: '8px 10px', backgroundColor: 'var(--dsw-alias-bg-layer-2)', borderRadius: '6px' } },
                               h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px', marginBottom: '3px' } }, '剪辑备忘与人工备注 (User Notes)'),
@@ -2182,10 +2342,9 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        // 3. Upgraded Import Modal with Fixed High-Contrast Background
+        // 3. Upgraded Import Modal
         showScanModal && h('div', { style: modalOverlayStyle },
           h('div', { style: modalCardStyle },
-            // Modal Header
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 Icon.upload({ size: 18, color: '#3b82f6' }),
@@ -2205,7 +2364,6 @@ window.__ModuleLoader__.load({
 
             // Tab 1: Visual Browser
             importTab === 'browse' && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflow: 'hidden' } },
-              // Quick Places & Drives bar
               browserData && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px' } },
                 (browserData.drive_roots || []).map((d, i) =>
                   h('button', {
@@ -2223,7 +2381,6 @@ window.__ModuleLoader__.load({
                 )
               ),
 
-              // Breadcrumb / Current Path bar
               browserData && h('div', {
                 style: {
                   display: 'flex',
@@ -2269,7 +2426,6 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: { padding: '20px', textAlign: 'center', color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' } }, '正在读取目录...')
                   : browserData
                     ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } },
-                        // Folder Items
                         (browserData.folders || []).map(folder =>
                           h('div', {
                             key: folder.path,
@@ -2305,7 +2461,6 @@ window.__ModuleLoader__.load({
                             )
                           )
                         ),
-                        // Video File Items
                         (browserData.video_files || []).map(file => {
                           const isSelectedFile = selectedBrowserFile && selectedBrowserFile.path === file.path;
                           return h('div', {
@@ -2392,33 +2547,98 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        // 4. Settings Modal
+        // 4. Settings Modal with AI Config & Prompt Template
         showSettingsModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: '480px' } },
+          h('div', { style: { ...modalCardStyle, width: '600px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
               Icon.settings({ size: 18, color: '#3b82f6' }),
-              h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, 'FFmpeg / FFprobe 路径设置')
+              h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '插件设置与 AI 分析配置')
             ),
-            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } },
-              '如果系统环境变量未配置，可在此手动填写可执行文件的绝对路径。'
+
+            // Settings Content with Scroll
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, overflowY: 'auto', paddingRight: '4px' } },
+              // Section 1: FFmpeg
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '1. 媒体引擎环境 (FFmpeg / FFprobe)'),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                  h('div', null,
+                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFmpeg 绝对路径:'),
+                    h('input', {
+                      type: 'text',
+                      value: ffmpegInput,
+                      onChange: (e) => setFfmpegInput(e.target.value),
+                      placeholder: '自动检测或如 C:\\ffmpeg\\bin\\ffmpeg.exe',
+                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
+                    })
+                  ),
+                  h('div', null,
+                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFprobe 绝对路径:'),
+                    h('input', {
+                      type: 'text',
+                      value: ffprobeInput,
+                      onChange: (e) => setFfprobeInput(e.target.value),
+                      placeholder: '自动检测或如 C:\\ffmpeg\\bin\\ffprobe.exe',
+                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
+                    })
+                  )
+                )
+              ),
+
+              // Section 2: AI Multi-modal Model
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '2. AI 视觉大模型配置'),
+                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                  '默认自动继承当前 DSH 的多模态视觉模型（Zero-Plus），亦可在此单独指定模型或兼容端点。'
+                ),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                  h('div', null,
+                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'AI 视觉模型名称:'),
+                    h('select', {
+                      value: aiModelInput,
+                      onChange: (e) => setAiModelInput(e.target.value),
+                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
+                    },
+                      ['zero-plus', 'zero-pro', 'zero-flash', 'mimo-v2.5-pro', 'deepseek-v4-pro-vision'].map(m =>
+                        h('option', { key: m, value: m }, m)
+                      )
+                    )
+                  ),
+                  h('div', null,
+                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'API 基础端点 (Base URL):'),
+                    h('input', {
+                      type: 'text',
+                      value: aiBaseUrlInput,
+                      onChange: (e) => setAiBaseUrlInput(e.target.value),
+                      placeholder: 'https://api.nevermindzzt.top/v1',
+                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
+                    })
+                  )
+                )
+              ),
+
+              // Section 3: Prompt Template
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                  h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '3. AI 视频分析提示词模板 (Prompt)'),
+                  h('button', {
+                    style: { ...buttonSecondaryStyle, padding: '2px 8px', fontSize: '10px' },
+                    onClick: () => setAiPromptTemplate(defaultPromptText)
+                  }, '恢复默认提示词')
+                ),
+                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                  '支持变量动态注入：{{video_name}}, {{duration}}, {{resolution}}, {{fps}}, {{folder_name}}'
+                ),
+                h('textarea', {
+                  rows: 8,
+                  value: aiPromptTemplate,
+                  onChange: (e) => setAiPromptTemplate(e.target.value),
+                  style: { ...inputStyle, resize: 'vertical', lineHeight: '1.4', fontFamily: 'monospace', fontSize: '11px' }
+                })
+              )
             ),
-            h('label', { style: { fontSize: '12px', fontWeight: 500 } }, 'FFmpeg 绝对路径:'),
-            h('input', {
-              type: 'text',
-              value: ffmpegInput,
-              onChange: (e) => setFfmpegInput(e.target.value),
-              placeholder: '如: C:\\ffmpeg\\bin\\ffmpeg.exe',
-              style: inputStyle
-            }),
-            h('label', { style: { fontSize: '12px', fontWeight: 500 } }, 'FFprobe 绝对路径:'),
-            h('input', {
-              type: 'text',
-              value: ffprobeInput,
-              onChange: (e) => setFfprobeInput(e.target.value),
-              placeholder: '如: C:\\ffmpeg\\bin\\ffprobe.exe',
-              style: inputStyle
-            }),
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' } },
+
+            // Modal Footer
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' } },
               h('button', {
                 style: buttonSecondaryStyle,
                 onClick: () => setShowSettingsModal(false)
@@ -2426,7 +2646,7 @@ window.__ModuleLoader__.load({
               h('button', {
                 style: buttonPrimaryStyle,
                 onClick: handleSaveSettings
-              }, '保存配置')
+              }, Icon.check({ size: 13 }), '保存全部配置')
             )
           )
         ),

@@ -1,6 +1,6 @@
 # DSH 视频素材与分镜资产管理器 (dsh-video-manager)
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](package.json)
 [![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-0066FF.svg)](https://github.com/deepseek-ai)
 [![Node.js](https://img.shields.io/badge/node.js-%3E%3D24.0.0-green.svg)](https://nodejs.org/)
 [![Database](https://img.shields.io/badge/database-node%3Asqlite-orange.svg)](https://nodejs.org/api/sqlite.html)

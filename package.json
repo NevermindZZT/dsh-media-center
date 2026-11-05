@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-video-manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "AI 视频剪辑工作流专属的视频资产与分镜管理插件",

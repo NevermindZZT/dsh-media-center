@@ -2,6 +2,7 @@ import { VideoDatabase } from './src/host/db/database.js';
 import { MediaEngine } from './src/host/media/engine.js';
 import { ProjectExporter } from './src/host/export/project-exporter.js';
 import { ShotSearchService } from './src/host/search/shot-search.js';
+import { VideoAiAnalyzer } from './src/host/ai/video-analyzer.js';
 import { createVideoManagerApiHandler } from './src/host/api/router.js';
 import { registerVideoManagerTools } from './src/host/tools/register-tools.js';
 
@@ -13,6 +14,7 @@ export function apply(ctx, config) {
   const mediaEngine = new MediaEngine(db);
   const projectExporter = new ProjectExporter(db);
   const shotSearchService = new ShotSearchService(db);
+  const videoAiAnalyzer = new VideoAiAnalyzer(db, mediaEngine);
 
   ctx.effect(() => {
     // 1. Register Host Web API Route
@@ -22,7 +24,8 @@ export function apply(ctx, config) {
         db,
         mediaEngine,
         projectExporter,
-        shotSearchService
+        shotSearchService,
+        videoAiAnalyzer
       });
       disposeRoute = ctx.webServer.register({
         kind: 'prefix',
