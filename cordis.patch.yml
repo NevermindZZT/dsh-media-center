@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-video-manager
+      name: '@local/dsh-video-manager'
+      config: {}
