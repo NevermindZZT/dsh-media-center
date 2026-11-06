@@ -101,6 +101,8 @@ export class VideoDatabase {
         ai_total_tokens INTEGER DEFAULT 0,
         ai_latency_ms INTEGER DEFAULT 0,
         ai_analyzed_at TEXT,
+        captured_at TEXT,
+        captured_at_source TEXT,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         updated_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
@@ -116,6 +118,14 @@ export class VideoDatabase {
       if (!videoCols.includes('ai_total_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_total_tokens INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_latency_ms')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_latency_ms INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_analyzed_at')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_analyzed_at TEXT;");
+      if (!videoCols.includes('captured_at')) {
+        this.db.exec("ALTER TABLE videos ADD COLUMN captured_at TEXT;");
+      }
+      if (!videoCols.includes('captured_at_source')) {
+        this.db.exec("ALTER TABLE videos ADD COLUMN captured_at_source TEXT;");
+        // The old migration copied import timestamps; none of those values are trusted.
+        this.db.exec("UPDATE videos SET captured_at = NULL;");
+      }
     } catch (e) {
       console.warn('[VideoDatabase] Video table migration warning:', e.message);
     }
@@ -406,6 +416,8 @@ export class VideoDatabase {
           ai_total_tokens = COALESCE(?, ai_total_tokens),
           ai_latency_ms = COALESCE(?, ai_latency_ms),
           ai_analyzed_at = COALESCE(?, ai_analyzed_at),
+          captured_at = CASE WHEN ? THEN ? ELSE captured_at END,
+          captured_at_source = COALESCE(?, captured_at_source),
           updated_at = ?
         WHERE id = ?
       `).run(
@@ -431,6 +443,9 @@ export class VideoDatabase {
         videoData.ai_total_tokens ?? null,
         videoData.ai_latency_ms ?? null,
         videoData.ai_analyzed_at ?? null,
+        Object.hasOwn(videoData, 'captured_at') ? 1 : 0,
+        videoData.captured_at ?? null,
+        videoData.captured_at_source ?? null,
         now,
         existing.id
       );
@@ -442,8 +457,8 @@ export class VideoDatabase {
           width, height, fps, codec, bitrate, audio_channels, sample_rate,
           status, summary, user_notes, tags, storyboard_path,
           ai_model, ai_prompt_tokens, ai_completion_tokens, ai_total_tokens, ai_latency_ms, ai_analyzed_at,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          captured_at, captured_at_source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         videoData.folder_id ?? null,
@@ -469,11 +484,24 @@ export class VideoDatabase {
         videoData.ai_total_tokens ?? 0,
         videoData.ai_latency_ms ?? 0,
         videoData.ai_analyzed_at ?? null,
+        videoData.captured_at ?? null,
+        videoData.captured_at_source ?? null,
         now,
         now
       );
       return this.getVideoById(id);
     }
+  }
+
+  // Read-only source probes update only capture fields, never import time or AI annotations.
+  getPendingCaptureTimes() {
+    return this.db.prepare(`SELECT id, file_path FROM videos
+      WHERE captured_at_source IS NULL OR captured_at_source = 'unavailable'`).all();
+  }
+
+  updateCaptureTime(videoId, captureTime) {
+    this.db.prepare(`UPDATE videos SET captured_at = ?, captured_at_source = ? WHERE id = ?`)
+      .run(captureTime.captured_at ?? null, captureTime.captured_at_source, videoId);
   }
 
   getVideoById(id, includeShots = false, includeAudio = false) {
@@ -544,7 +572,25 @@ export class VideoDatabase {
       params.push(`%"${options.tag}"%`);
     }
 
-    sql += ` ORDER BY v.updated_at DESC`;
+    // Dynamic Multi-field Sorting
+    const allowedSortFields = {
+      captured_at: 'julianday(v.captured_at)',
+      created_at: 'julianday(v.created_at)',
+      file_name: 'v.file_name COLLATE NOCASE',
+      duration: 'v.duration',
+      file_size: 'v.file_size',
+      updated_at: 'v.updated_at'
+    };
+
+    const sortBy = options.sort_by || options.order_by || 'captured_at';
+    const sortField = allowedSortFields[sortBy] || allowedSortFields.captured_at;
+    // Default sort direction: file_name defaults to ASC, others default to DESC
+    let defaultDir = sortBy === 'file_name' ? 'ASC' : 'DESC';
+    const sortDir = options.sort_dir || options.order_dir
+      ? (String(options.sort_dir || options.order_dir).toUpperCase() === 'ASC' ? 'ASC' : 'DESC')
+      : defaultDir;
+
+    sql += ` ORDER BY ${sortField} IS NULL ASC, ${sortField} ${sortDir}, v.id DESC`;
 
     if (options.limit) {
       sql += ` LIMIT ?`;

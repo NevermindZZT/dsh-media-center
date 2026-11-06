@@ -195,20 +195,24 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
 
       // 7. Video List: GET /api/video-manager/videos
       if (pathname === '/api/video-manager/videos' && method === 'GET') {
+        await mediaEngine.ensureCaptureTimes();
         const folderId = parsedUrl.searchParams.get('folder_id') || undefined;
         const query = parsedUrl.searchParams.get('query') || undefined;
         const status = parsedUrl.searchParams.get('status') || undefined;
         const tag = parsedUrl.searchParams.get('tag') || undefined;
         const limit = parsedUrl.searchParams.get('limit') || 100;
         const offset = parsedUrl.searchParams.get('offset') || 0;
+        const sortBy = parsedUrl.searchParams.get('sort_by') || undefined;
+        const sortDir = parsedUrl.searchParams.get('sort_dir') || undefined;
 
-        const videos = db.queryVideos({ folder_id: folderId, query, status, tag, limit, offset });
+        const videos = db.queryVideos({ folder_id: folderId, query, status, tag, limit, offset, sort_by: sortBy, sort_dir: sortDir });
         return jsonResponse(res, { success: true, videos });
       }
 
       // 8. Video Details: GET /api/video-manager/videos/:id
       const videoDetailMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)$/);
       if (videoDetailMatch && method === 'GET') {
+        await mediaEngine.ensureCaptureTimes();
         const video = db.getVideoById(videoDetailMatch[1], true, true);
         if (!video) return jsonResponse(res, { success: false, error: 'Video not found' }, 404);
         return jsonResponse(res, { success: true, video });

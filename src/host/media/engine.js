@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { extractCaptureTime } from './capture-time.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,12 +61,50 @@ export class MediaEngine {
     return null;
   }
 
+  async probeCaptureTime(filePath, ffprobe) {
+    const { stdout } = await execFileAsync(ffprobe, [
+      '-v', 'quiet', '-print_format', 'json',
+      '-show_entries', 'format_tags:stream=codec_type:stream_tags', filePath
+    ], { timeout: 15000, maxBuffer: 1024 * 1024 });
+    return extractCaptureTime(JSON.parse(stdout));
+  }
+
+  // One coalesced, bounded pass per runtime; failures can retry after the next reload.
+  async ensureCaptureTimes() {
+    if (this.captureTimeRefresh) return this.captureTimeRefresh;
+    this.captureTimeAttempts ||= new Set();
+    const run = async () => {
+      const pending = this.db.getPendingCaptureTimes().filter(v => !this.captureTimeAttempts.has(v.id));
+      if (!pending.length) return;
+      const { ffprobe } = await this.getBinaries();
+      if (!ffprobe) return; // Do not mark unknown: retry after the executable is configured.
+      let index = 0;
+      const worker = async () => {
+        while (index < pending.length) {
+          const video = pending[index++];
+          this.captureTimeAttempts.add(video.id);
+          try {
+            this.db.updateCaptureTime(video.id, await this.probeCaptureTime(video.file_path, ffprobe));
+          } catch {
+            // Offline/missing sources are distinct from media with no recording tag.
+            this.db.updateCaptureTime(video.id, { captured_at: null, captured_at_source: 'unavailable' });
+          }
+        }
+      };
+      await Promise.all([worker(), worker()]);
+    };
+    this.captureTimeRefresh = run();
+    try { await this.captureTimeRefresh; }
+    finally { this.captureTimeRefresh = null; }
+  }
+
   // Extract video metadata with ffprobe
   async probeVideo(filePath) {
     const bins = await this.getBinaries();
     if (!bins.ffprobe) {
       // Fallback: minimal stat
       const stat = fs.statSync(filePath);
+
       return {
         file_name: path.basename(filePath),
         file_path: filePath,
@@ -77,7 +116,9 @@ export class MediaEngine {
         codec: 'unknown',
         bitrate: 0,
         audio_channels: 2,
-        sample_rate: 44100
+        sample_rate: 44100,
+        captured_at: null,
+        captured_at_source: 'unavailable'
       };
     }
 
@@ -105,6 +146,9 @@ export class MediaEngine {
     }
 
     const stat = fs.statSync(filePath);
+
+    const captureTime = extractCaptureTime(meta);
+
     return {
       file_name: path.basename(filePath),
       file_path: filePath,
@@ -116,7 +160,8 @@ export class MediaEngine {
       codec: String(videoStream.codec_name || '').toUpperCase(),
       bitrate: Number(format.bit_rate || videoStream.bit_rate || 0),
       audio_channels: Number(audioStream.channels || 0),
-      sample_rate: Number(audioStream.sample_rate || 0)
+      sample_rate: Number(audioStream.sample_rate || 0),
+      ...captureTime
     };
   }
 

@@ -39,6 +39,8 @@
   保持专业生产力软件克制美感，**默认呈现舒适的正常阅读浏览模式**。点击【✏️ 编辑】即可就地调整分镜秒数、景别（大远景至大特写）、运镜（推拉摇移跟俯冲）、画面描述、语音字幕与标签，并支持一键保存。
 - 📦 **素材整理与批量管理**：
   支持多选勾选素材，一键【批量移动到分类】、【批量移出素材库】。
+- ↕️ **多维双向排序体系**：
+  中栏支持按 **拍摄时间**（最新/最早）、**导入时间**（最新/最早）、**文件名**（A ➔ Z / Z ➔ A）、**视频时长**（长到短/短到长）进行实时动态排序。上次选择保存在当前浏览器，下次打开自动恢复。拍摄时间只读取媒体容器/视频流的录制时间标签（如 `creation_time`、QuickTime 创建日期），带时区的时间按浏览器本地时区显示；没有时区的标签保留相机墙上时间。没有有效标签时显示“拍摄时间未知”，不使用文件创建时间、修改时间或导入时间冒充。旧素材会在首次加载列表时只读重探测，保留导入时间、分镜和 AI 标注；未知拍摄时间在升降序中均排在末尾。
 - ✂️ **主流剪辑软件工程一键导出**：
   AI Agent 排布或人工整理好的镜头片段，可一键直出 **剪映电脑版本地草稿目录（`draft_content.json`）**、**Final Cut Pro / Premiere XML（FCPXML v1.9）** 或 **CMX 3600 EDL**，在剪辑软件中秒开粗剪时间线。
 - 🔍 **分镜多维与自然语言语义检索**：
@@ -59,7 +61,7 @@
 | `video_manager_list_folders` | 读取多级目录分类树及各节点素材统计（支持递归包含子孙统计） | `{ parent_id? }` |
 | `video_manager_scan_directory` | 扫描导入本地物理文件夹，自动镜像多级物理子目录并提取参数 | `{ directory_path }` |
 | `video_manager_import_files` | 直接导入一个或多个指定视频文件到指定分类目录中 | `{ file_paths: string[], folder_id? }` |
-| `video_manager_search_videos` | 多条件检索素材库（按目录、标签、分析状态、关键词） | `{ folder_id?, status?, query?, tag?, limit? }` |
+| `video_manager_search_videos` | 多条件检索素材库（按目录、标签、分析状态、关键词、拍摄时间/时长排序） | `{ folder_id?, status?, query?, tag?, limit?, sort_by?, sort_dir? }` |
 | `video_manager_get_video` | 获取单个视频的完整详情（物理绝对路径、基本参数、分镜列表、音频提示） | `{ video_id, include_shots?, include_audio? }` |
 | `video_manager_trigger_analysis` | 触发后台抽取故事板大图、音频静音检测、BPM 分析与初始切分点 | `{ video_id }` |
 | `video_manager_upsert_shots` | Agent 完成视觉理解后，批量回写分镜（景别、运镜、画面详述、评分） | `{ video_id, shots: [...] }` |

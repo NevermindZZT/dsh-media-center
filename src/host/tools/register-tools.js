@@ -122,6 +122,16 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
         limit: {
           type: 'integer',
           description: '返回数量上限，默认 20。'
+        },
+        sort_by: {
+          type: 'string',
+          enum: ['captured_at', 'created_at', 'file_name', 'duration'],
+          description: '可选的排序字段：captured_at=拍摄时间，created_at=导入时间，file_name=文件名，duration=视频时长。'
+        },
+        sort_dir: {
+          type: 'string',
+          enum: ['asc', 'desc'],
+          description: '可选的排序方向：asc=升序，desc=降序。'
         }
       },
       additionalProperties: false
@@ -144,6 +154,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
           status: v.status,
           tags: v.tags,
           summary: v.summary,
+          captured_at: v.captured_at,
           storyboard_path: v.storyboard_path
         }))
       };

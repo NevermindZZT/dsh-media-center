@@ -140,6 +140,22 @@ window.__ModuleLoader__.load({
         h('line', { x1: 2, y1: 12, x2: 22, y2: 12 }),
         h('line', { x1: 12, y1: 2, x2: 12, y2: 22 })
       ),
+      arrowUpDown: (props) => h('svg', {
+        width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
+      },
+        h('path', { d: 'm7 15 5 5 5-5' }),
+        h('path', { d: 'm7 9 5-5 5 5' })
+      ),
+      clock: (props) => h('svg', {
+        width: props?.size || 12, height: props?.size || 12, viewBox: '0 0 24 24', fill: 'none',
+        stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }
+      },
+        h('circle', { cx: 12, cy: 12, r: 10 }),
+        h('polyline', { points: '12 6 12 12 16 14' })
+      ),
       check: (props) => h('svg', {
         width: props?.size || 14, height: props?.size || 14, viewBox: '0 0 24 24', fill: 'none',
         stroke: props?.color || 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
@@ -294,6 +310,45 @@ window.__ModuleLoader__.load({
       return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
     }
 
+    function formatDateTime(str, withSeconds = true) {
+      if (!str) return '';
+      const value = String(str).trim();
+      // Zone-stamped metadata is an instant: render it in the viewer's local zone.
+      if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) {
+        const date = new Date(value);
+        if (!Number.isFinite(date.getTime())) return '';
+        const pad = (part) => String(part).padStart(2, '0');
+        const local = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        return withSeconds ? `${local}:${pad(date.getSeconds())}` : local;
+      }
+      // A recording timestamp without a zone is camera wall time, not UTC.
+      const wallTime = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2}))?(?:\.\d+)?$/);
+      if (!wallTime) return '';
+      return `${wallTime[1]} ${wallTime[2]}${withSeconds ? `:${wallTime[3] || '00'}` : ''}`;
+    }
+
+    function captureTimePresentation(video, withSeconds = true) {
+      const source = video?.captured_at_source;
+      const time = /^(?:metadata:format\.|metadata:video\.)/.test(source || '')
+        ? formatDateTime(video.captured_at, withSeconds)
+        : '';
+      if (time) {
+        return { text: time, title: `拍摄时间: ${time}\n来源: ${source}` };
+      }
+      const text = source == null
+        ? '拍摄时间待读取'
+        : source === 'unavailable' ? '拍摄时间不可用' : '拍摄时间未知';
+      return { text, title: text };
+    }
+
+    const SORT_STORAGE_KEY = 'dsh-video-manager.sortRule';
+    const DEFAULT_SORT_RULE = 'captured_at_desc';
+    const SORT_RULES = new Set([
+      'captured_at_desc', 'captured_at_asc', 'created_at_desc', 'created_at_asc',
+      'file_name_asc', 'file_name_desc', 'duration_desc', 'duration_asc'
+    ]);
+    const validateSortRule = (rule) => SORT_RULES.has(rule) ? rule : DEFAULT_SORT_RULE;
+
     // --- Main Workbench View Component with Mobile Responsive Layout ---
     function VideoManagerWorkbench() {
       // Responsive state (mobile: < 840px)
@@ -316,6 +371,23 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(false);
       const [searchQuery, setSearchQuery] = useState('');
       const [statusFilter, setStatusFilter] = useState('');
+      const [sortRule, setSortRule] = useState(() => {
+        try {
+          return validateSortRule(window.localStorage.getItem(SORT_STORAGE_KEY));
+        } catch {
+          return DEFAULT_SORT_RULE;
+        }
+      });
+      const sortRuleRef = useRef(sortRule);
+      sortRuleRef.current = sortRule;
+
+      const parseSortRule = (rule) => {
+        const validatedRule = validateSortRule(rule);
+        const lastUnderscore = validatedRule.lastIndexOf('_');
+        const field = validatedRule.slice(0, lastUnderscore);
+        const dir = validatedRule.slice(lastUnderscore + 1);
+        return { sortBy: field, sortDir: dir };
+      };
 
       // Batch selection state
       const [selectedVideoIds, setSelectedVideoIds] = useState(new Set());
@@ -479,13 +551,19 @@ window.__ModuleLoader__.load({
       };
 
       // 3. Load Videos
-      const loadVideos = async (folderId, query, status) => {
+      const loadVideos = async (folderId, query, status, sBy = null, sDir = null) => {
         setLoading(true);
         try {
+          const parsedSort = parseSortRule(sortRuleRef.current);
+          const finalSortBy = sBy !== null ? sBy : parsedSort.sortBy;
+          const finalSortDir = sDir !== null ? sDir : parsedSort.sortDir;
+
           let url = '/api/video-manager/videos?limit=200';
           if (folderId) url += `&folder_id=${encodeURIComponent(folderId)}`;
           if (query) url += `&query=${encodeURIComponent(query)}`;
           if (status) url += `&status=${encodeURIComponent(status)}`;
+          if (finalSortBy) url += `&sort_by=${encodeURIComponent(finalSortBy)}`;
+          if (finalSortDir) url += `&sort_dir=${encodeURIComponent(finalSortDir)}`;
           const res = await fetch(url);
           const data = await res.json();
           if (data.success) {
@@ -1490,7 +1568,7 @@ window.__ModuleLoader__.load({
                 gap: '8px',
                 alignItems: 'center',
                 backgroundColor: 'var(--dsw-alias-bg-layer-1)',
-                flexWrap: isMobile ? 'wrap' : 'nowrap'
+                flexWrap: 'wrap'
               }
             },
               h('input', {
@@ -1507,11 +1585,53 @@ window.__ModuleLoader__.load({
                   setStatusFilter(e.target.value);
                   loadVideos(selectedFolderId, searchQuery, e.target.value);
                 },
-                style: inputStyle
+                style: { ...inputStyle, minWidth: '85px' }
               },
                 h('option', { value: '' }, '全部状态'),
                 h('option', { value: 'imported' }, '待分析'),
                 h('option', { value: 'analyzed' }, '已分析')
+              ),
+              // Sort Selector
+              h('div', {
+                style: {
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  flexShrink: 0
+                }
+              },
+                Icon.arrowUpDown({ size: 13, color: 'var(--dsw-alias-label-secondary)' }),
+                h('select', {
+                  value: sortRule,
+                  onChange: (e) => {
+                    const newRule = validateSortRule(e.target.value);
+                    sortRuleRef.current = newRule;
+                    setSortRule(newRule);
+                    try {
+                      window.localStorage.setItem(SORT_STORAGE_KEY, newRule);
+                    } catch {
+                      // Storage may be disabled; sorting still works for this mount.
+                    }
+                    const { sortBy: sBy, sortDir: sDir } = parseSortRule(newRule);
+                    loadVideos(selectedFolderId, searchQuery, statusFilter, sBy, sDir);
+                  },
+                  title: '排序方式',
+                  'aria-label': '排序方式',
+                  style: {
+                    ...inputStyle,
+                    minWidth: isMobile ? '110px' : '150px',
+                    cursor: 'pointer'
+                  }
+                },
+                  h('option', { value: 'captured_at_desc' }, '拍摄时间 (最新)'),
+                  h('option', { value: 'captured_at_asc' }, '拍摄时间 (最早)'),
+                  h('option', { value: 'created_at_desc' }, '导入时间 (最新)'),
+                  h('option', { value: 'created_at_asc' }, '导入时间 (最早)'),
+                  h('option', { value: 'file_name_asc' }, '文件名 (A ➔ Z)'),
+                  h('option', { value: 'file_name_desc' }, '文件名 (Z ➔ A)'),
+                  h('option', { value: 'duration_desc' }, '视频时长 (长 ➔ 短)'),
+                  h('option', { value: 'duration_asc' }, '视频时长 (短 ➔ 长)')
+                )
               )
             ),
 
@@ -1571,6 +1691,7 @@ window.__ModuleLoader__.load({
                 const isChecked = selectedVideoIds.has(v.id);
                 const isMenuOpen = activeVideoMenuId === v.id;
                 const isCurrentAnalyzing = aiAnalyzingId === v.id;
+                const captureTime = captureTimePresentation(v, false);
 
                 return h('div', {
                   key: v.id,
@@ -1733,6 +1854,18 @@ window.__ModuleLoader__.load({
                       h('span', null, `${v.width}x${v.height}`),
                       h('span', null, `${v.fps} fps`),
                       h('span', null, v.codec || 'MP4')
+                    ),
+                    h('div', {
+                      style: {
+                        fontSize: '11px',
+                        color: 'var(--dsw-alias-label-secondary)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }
+                    },
+                      Icon.clock({ size: 10, color: 'var(--dsw-alias-label-secondary)' }),
+                      h('span', { title: captureTime.title }, captureTime.text)
                     ),
                     // Audit Pill Badge
                     v.ai_model && h('div', {
@@ -2522,7 +2655,9 @@ window.__ModuleLoader__.load({
                               h('div', null, h('strong', null, '文件大小: '), formatFileSize(selectedVideo.file_size)),
                               h('div', null, h('strong', null, '分辨率与帧率: '), `${selectedVideo.width}x${selectedVideo.height} @ ${selectedVideo.fps} fps`),
                               h('div', null, h('strong', null, '编码与码率: '), `${selectedVideo.codec} (${Math.round((selectedVideo.bitrate || 0) / 1000)} kbps)`),
-                              h('div', null, h('strong', null, '所属分类目录: '), selectedVideo.folder_path || '根目录')
+                              h('div', null, h('strong', null, '所属分类目录: '), selectedVideo.folder_path || '根目录'),
+                              h('div', { title: captureTimePresentation(selectedVideo).title }, h('strong', null, '拍摄时间: '), captureTimePresentation(selectedVideo).text),
+                              h('div', null, h('strong', null, '导入时间: '), formatDateTime(selectedVideo.created_at, true) || '未知')
                             )
                           )
                     )

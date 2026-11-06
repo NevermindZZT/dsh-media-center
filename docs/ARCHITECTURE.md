@@ -217,6 +217,8 @@ CREATE TABLE IF NOT EXISTS videos (
   ai_total_tokens INTEGER DEFAULT 0,   -- 总 Token 消耗
   ai_latency_ms INTEGER DEFAULT 0,     -- 接口端到端分析耗时 (毫秒)
   ai_analyzed_at TEXT,                 -- 分析完成时间戳
+  captured_at TEXT,                    -- 可信媒体录制时间；无标签时为 NULL，不使用文件/导入时间
+  captured_at_source TEXT,             -- metadata:format.<tag> / metadata:video.<tag> / unknown / unavailable
   created_at TEXT DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT DEFAULT (datetime('now', 'localtime')),
   FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
@@ -430,8 +432,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
   - 增加 `flexShrink: 0` 保护机制，防止长目录文本将图标压缩消失；
   - **无偏移拖拽调宽**：通过 `e.clientX - workbenchRect.left` 消除宿主全局侧边栏占位产生的 280px 偏移，实现鼠标与分割线 1:1 绝对重合平滑拖拽。
 - **中栏（素材卡片流）**：
+  - 顶部 Filter Bar 提供**多维排序选择器**（支持拍摄时间、导入时间、文件名、视频时长双向排序）；以 `localStorage` 保存当前浏览器的上次选择，并在首次请求列表前恢复，存储不可用或值非法时安全回退；
+  - 拍摄时间仅采信媒体录制标签，保留时区语义，未知值升降序均排末尾。旧版把导入时间写为拍摄时间的记录，在增加 `captured_at_source` 时清空伪值，首次请求列表/详情时以最多 2 路只读 FFprobe（每文件 15 秒超时）补齐；只更新拍摄时间及来源，不改导入时间、修改时间或 AI 标注。源文件不可访问时标记 `unavailable`，下次重载可重试；
   - 支持多选 Checkbox、全选快捷框、批量操作滑出工具栏；
-  - 卡片集成缩略图、时长徽标、高反差状态标签（深灰底色 + 纯白文字，浅色模式下杜绝白底白字）；
+  - 卡片集成缩略图、时长徽标、拍摄时间标签、高反差状态标签（深灰底色 + 纯白文字，浅色模式下杜绝白底白字）；
   - 卡片底部常驻微型 AI 审计胶囊（`⚡ 耗时 · Token · 模型`）。
 - **右栏（视听详情深度工作台）**：
   - 顶部集成 HTML5 视频播放器，支持点击任意分镜“▶ 播放该段”实现毫秒级精准跳播与循环播放；
@@ -472,7 +476,7 @@ Host 端在 `/api/video-manager` 前缀下注册以下 HTTP 接口：
 | `POST` | `/folders` | 创建新分类目录 | `{ name, parent_id? }` |
 | `PUT` | `/folders/:id` | 重命名分类目录 | `{ name }` |
 | `DELETE` | `/folders/:id` | 删除目录（素材自动移入根目录） | - |
-| `GET` | `/videos` | 检索素材列表 | `folder_id`, `status`, `query`, `tag` |
+| `GET` | `/videos` | 检索素材列表（支持多维排序） | `folder_id`, `status`, `query`, `tag`, `sort_by`, `sort_dir` |
 | `GET` | `/videos/:id` | 获取单视频完整详情 | `include_shots`, `include_audio` |
 | `PUT` | `/videos/:id` | 更新视频基本信息与备注 | `{ summary, tags, user_notes, folder_id, file_name }` |
 | `DELETE` | `/videos/:id` | 移出素材库（绝不删源文件） | - |
