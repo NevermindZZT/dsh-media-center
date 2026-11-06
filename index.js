@@ -6,7 +6,7 @@ import { VideoAiAnalyzer } from './src/host/ai/video-analyzer.js';
 import { createVideoManagerApiHandler } from './src/host/api/router.js';
 import { registerVideoManagerTools } from './src/host/tools/register-tools.js';
 
-export const inject = ['tools', 'webServer'];
+export const inject = ['tools', 'webServer', 'llm', 'attachments'];
 
 export function apply(ctx, config) {
   const workspaceRoot = process.cwd();
@@ -14,7 +14,7 @@ export function apply(ctx, config) {
   const mediaEngine = new MediaEngine(db);
   const projectExporter = new ProjectExporter(db);
   const shotSearchService = new ShotSearchService(db);
-  const videoAiAnalyzer = new VideoAiAnalyzer(db, mediaEngine);
+  const videoAiAnalyzer = new VideoAiAnalyzer(db, mediaEngine, { llm: ctx.llm, attachments: ctx.attachments });
 
   ctx.effect(() => {
     // 1. Register Host Web API Route

@@ -1,8 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
+import { AnalysisQueue } from '../ai/analysis-queue.js';
 
 export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer }) {
+  const analysisQueue = new AnalysisQueue(db);
+  const recordAnalysisFailure = (id) => {
+    // A video may have been removed while the analyzer was awaiting a remote model.
+    // Never insert a replacement row when marking a failure.
+    try {
+      const video = db.getVideoById(id);
+      if (video && video.status !== 'analyzed') db.upsertVideo({ id, status: 'error' });
+    }
+    catch (error) { console.error('[ai-analyze] Unable to save failure status:', error); }
+  };
   const jsonResponse = (res, data, status = 200) => {
     const body = Buffer.from(JSON.stringify(data));
     res.writeHead(status, {
@@ -99,7 +110,10 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       // 1. Status & Binaries: GET /api/video-manager/status
       if (pathname === '/api/video-manager/status' && method === 'GET') {
         const bins = await mediaEngine.getBinaries();
-        const settings = db.getAllSettings();
+        const settings = {
+          ffmpeg_path: db.getSetting('ffmpeg_path'),
+          ffprobe_path: db.getSetting('ffprobe_path')
+        };
         return jsonResponse(res, {
           success: true,
           db_path: db.dbPath,
@@ -205,7 +219,15 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         const sortBy = parsedUrl.searchParams.get('sort_by') || undefined;
         const sortDir = parsedUrl.searchParams.get('sort_dir') || undefined;
 
-        const videos = db.queryVideos({ folder_id: folderId, query, status, tag, limit, offset, sort_by: sortBy, sort_dir: sortDir });
+        const options = { folder_id: folderId, query, tag, sort_by: sortBy, sort_dir: sortDir };
+        // Stored status cannot be filtered before applying the runtime overlay.
+        // Filter first, then page, so queued/running items are not lost at page boundaries.
+        const videos = status
+          ? db.queryVideos(options).filter(v => analysisQueue.overlay(v).status === status ||
+                (status === 'imported' && analysisQueue.active.has(v.id)))
+              .map(v => analysisQueue.overlay(v))
+              .slice(Math.max(0, Number(offset) || 0), Math.max(0, Number(offset) || 0) + Math.max(0, Number(limit) || 100))
+          : db.queryVideos({ ...options, limit, offset }).map(v => analysisQueue.overlay(v));
         return jsonResponse(res, { success: true, videos });
       }
 
@@ -215,7 +237,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         await mediaEngine.ensureCaptureTimes();
         const video = db.getVideoById(videoDetailMatch[1], true, true);
         if (!video) return jsonResponse(res, { success: false, error: 'Video not found' }, 404);
-        return jsonResponse(res, { success: true, video });
+        return jsonResponse(res, { success: true, video: analysisQueue.overlay(video) });
       }
 
       // 9. Update Video: PUT /api/video-manager/videos/:id
@@ -274,67 +296,74 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       const aiAnalyzeMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/ai-analyze$/);
       if (aiAnalyzeMatch && method === 'POST') {
         const videoId = aiAnalyzeMatch[1];
+        const reservation = analysisQueue.reserve([videoId]);
+        if (!reservation.ok) return jsonResponse(res, { success: false, error: reservation.error, video_ids: reservation.video_ids }, reservation.status);
         try {
-          db.upsertVideo({ id: videoId, status: 'analyzing' });
+          analysisQueue.start(videoId, reservation.token);
           const result = await videoAiAnalyzer.analyzeVideo(videoId);
+          if (result?.success === false) throw new Error(result.error || 'AI analysis failed');
           return jsonResponse(res, result);
         } catch (e) {
-          db.upsertVideo({ id: videoId, status: 'error' });
+          recordAnalysisFailure(videoId);
           console.error('[ai-analyze] Error:', e);
           return jsonResponse(res, { success: false, error: e.message }, 500);
+        } finally {
+          analysisQueue.release(videoId, reservation.token);
         }
       }
 
       // 11.2 Batch Multi-modal AI Video Analysis: POST /api/video-manager/videos/batch-ai-analyze
       if (pathname === '/api/video-manager/videos/batch-ai-analyze' && method === 'POST') {
         const body = await parseJsonBody(req);
-        if (!Array.isArray(body.video_ids) || body.video_ids.length === 0) {
-          return jsonResponse(res, { success: false, error: 'video_ids array is required' }, 400);
-        }
+        const reservation = analysisQueue.reserve(body?.video_ids);
+        if (!reservation.ok) return jsonResponse(res, { success: false, error: reservation.error, video_ids: reservation.video_ids }, reservation.status);
         const results = [];
         let succeeded = 0;
-        for (const vid of body.video_ids) {
-          try {
-            db.upsertVideo({ id: vid, status: 'analyzing' });
-            const r = await videoAiAnalyzer.analyzeVideo(vid);
-            results.push({ video_id: vid, success: true, audit: r.audit });
-            succeeded++;
-          } catch (e) {
-            db.upsertVideo({ id: vid, status: 'error' });
-            results.push({ video_id: vid, success: false, error: e.message });
+        try {
+          for (const vid of body.video_ids) {
+            try {
+              analysisQueue.start(vid, reservation.token);
+              // A queued video can be removed while an earlier video is processing.
+              if (!db.getVideoById(vid)) throw new Error('Video not found');
+              const r = await videoAiAnalyzer.analyzeVideo(vid);
+              if (r?.success === false) throw new Error(r.error || 'AI analysis failed');
+              results.push({ video_id: vid, success: true, audit: r.audit });
+              succeeded++;
+            } catch (e) {
+              recordAnalysisFailure(vid);
+              results.push({ video_id: vid, success: false, error: e.message });
+            } finally {
+              analysisQueue.release(vid, reservation.token);
+            }
           }
+          return jsonResponse(res, {
+            success: true,
+            total: body.video_ids.length,
+            succeeded,
+            results
+          });
+        } finally {
+          // Also release not-yet-started IDs if an unexpected error aborts the loop.
+          for (const vid of body.video_ids) analysisQueue.release(vid, reservation.token);
         }
-        return jsonResponse(res, {
-          success: true,
-          total: body.video_ids.length,
-          succeeded,
-          results
-        });
       }
 
-      // 11.3 AI Settings: GET /api/video-manager/ai-settings
+      // Return live registered DSH providers/models; no credentials are exposed.
+      if (pathname === '/api/video-manager/ai-models' && method === 'GET') {
+        const catalog = await videoAiAnalyzer.getModelCatalog();
+        return jsonResponse(res, { success: true, ...catalog });
+      }
       if (pathname === '/api/video-manager/ai-settings' && method === 'GET') {
-        const cfg = videoAiAnalyzer.resolveAiConfig();
-        const defaultPrompt = videoAiAnalyzer.getDefaultPromptTemplate();
-        return jsonResponse(res, {
-          success: true,
-          base_url: cfg.baseUrl,
-          model: cfg.model,
-          has_api_key: !!cfg.apiKey,
-          custom_prompt: cfg.customPrompt || '',
-          default_prompt: defaultPrompt
-        });
+        return jsonResponse(res, { success: true, ...videoAiAnalyzer.getAiSettings() });
       }
-
-      // 11.4 AI Settings: POST /api/video-manager/ai-settings
       if (pathname === '/api/video-manager/ai-settings' && method === 'POST') {
         const body = await parseJsonBody(req);
-        if (body.base_url !== undefined) db.setSetting('ai_base_url', body.base_url);
-        if (body.api_key !== undefined) db.setSetting('ai_api_key', body.api_key);
-        if (body.model !== undefined) db.setSetting('ai_model', body.model);
-        if (body.prompt_template !== undefined) db.setSetting('ai_prompt_template', body.prompt_template);
-        const cfg = videoAiAnalyzer.resolveAiConfig();
-        return jsonResponse(res, { success: true, config: cfg });
+        try {
+          const settings = await videoAiAnalyzer.saveAiSettings(body);
+          return jsonResponse(res, { success: true, ...settings });
+        } catch (e) {
+          return jsonResponse(res, { success: false, error: e.message }, 400);
+        }
       }
 
       // 12. Video Storyboard Image: GET /api/video-manager/videos/:id/storyboard

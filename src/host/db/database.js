@@ -616,19 +616,13 @@ export class VideoDatabase {
     const video = this.getVideoById(videoId);
     if (!video) return false;
 
-    // Delete associated storyboard and keyframe files
-    if (video.storyboard_path && fs.existsSync(video.storyboard_path)) {
-      try { fs.unlinkSync(video.storyboard_path); } catch {}
+    // Paths in the database are untrusted; never delete files during removal.
+    // FTS is a separate virtual table and does not participate in FK cascades.
+    try {
+      this.db.prepare('DELETE FROM video_shots_fts WHERE video_id = ?').run(videoId);
+    } catch (e) {
+      if (!String(e.message).includes('no such table: video_shots_fts')) throw e;
     }
-
-    const shots = this.getVideoShots(videoId);
-    for (const shot of shots) {
-      if (shot.keyframe_path && fs.existsSync(shot.keyframe_path)) {
-        try { fs.unlinkSync(shot.keyframe_path); } catch {}
-      }
-    }
-
-    // Note: NEVER deletes the original video file (video.file_path). Only deletes cache images and db records.
     this.db.prepare('DELETE FROM videos WHERE id = ?').run(videoId);
     return true;
   }
@@ -645,7 +639,7 @@ export class VideoDatabase {
   batchDeleteVideos(videoIds) {
     if (!Array.isArray(videoIds) || videoIds.length === 0) return 0;
     for (const id of videoIds) {
-      this.deleteVideo(id); // Safe: only deletes db records and cache images, NEVER touches original video file
+      this.deleteVideo(id); // Database records only; leave all files untouched.
     }
     return videoIds.length;
   }

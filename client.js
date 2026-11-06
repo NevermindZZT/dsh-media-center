@@ -371,6 +371,9 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(false);
       const [searchQuery, setSearchQuery] = useState('');
       const [statusFilter, setStatusFilter] = useState('');
+      const viewRef = useRef({ folderId: null, query: '', status: '', videoId: null });
+      const requestVersions = useRef({ folders: 0, videos: 0, detail: 0 });
+      const editingRef = useRef(false);
       const [sortRule, setSortRule] = useState(() => {
         try {
           return validateSortRule(window.localStorage.getItem(SORT_STORAGE_KEY));
@@ -412,6 +415,7 @@ window.__ModuleLoader__.load({
 
       // Import Loading state (Prevents repeated submission and gives immediate feedback)
       const [isImporting, setIsImporting] = useState(false);
+      const importLockRef = useRef(false);
       const [importNotice, setImportNotice] = useState('');
 
       // AI Analysis Running States
@@ -422,6 +426,7 @@ window.__ModuleLoader__.load({
       const [isEditingShots, setIsEditingShots] = useState(false);
       const [isEditingAudio, setIsEditingAudio] = useState(false);
       const [isEditingMeta, setIsEditingMeta] = useState(false);
+      editingRef.current = isEditingShots || isEditingAudio || isEditingMeta;
 
       const [editingMeta, setEditingMeta] = useState(null);
       const [editingShots, setEditingShots] = useState([]);
@@ -440,7 +445,12 @@ window.__ModuleLoader__.load({
       // AI Settings form states
       const [aiBaseUrlInput, setAiBaseUrlInput] = useState('');
       const [aiApiKeyInput, setAiApiKeyInput] = useState('');
-      const [aiModelInput, setAiModelInput] = useState('zero-plus');
+      const [aiModelInput, setAiModelInput] = useState('');
+      const [aiReasoningInput, setAiReasoningInput] = useState('');
+      const [aiMode, setAiMode] = useState('dsh');
+      const [aiProviderInput, setAiProviderInput] = useState('');
+      const [aiProviders, setAiProviders] = useState([]);
+      const [aiCatalogWarning, setAiCatalogWarning] = useState('');
       const [aiPromptTemplate, setAiPromptTemplate] = useState('');
       const [defaultPromptText, setDefaultPromptText] = useState('');
 
@@ -539,10 +549,11 @@ window.__ModuleLoader__.load({
 
       // 2. Load Folder Tree
       const loadFolders = async () => {
+        const version = ++requestVersions.current.folders;
         try {
           const res = await fetch('/api/video-manager/folders');
           const data = await res.json();
-          if (data.success) {
+          if (data.success && version === requestVersions.current.folders) {
             setFolders(data.folders || []);
           }
         } catch (e) {
@@ -552,6 +563,9 @@ window.__ModuleLoader__.load({
 
       // 3. Load Videos
       const loadVideos = async (folderId, query, status, sBy = null, sDir = null) => {
+        viewRef.current = { ...viewRef.current, folderId, query, status };
+        const version = ++requestVersions.current.videos;
+        const detailVersion = requestVersions.current.detail;
         setLoading(true);
         try {
           const parsedSort = parseSortRule(sortRuleRef.current);
@@ -566,27 +580,37 @@ window.__ModuleLoader__.load({
           if (finalSortDir) url += `&sort_dir=${encodeURIComponent(finalSortDir)}`;
           const res = await fetch(url);
           const data = await res.json();
-          if (data.success) {
+          if (data.success && version === requestVersions.current.videos) {
             setVideos(data.videos || []);
-            if (data.videos.length > 0 && (!selectedVideo || !data.videos.find(v => v.id === selectedVideo.id))) {
-              if (!isMobile) {
+            const currentId = viewRef.current.videoId;
+            const missing = !currentId || !data.videos.some(v => v.id === currentId);
+            if (missing && !editingRef.current && detailVersion === requestVersions.current.detail) {
+              if (data.videos.length && !isMobile) {
                 loadVideoDetail(data.videos[0].id);
+              } else if (!data.videos.length) {
+                viewRef.current.videoId = null;
+                ++requestVersions.current.detail;
+                setSelectedVideo(null);
               }
             }
           }
         } catch (e) {
           console.error('Failed to load videos', e);
         } finally {
-          setLoading(false);
+          if (version === requestVersions.current.videos) setLoading(false);
         }
       };
 
       // 4. Load Single Video Detail and sync editing form
-      const loadVideoDetail = async (videoId) => {
+      const loadVideoDetail = async (videoId, silent = false) => {
+        if (silent && (editingRef.current || viewRef.current.videoId !== videoId)) return;
+        if (!silent) viewRef.current.videoId = videoId;
+        const version = ++requestVersions.current.detail;
         try {
           const res = await fetch(`/api/video-manager/videos/${videoId}`);
           const data = await res.json();
-          if (data.success && data.video) {
+          if (data.success && data.video && version === requestVersions.current.detail &&
+              viewRef.current.videoId === videoId && (!silent || !editingRef.current)) {
             setSelectedVideo(data.video);
             setEditingMeta({
               file_name: data.video.file_name,
@@ -602,7 +626,7 @@ window.__ModuleLoader__.load({
             setIsEditingShots(false);
             setIsEditingAudio(false);
             setIsEditingMeta(false);
-            if (isMobile) {
+            if (isMobile && !silent) {
               setMobileTab('detail');
             }
           }
@@ -611,18 +635,46 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const refreshCurrentView = async () => {
+        const current = viewRef.current;
+        await Promise.all([
+          loadFolders(),
+          loadVideos(current.folderId, current.query, current.status),
+          current.videoId ? loadVideoDetail(current.videoId, true) : Promise.resolve()
+        ]);
+      };
+      const refreshCurrentViewRef = useRef(refreshCurrentView);
+      refreshCurrentViewRef.current = refreshCurrentView;
+
       // 5. Load AI Settings
+      const loadAiCatalog = async () => {
+        try {
+          const response = await fetch('/api/video-manager/ai-models');
+          const catalog = await response.json();
+          if (!response.ok || !catalog.success) throw new Error('无法加载 DSH 模型列表');
+          setAiProviders(catalog.providers || []);
+          setAiCatalogWarning(catalog.errors?.length ? '部分服务商的模型列表获取失败，请检查 DSH 模型配置。' : '');
+        } catch (e) {
+          setAiCatalogWarning('无法获取 DSH 模型列表：' + e.message);
+        }
+      };
       const loadAiSettings = async () => {
         try {
           const res = await fetch('/api/video-manager/ai-settings');
           const data = await res.json();
           if (data.success) {
+            setAiMode(data.mode || 'dsh');
+            setAiProviderInput(data.provider || '');
             setAiBaseUrlInput(data.base_url || '');
-            setAiModelInput(data.model || 'zero-plus');
+            setAiModelInput(data.model || '');
+            setAiReasoningInput(data.reasoning_effort || '');
             setAiPromptTemplate(data.custom_prompt || data.default_prompt || '');
             setDefaultPromptText(data.default_prompt || '');
           }
-        } catch {}
+          await loadAiCatalog();
+        } catch (e) {
+          setAiCatalogWarning('无法获取 DSH 模型列表：' + e.message);
+        }
       };
 
       // 6. Load Local Filesystem Directory for Browser
@@ -672,6 +724,18 @@ window.__ModuleLoader__.load({
         loadAiSettings();
       }, []);
 
+      useEffect(() => {
+        if (!isBatchAiAnalyzing && !isImporting && !aiAnalyzingId) return;
+        let stopped = false;
+        let timer;
+        const poll = async () => {
+          await refreshCurrentViewRef.current();
+          if (!stopped) timer = setTimeout(poll, 2000);
+        };
+        timer = setTimeout(poll, 700);
+        return () => { stopped = true; clearTimeout(timer); };
+      }, [isBatchAiAnalyzing, isImporting, aiAnalyzingId]);
+
       const handleFolderSelect = (folderId) => {
         setSelectedFolderId(folderId);
         setSelectedVideoIds(new Set());
@@ -693,6 +757,8 @@ window.__ModuleLoader__.load({
       // Direct Multi-modal AI Video Analysis
       const handleAiAnalyze = async (videoId) => {
         if (!videoId) return;
+        const video = videos.find(v => v.id === videoId) || (selectedVideo?.id === videoId ? selectedVideo : null);
+        if (video && (video.status === 'queued' || video.status === 'analyzing')) return;
         setAiAnalyzingId(videoId);
         try {
           const res = await fetch(`/api/video-manager/videos/${videoId}/ai-analyze`, { method: 'POST' });
@@ -701,9 +767,7 @@ window.__ModuleLoader__.load({
             const audit = data.audit;
             const sec = (audit.latency_ms / 1000).toFixed(2);
             alert(`AI 分析完成！\n- 视觉模型: ${audit.model}\n- 分析耗时: ${sec} 秒\n- Token 消耗: ${audit.total_tokens} (输入: ${audit.prompt_tokens}, 输出: ${audit.completion_tokens})`);
-            setSelectedVideo(data.video);
-            loadVideoDetail(videoId);
-            loadVideos(selectedFolderId, searchQuery, statusFilter);
+            await refreshCurrentViewRef.current();
           } else {
             alert('AI 分析失败: ' + (data.error || '未知错误'));
           }
@@ -711,17 +775,24 @@ window.__ModuleLoader__.load({
           alert('AI 分析请求异常: ' + e.message);
         } finally {
           setAiAnalyzingId(null);
+          await refreshCurrentViewRef.current();
         }
       };
 
       // Batch AI Video Analysis
       const handleBatchAiAnalyze = async () => {
         const ids = Array.from(selectedVideoIds);
-        if (ids.length === 0) return;
+        if (ids.length === 0 || isBatchAiAnalyzing) return;
+        if (videos.some(v => ids.includes(v.id) && (v.status === 'queued' || v.status === 'analyzing'))) {
+          alert('所选素材中包含排队中或分析中的视频，请勿重复提交。');
+          return;
+        }
         if (!confirm(`确定要对选中的 ${ids.length} 个视频依次发起多模态 AI 深度分析吗？\n（将自动生成故事板大图并调用视觉模型切分分镜与提取内容）`)) {
           return;
         }
         setIsBatchAiAnalyzing(true);
+        setVideos(current => current.map(v => ids.includes(v.id) ? { ...v, status: 'queued' } : v));
+        setSelectedVideo(current => current && ids.includes(current.id) ? { ...current, status: 'queued' } : current);
         try {
           const res = await fetch('/api/video-manager/videos/batch-ai-analyze', {
             method: 'POST',
@@ -730,10 +801,11 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.success) {
-            alert(`批量 AI 分析完成！\n共提交 ${data.total} 个视频，成功完成 ${data.succeeded} 个！`);
-            setSelectedVideoIds(new Set());
-            loadVideos(selectedFolderId, searchQuery, statusFilter);
-            if (selectedVideo) loadVideoDetail(selectedVideo.id);
+            const failures = (data.results || []).filter(result => !result.success);
+            const failureText = failures.length ? `\n失败 ${failures.length} 个：\n${failures.map(r => `${r.video_id}: ${r.error || '未知错误'}`).join('\n')}` : '';
+            setSelectedVideoIds(current => new Set([...current].filter(id => !ids.includes(id))));
+            await refreshCurrentViewRef.current();
+            alert(`批量 AI 分析完成！\n共提交 ${data.total} 个视频，成功完成 ${data.succeeded} 个！${failureText}`);
           } else {
             alert('批量分析失败: ' + data.error);
           }
@@ -741,6 +813,7 @@ window.__ModuleLoader__.load({
           alert('批量分析请求异常: ' + e.message);
         } finally {
           setIsBatchAiAnalyzing(false);
+          await refreshCurrentViewRef.current();
         }
       };
 
@@ -751,18 +824,22 @@ window.__ModuleLoader__.load({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              mode: aiMode,
+              provider: aiProviderInput,
               base_url: aiBaseUrlInput,
-              api_key: aiApiKeyInput || undefined,
+              api_key: aiMode === 'custom' ? (aiApiKeyInput || undefined) : undefined,
               model: aiModelInput,
+              reasoning_effort: aiMode === 'dsh' ? aiReasoningInput : undefined,
               prompt_template: aiPromptTemplate
             })
           });
           const data = await res.json();
-          if (data.success) {
-            alert('AI 分析模型与提示词配置已成功保存！');
-          }
+          if (!res.ok || !data.success) throw new Error(data.error || '保存 AI 设置失败');
+          setAiApiKeyInput('');
+          return true;
         } catch (e) {
           alert('保存 AI 设置失败: ' + e.message);
+          return false;
         }
       };
 
@@ -808,7 +885,7 @@ window.__ModuleLoader__.load({
 
       // Single Video Remove (Safe: never deletes original file)
       const handleDeleteSingleVideo = async (videoId, fileName) => {
-        if (!confirm(`确定要从素材库移出视频「${fileName}」吗？\n\n注意：此操作仅移出素材库记录与缓存，绝对不会删除您硬盘上的原始物理视频文件。`)) {
+        if (!confirm(`确定要从素材库移出视频「${fileName}」吗？\n\n注意：此操作仅移出素材库记录，保留缓存和原始视频文件。`)) {
           return;
         }
         try {
@@ -816,6 +893,8 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.success) {
             if (selectedVideo && selectedVideo.id === videoId) {
+              viewRef.current.videoId = null;
+              ++requestVersions.current.detail;
               setSelectedVideo(null);
               if (isMobile) setMobileTab('videos');
             }
@@ -833,7 +912,7 @@ window.__ModuleLoader__.load({
       const handleBatchDelete = async () => {
         const ids = Array.from(selectedVideoIds);
         if (ids.length === 0) return;
-        if (!confirm(`确定要批量移出选中的 ${ids.length} 个视频吗？\n\n注意：此操作仅清除素材库记录与分析缓存，绝对不会删除您硬盘上的原始视频文件！`)) {
+        if (!confirm(`确定要批量移出选中的 ${ids.length} 个视频吗？\n\n注意：此操作仅清除素材库记录，保留缓存和原始视频文件！`)) {
           return;
         }
         try {
@@ -845,6 +924,8 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.success) {
             setSelectedVideoIds(new Set());
+            viewRef.current.videoId = null;
+            ++requestVersions.current.detail;
             setSelectedVideo(null);
             loadFolders();
             loadVideos(selectedFolderId, searchQuery, statusFilter);
@@ -953,7 +1034,7 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.success) {
-            await handleSaveAiSettings();
+            if (!await handleSaveAiSettings()) return;
             setShowSettingsModal(false);
             loadStatus();
           }
@@ -964,10 +1045,11 @@ window.__ModuleLoader__.load({
 
       // Scan directory with feedback & parent_id propagation
       const handleScanDirectory = async (customPath) => {
-        if (isImporting) return; // Prevent double submit
+        if (importLockRef.current) return;
         const targetPath = (customPath || scanDirPath || '').trim();
         if (!targetPath) return;
 
+        importLockRef.current = true;
         setIsImporting(true);
         setImportNotice('正在抽取视频参数并生成 4x4 故事板大图，请稍候...');
 
@@ -982,26 +1064,28 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.success) {
-            alert(`成功导入 ${data.imported_count} 个视频！`);
             setShowScanModal(false);
-            loadFolders();
-            loadVideos(selectedFolderId, searchQuery, statusFilter);
+            await refreshCurrentViewRef.current();
+            alert(`成功导入 ${data.imported_count} 个视频！`);
           } else {
-            alert('扫描导入失败: ' + (data.error || '未知错误'));
+            alert('扫描导入失败，部分素材可能已导入，列表将刷新：' + (data.error || '未知错误'));
           }
         } catch (e) {
           alert('扫描异常: ' + e.message);
         } finally {
+          importLockRef.current = false;
           setIsImporting(false);
           setImportNotice('');
+          await refreshCurrentViewRef.current();
         }
       };
 
       // Import selected video files directly (supports multiple / select all)
       const handleImportSelectedFiles = async (filePathsOverride) => {
         const targetPaths = filePathsOverride || Array.from(selectedBrowserFiles);
-        if (isImporting || !targetPaths || targetPaths.length === 0) return;
+        if (importLockRef.current || !targetPaths || targetPaths.length === 0) return;
 
+        importLockRef.current = true;
         setIsImporting(true);
         setImportNotice(`正在导入 ${targetPaths.length} 个视频并抽取故事板，请稍候...`);
 
@@ -1016,18 +1100,19 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.success) {
-            alert(`成功导入 ${data.imported_count} 个视频！`);
             setShowScanModal(false);
-            loadFolders();
-            loadVideos(selectedFolderId, searchQuery, statusFilter);
+            await refreshCurrentViewRef.current();
+            alert(`成功导入 ${data.imported_count} 个视频！`);
           } else {
-            alert('导入失败: ' + data.error);
+            alert('导入失败，部分素材可能已导入，列表将刷新：' + data.error);
           }
         } catch (e) {
           alert('导入异常: ' + e.message);
         } finally {
+          importLockRef.current = false;
           setIsImporting(false);
           setImportNotice('');
+          await refreshCurrentViewRef.current();
         }
       };
 
@@ -1446,7 +1531,7 @@ window.__ModuleLoader__.load({
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             h('button', {
               style: buttonSecondaryStyle,
-              onClick: () => setShowSettingsModal(true)
+              onClick: () => { loadAiSettings(); setShowSettingsModal(true); }
             }, Icon.settings({ size: 13 }), '设置'),
             h('button', {
               style: buttonPrimaryStyle,
@@ -1690,7 +1775,8 @@ window.__ModuleLoader__.load({
                 const isSelected = selectedVideo && selectedVideo.id === v.id;
                 const isChecked = selectedVideoIds.has(v.id);
                 const isMenuOpen = activeVideoMenuId === v.id;
-                const isCurrentAnalyzing = aiAnalyzingId === v.id;
+                const isCurrentAnalyzing = aiAnalyzingId === v.id || v.status === 'analyzing';
+                const isQueued = v.status === 'queued';
                 const captureTime = captureTimePresentation(v, false);
 
                 return h('div', {
@@ -1741,7 +1827,7 @@ window.__ModuleLoader__.load({
                     // Storyboard image
                     v.storyboard_path
                       ? h('img', {
-                          src: `/api/video-manager/videos/${v.id}/storyboard`,
+                          src: `/api/video-manager/videos/${v.id}/storyboard?v=${encodeURIComponent(v.updated_at || '')}`,
                           style: { width: '100%', height: '100%', objectFit: 'cover' },
                           alt: v.file_name
                         })
@@ -1778,7 +1864,7 @@ window.__ModuleLoader__.load({
                         fontWeight: 500,
                         backdropFilter: 'blur(2px)'
                       }
-                    }, isCurrentAnalyzing ? '分析中...' : (v.status === 'analyzed' ? '已分析' : '待分析'))
+                    }, isQueued ? '排队中' : isCurrentAnalyzing ? '分析中...' : (v.status === 'analyzed' ? '已分析' : v.status === 'error' ? '分析失败' : '待分析'))
                   ),
 
                   // Popup Menu
@@ -1787,14 +1873,16 @@ window.__ModuleLoader__.load({
                     onClick: (e) => e.stopPropagation()
                   },
                     h('div', {
-                      style: contextMenuItemStyle,
+                      style: { ...contextMenuItemStyle, opacity: (isQueued || isCurrentAnalyzing) ? 0.5 : 1, cursor: (isQueued || isCurrentAnalyzing) ? 'not-allowed' : 'pointer' },
+                      'aria-disabled': isQueued || isCurrentAnalyzing,
                       onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
                       onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
                       onClick: () => {
+                        if (isQueued || isCurrentAnalyzing) return;
                         setActiveVideoMenuId(null);
                         handleAiAnalyze(v.id);
                       }
-                    }, Icon.sparkles({ size: 12, color: '#3b82f6' }), '直接 AI 深度分析'),
+                    }, Icon.sparkles({ size: 12, color: '#3b82f6' }), isQueued ? '排队中' : isCurrentAnalyzing ? '分析中...' : '直接 AI 深度分析'),
                     h('div', {
                       style: contextMenuItemStyle,
                       onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
@@ -2066,11 +2154,11 @@ window.__ModuleLoader__.load({
                               }, Icon.plus({ size: 12 }), '新增分镜'),
                           h('button', {
                             style: buttonPrimaryStyle,
-                            disabled: aiAnalyzingId === selectedVideo.id,
+                            disabled: aiAnalyzingId === selectedVideo.id || selectedVideo.status === 'analyzing' || selectedVideo.status === 'queued',
                             onClick: () => handleAiAnalyze(selectedVideo.id)
                           },
                             Icon.sparkles({ size: 12 }),
-                            aiAnalyzingId === selectedVideo.id ? '分析中...' : 'AI 深度分析'
+                            selectedVideo.status === 'queued' ? '排队中' : (aiAnalyzingId === selectedVideo.id || selectedVideo.status === 'analyzing') ? '分析中...' : 'AI 深度分析'
                           )
                         )
                       ),
@@ -3121,30 +3209,77 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
                 h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '2. AI 视觉大模型配置'),
                 h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
-                  '默认自动继承当前 DSH 的多模态视觉模型（Zero-Plus），亦可在此单独指定模型或兼容端点。'
+                  'DSH 模式使用所选服务商及模型的配置；自定义模式使用单独填写的兼容端点。模型未声明图片能力时，请自行确认支持图片。'
                 ),
-                h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
-                  h('div', null,
-                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'AI 视觉模型名称:'),
+                aiMode === 'dsh' && h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadAiCatalog }, '刷新 DSH 模型列表'),
+                aiCatalogWarning && h('div', { role: 'alert', style: { color: 'var(--dsw-alias-label-primary)', fontSize: '11px' } }, aiCatalogWarning),
+                h('label', { style: { fontSize: '11px' } }, '模型来源',
+                  h('select', {
+                    value: aiMode,
+                    onChange: e => { setAiMode(e.target.value); setAiProviderInput(''); setAiModelInput(''); setAiReasoningInput(''); },
+                    style: { ...inputStyle, width: '100%', marginTop: '3px' }
+                  },
+                    h('option', { value: 'dsh' }, 'DSH 已配置模型'),
+                    h('option', { value: 'custom' }, '自定义 OpenAI 兼容端点')
+                  )
+                ),
+                aiMode === 'dsh' ? h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
+                  h('label', { style: { fontSize: '11px' } }, 'DSH 服务商',
                     h('select', {
-                      value: aiModelInput,
-                      onChange: (e) => setAiModelInput(e.target.value),
+                      value: aiProviderInput,
+                      onChange: e => { setAiProviderInput(e.target.value); setAiModelInput(''); setAiReasoningInput(''); },
                       style: { ...inputStyle, width: '100%', marginTop: '3px' }
                     },
-                      ['zero-plus', 'zero-pro', 'zero-flash', 'mimo-v2.5-pro', 'deepseek-v4-pro-vision'].map(m =>
-                        h('option', { key: m, value: m }, m)
+                      h('option', { value: '' }, '请选择服务商'),
+                      aiProviderInput && !aiProviders.some(p => p.id === aiProviderInput) &&
+                        h('option', { value: aiProviderInput, disabled: true }, `${aiProviderInput}（当前不可用）`),
+                      aiProviders.map(p => h('option', { key: p.id, value: p.id }, p.name || p.id))
+                    )
+                  ),
+                  h('label', { style: { fontSize: '11px' } }, '模型',
+                    h('select', {
+                      value: aiModelInput,
+                      onChange: e => { setAiModelInput(e.target.value); setAiReasoningInput(''); },
+                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
+                    },
+                      h('option', { value: '' }, '请选择模型'),
+                      !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).some(m => m.id === aiModelInput) && aiModelInput &&
+                        h('option', { value: aiModelInput, disabled: true }, `${aiModelInput}（当前不可用）`),
+                      (aiProviders.find(p => p.id === aiProviderInput)?.models || []).map(m =>
+                        h('option', { key: m.id, value: m.id, disabled: Array.isArray(m.inputModalities) && !m.inputModalities.includes('image') },
+                          `${m.name || m.id}${Array.isArray(m.inputModalities) ? (m.inputModalities.includes('image') ? '' : '（不支持图片）') : '（图片能力未声明）'}`)
                       )
                     )
                   ),
-                  h('div', null,
-                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'API 基础端点 (Base URL):'),
-                    h('input', {
-                      type: 'text',
-                      value: aiBaseUrlInput,
-                      onChange: (e) => setAiBaseUrlInput(e.target.value),
-                      placeholder: 'https://api.nevermindzzt.top/v1',
+                  h('label', { style: { fontSize: '11px' } }, '推理档位',
+                    h('select', {
+                      value: aiReasoningInput,
+                      onChange: e => setAiReasoningInput(e.target.value),
+                      disabled: !aiModelInput || !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.length,
                       style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                    })
+                    },
+                      h('option', { value: '' }, '请选择推理档位'),
+                      aiReasoningInput && !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.some(e => e.id === aiReasoningInput) &&
+                        h('option', { value: aiReasoningInput, disabled: true }, `${aiReasoningInput}（当前不可用）`),
+                      ((aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts || []).map(e =>
+                        h('option', { key: e.id, value: e.id }, e.name || e.id)
+                      )
+                    ),
+                    h('div', { style: { marginTop: '3px', color: 'var(--dsw-alias-label-secondary)' } },
+                      !aiModelInput ? '请先选择服务商和模型。' :
+                      (aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning_unavailable ? '无法读取模型能力，请刷新模型列表。' :
+                      (aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.length ? '请选择档位；请求将直接使用该档位，不会自动换档重试。' : '该模型未声明可选择的推理档位。'
+                    )
+                  )
+                ) : h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
+                  h('label', { style: { fontSize: '11px' } }, '自定义模型名称',
+                    h('input', { type: 'text', value: aiModelInput, onChange: e => setAiModelInput(e.target.value), style: { ...inputStyle, width: '100%' } })
+                  ),
+                  h('label', { style: { fontSize: '11px' } }, 'API 基础端点',
+                    h('input', { type: 'text', value: aiBaseUrlInput, onChange: e => setAiBaseUrlInput(e.target.value), placeholder: 'https://example.com/v1', style: { ...inputStyle, width: '100%' } })
+                  ),
+                  h('label', { style: { fontSize: '11px' } }, 'API Key（留空保留已有值）',
+                    h('input', { type: 'password', value: aiApiKeyInput, onChange: e => setAiApiKeyInput(e.target.value), autoComplete: 'new-password', style: { ...inputStyle, width: '100%' } })
                   )
                 )
               ),
