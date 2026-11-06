@@ -37,6 +37,8 @@
   自动通过 `silencedetect` 滤镜标出所有气口停顿区间 `[start, end, duration]`，便于解说口播快速切除空白；自动计算音乐节奏 `BPM` 与节拍时间戳，为卡点混剪提供精准依据。
 - 📝 **全流程结构化人机协同编辑**：
   保持专业生产力软件克制美感，**默认呈现舒适的正常阅读浏览模式**。点击【✏️ 编辑】即可就地调整分镜秒数、景别（大远景至大特写）、运镜（推拉摇移跟俯冲）、画面描述、语音字幕与标签，并支持一键保存。
+- **单片段 AI 精读**：
+  在【分镜解析】中按需对已有片段生成带源视频时间戳的自适应故事板；使用工作台配置的模型与推理档位生成候选描述，查看对比后手动勾选字段应用。结果记录模型、耗时、Token 和采样时间，无法获取的 Token 显示为“未提供”。精读只基于稀疏采样帧，不能保证精确动作时间或连续运镜；片段范围或待应用字段发生变化时需重新分析。该阶段只支持单片段，不支持批量精读。
 - 📦 **素材整理与批量管理**：
   支持多选勾选素材，一键【批量移动到分类】、【批量移出素材库】。
 - ↕️ **多维双向排序体系**：
@@ -48,11 +50,11 @@
 - 🎨 **DSH 官方主题 100% 自适应**：
   严格遵循 `--dsw-alias-*` 主题变量，深色/浅色模式实时平滑响应，杜绝“白底白字”与浅灰看不清；全套替换为精美矢量 SVG 线性图标，零粗糙 emoji。
 - 🔒 **核心安全承诺（Zero-Data-Loss）**：
-  所有移出素材库、分类删除、批量操作**严格只清理数据库记录与大图缓存，物理源视频文件作为只读外部资产，绝不触碰删除！**
+  素材移出、分类删除与批量移出仅更新数据库记录，不删除磁盘上的源视频或缓存文件。
 
 ---
 
-## 面向 AI Agent 的专属工具集 (11 个)
+## 面向 AI Agent 的专属工具集（15 个）
 
 插件安装后，系统运行时会自动向 AI Agent 暴露以下标准化工具：
 
@@ -69,6 +71,9 @@
 | `video_manager_update_video` | 更新视频全局摘要（summary）、业务标签（tags）与人工备注 | `{ video_id, summary?, tags?, user_notes?, status? }` |
 | `video_manager_search_shots` | 跨视频进行分镜语义检索，根据自然语言召回最契合的镜头及其入出点 | `{ query, shot_type?, camera_movement?, min_duration?, limit? }` |
 | `video_manager_export_project` | 将选定镜头导出为专业工程文件（`jianying` 剪映草稿、`fcpxml`、`edl`） | `{ sequence_name, format, clips: [{ video_id, in_point, out_point }] }` |
+| `video_manager_analyze_shot` | 仅生成单片段精读候选，不覆盖原标注 | `{ video_id, shot_id }` |
+| `video_manager_get_shot_analysis` | 查询片段精读记录、候选和用量 | `{ video_id, shot_id, limit? }` |
+| `video_manager_apply_shot_analysis` | 经用户明确授权后应用指定候选字段 | `{ run_id, fields, confirmed: true }` |
 | `video_manager_configure_ffmpeg` | 查看或手动指定 `ffmpeg.exe` / `ffprobe.exe` 的绝对路径 | `{ ffmpeg_path?, ffprobe_path? }` |
 
 ---

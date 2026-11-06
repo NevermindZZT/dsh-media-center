@@ -3,8 +3,9 @@ import path from 'node:path';
 import { URL } from 'node:url';
 import { AnalysisQueue } from '../ai/analysis-queue.js';
 
-export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer }) {
+export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer, shotAnalysisService }) {
   const analysisQueue = new AnalysisQueue(db);
+  if (shotAnalysisService?.store) shotAnalysisService.store.isVideoBusy = id => analysisQueue.active.has(id);
   const recordAnalysisFailure = (id) => {
     // A video may have been removed while the analyzer was awaiting a remote model.
     // Never insert a replacement row when marking a failure.
@@ -19,7 +20,6 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
     res.writeHead(status, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Length': body.length,
-      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     });
@@ -62,8 +62,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
-        'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*'
+        'Content-Type': 'video/mp4'
       });
       fileStream.pipe(res);
     } else {
@@ -86,17 +85,31 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
     res.writeHead(200, {
       'Content-Type': 'image/jpeg',
       'Content-Length': stat.size,
-      'Cache-Control': 'public, max-age=86400',
-      'Access-Control-Allow-Origin': '*'
+      'Cache-Control': 'public, max-age=86400'
     });
     fs.createReadStream(filePath).pipe(res);
   };
 
   return async function handleRequest(req, res) {
+    const origin = req.headers?.origin;
+    if (origin !== undefined) {
+      let allowed = false;
+      try {
+        const parsed = new URL(origin);
+        const host = req.headers?.host;
+        allowed = typeof host === 'string' && ['http:', 'https:'].includes(parsed.protocol) &&
+          parsed.host.toLowerCase() === host.toLowerCase() && parsed.origin === origin &&
+          !parsed.username && !parsed.password;
+      } catch {}
+      if (!allowed) {
+        const body = Buffer.from(JSON.stringify({ success: false, error: 'Cross-origin request rejected' }));
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length });
+        return res.end(body);
+      }
+    }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
       });
       return res.end();
@@ -345,6 +358,49 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         } finally {
           // Also release not-yet-started IDs if an unexpected error aborts the loop.
           for (const vid of body.video_ids) analysisQueue.release(vid, reservation.token);
+        }
+      }
+
+      // Single-shot deep analysis. Only server-generated paths are ever sent to the model.
+      const shotDeepMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/shots\/([a-zA-Z0-9_-]+)\/(deep-analysis|deep-analyses)$/);
+      if (shotDeepMatch && method === 'POST' && shotDeepMatch[3] === 'deep-analysis') {
+        try {
+          const run = await shotAnalysisService.analyze(shotDeepMatch[1], shotDeepMatch[2]);
+          return jsonResponse(res, { success: true, run });
+        } catch (error) {
+          const status = /正在分析中/.test(error.message) ? 409 : 400;
+          return jsonResponse(res, { success: false, error: error.message }, status);
+        }
+      }
+      if (shotDeepMatch && method === 'GET' && shotDeepMatch[3] === 'deep-analyses') {
+        const runs = shotAnalysisService.store.listRuns({ video_id: shotDeepMatch[1], shot_id: shotDeepMatch[2], limit: 50 });
+        return jsonResponse(res, { success: true, runs });
+      }
+      const shotRunMatch = pathname.match(/^\/api\/video-manager\/shot-analysis\/([a-zA-Z0-9_-]+)\/(apply|storyboard)$/);
+      if (shotRunMatch && method === 'POST' && shotRunMatch[2] === 'apply') {
+        try {
+          const body = await parseJsonBody(req);
+          const result = shotAnalysisService.store.applyFields(shotRunMatch[1], body.fields);
+          return jsonResponse(res, { success: true, ...result });
+        } catch (error) {
+          const conflict = /changed since analysis|shot not found|not available|video analysis is running/.test(error.message);
+          return jsonResponse(res, { success: false, error: /video analysis is running/.test(error.message) ? '全片分析正在排队或运行，请完成后重新核对再应用。' : conflict ? '片段或所选字段已发生变化，请重新分析后再应用。' : '无法应用分析结果，请检查所选字段。' }, conflict ? 409 : 400);
+        }
+      }
+      if (shotRunMatch && method === 'GET' && shotRunMatch[2] === 'storyboard') {
+        const storyboard = shotAnalysisService.getStoryboardPath(shotRunMatch[1]);
+        if (!storyboard) return jsonResponse(res, { success: false, error: '故事板不可用' }, 404);
+        return streamImageFile(res, storyboard);
+      }
+      if (pathname === '/api/video-manager/shot-analysis-settings' && method === 'GET') {
+        return jsonResponse(res, { success: true, ...shotAnalysisService.getPromptSettings() });
+      }
+      if (pathname === '/api/video-manager/shot-analysis-settings' && method === 'POST') {
+        try {
+          const body = await parseJsonBody(req);
+          return jsonResponse(res, { success: true, ...shotAnalysisService.savePromptSettings(body.prompt) });
+        } catch {
+          return jsonResponse(res, { success: false, error: '提示词无效或超过长度限制' }, 400);
         }
       }
 

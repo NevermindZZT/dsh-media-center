@@ -349,6 +349,22 @@ window.__ModuleLoader__.load({
     ]);
     const validateSortRule = (rule) => SORT_RULES.has(rule) ? rule : DEFAULT_SORT_RULE;
 
+    const SHOT_ANALYSIS_FIELDS = [
+      ['subject', '主体'], ['visual_description', '画面描述'], ['composition', '构图与光影'],
+      ['shot_type', '景别'], ['camera_movement', '运镜'], ['quality_score', '评分'], ['tags', '标签']
+    ];
+    function shotAnalysisValue(value) {
+      if (value === null || value === undefined || value === '') return '未提供';
+      if (Array.isArray(value)) return value.length ? value.join('、') : '（空）';
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    }
+    function shotRunBoundaryMatches(run, shot) {
+      if (run?.start_time === null || run?.start_time === undefined || run?.end_time === null || run?.end_time === undefined) return false;
+      const start = Number(run.start_time), end = Number(run.end_time);
+      return Number.isFinite(start) && Number.isFinite(end) && start === Number(shot.start_time) && end === Number(shot.end_time);
+    }
+
     // --- Main Workbench View Component with Mobile Responsive Layout ---
     function VideoManagerWorkbench() {
       // Responsive state (mobile: < 840px)
@@ -432,6 +448,23 @@ window.__ModuleLoader__.load({
       const [editingShots, setEditingShots] = useState([]);
       const [editingAudio, setEditingAudio] = useState(null);
       const [newTagInput, setNewTagInput] = useState('');
+
+      // Per-shot deep-analysis drafts are kept separate from editable shot data.
+      const [shotRuns, setShotRuns] = useState({});
+      const [openShotRun, setOpenShotRun] = useState({});
+      const [shotRunLoading, setShotRunLoading] = useState({});
+      const [shotRunError, setShotRunError] = useState({});
+      const [shotSelectedFields, setShotSelectedFields] = useState({});
+      const [applyingShotRun, setApplyingShotRun] = useState(null);
+      const shotLocksRef = useRef(new Set());
+      const shotRunVersionsRef = useRef({});
+      const applyingShotRunRef = useRef(null);
+      const [shotPrompt, setShotPrompt] = useState('');
+      const [shotDefaultPrompt, setShotDefaultPrompt] = useState('');
+      const [shotPromptError, setShotPromptError] = useState('');
+      const [shotPromptLoaded, setShotPromptLoaded] = useState(false);
+      const shotPromptInitialRef = useRef('');
+      const shotPromptVersionRef = useRef(0);
 
       // Form & Browser states
       const [ffmpegInput, setFfmpegInput] = useState('');
@@ -677,6 +710,36 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const loadShotAnalysisSettings = async () => {
+        const version = ++shotPromptVersionRef.current;
+        setShotPromptLoaded(false);
+        setShotPromptError('');
+        try {
+          const response = await fetch('/api/video-manager/shot-analysis-settings');
+          const data = await response.json();
+          if (!response.ok || !data.success || typeof data.prompt !== 'string' || typeof data.default_prompt !== 'string') {
+            throw new Error(data.error || '无法读取镜头深度分析提示词');
+          }
+          if (version !== shotPromptVersionRef.current) return;
+          setShotPrompt(data.prompt);
+          setShotDefaultPrompt(data.default_prompt);
+          shotPromptInitialRef.current = data.prompt;
+          setShotPromptLoaded(true);
+        } catch (error) {
+          if (version === shotPromptVersionRef.current) setShotPromptError(error.message || '读取提示词失败');
+        }
+      };
+      const saveShotAnalysisSettings = async () => {
+        if (!shotPromptLoaded) throw new Error('镜头深度分析提示词尚未加载，未保存设置');
+        if (shotPrompt === shotPromptInitialRef.current) return;
+        const response = await fetch('/api/video-manager/shot-analysis-settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: shotPrompt })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || '保存镜头深度分析提示词失败');
+        shotPromptInitialRef.current = shotPrompt;
+      };
+
       // 6. Load Local Filesystem Directory for Browser
       const loadBrowseDir = async (dirPath) => {
         setBrowserLoading(true);
@@ -753,6 +816,139 @@ window.__ModuleLoader__.load({
         else next.add(folderId);
         setCollapsedFolderIds(next);
       };
+
+      const hasActiveShotAnalysis = shotId => shotLocksRef.current.has(shotId) ||
+        (shotRuns[shotId] || []).some(run => run.status === 'running' || run.status === 'queued');
+      const shotAnalysisUrl = (videoId, shotId, suffix) =>
+        `/api/video-manager/videos/${encodeURIComponent(videoId)}/shots/${encodeURIComponent(shotId)}/${suffix}`;
+      const loadShotRuns = async (videoId, shotId) => {
+        const version = (shotRunVersionsRef.current[shotId] || 0) + 1;
+        shotRunVersionsRef.current[shotId] = version;
+        setShotRunLoading(current => ({ ...current, [shotId]: true }));
+        setShotRunError(current => ({ ...current, [shotId]: '' }));
+        try {
+          const response = await fetch(shotAnalysisUrl(videoId, shotId, 'deep-analyses'));
+          const data = await response.json();
+          if (!response.ok || !data.success || !Array.isArray(data.runs)) throw new Error(data.error || '读取分析记录失败');
+          if (shotRunVersionsRef.current[shotId] === version) setShotRuns(current => ({ ...current, [shotId]: data.runs }));
+        } catch (error) {
+          if (shotRunVersionsRef.current[shotId] === version) setShotRunError(current => ({ ...current, [shotId]: error.message || '读取分析记录失败' }));
+        } finally {
+          if (shotRunVersionsRef.current[shotId] === version) setShotRunLoading(current => ({ ...current, [shotId]: false }));
+        }
+      };
+      const handleShotDeepAnalysis = async (videoId, shotId) => {
+        if (!videoId || !shotId || editingRef.current || hasActiveShotAnalysis(shotId) || applyingShotRunRef.current) return;
+        shotLocksRef.current.add(shotId);
+        const version = (shotRunVersionsRef.current[shotId] || 0) + 1;
+        shotRunVersionsRef.current[shotId] = version;
+        setOpenShotRun(current => ({ ...current, [shotId]: true }));
+        setShotRunLoading(current => ({ ...current, [shotId]: true }));
+        setShotRunError(current => ({ ...current, [shotId]: '' }));
+        try {
+          const response = await fetch(shotAnalysisUrl(videoId, shotId, 'deep-analysis'), { method: 'POST' });
+          const data = await response.json();
+          if (!response.ok || !data.success || !data.run) throw new Error(data.error || '镜头分析失败');
+          if (shotRunVersionsRef.current[shotId] === version) {
+            setShotRuns(current => ({ ...current, [shotId]: [data.run, ...(current[shotId] || []).filter(run => run.id !== data.run.id)] }));
+            setShotSelectedFields(current => ({ ...current, [data.run.id]: [] }));
+          }
+        } catch (error) {
+          if (shotRunVersionsRef.current[shotId] === version) setShotRunError(current => ({ ...current, [shotId]: error.message || '镜头分析失败' }));
+        } finally {
+          shotLocksRef.current.delete(shotId);
+          if (shotRunVersionsRef.current[shotId] === version) setShotRunLoading(current => ({ ...current, [shotId]: false }));
+        }
+      };
+      const handleApplyShotRun = async (videoId, shot, run, fields) => {
+        if (!fields.length || editingRef.current || applyingShotRunRef.current || hasActiveShotAnalysis(shot.id) ||
+            !run?.baseline || fields.some(field => !Object.hasOwn(run.baseline, field) || JSON.stringify(run.baseline[field] ?? null) !== JSON.stringify(shot[field] ?? null)) ||
+            viewRef.current.videoId !== videoId || !run?.id || run.status !== 'completed' ||
+            !shotRunBoundaryMatches(run, shot)) return;
+        applyingShotRunRef.current = run.id;
+        setApplyingShotRun(run.id);
+        setShotRunError(current => ({ ...current, [shot.id]: '' }));
+        try {
+          const response = await fetch(`/api/video-manager/shot-analysis/${encodeURIComponent(run.id)}/apply`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || '应用分析结果失败');
+          setShotSelectedFields(current => ({ ...current, [run.id]: [] }));
+          if (viewRef.current.videoId === videoId && !editingRef.current) await loadVideoDetail(videoId, true);
+          await loadShotRuns(videoId, shot.id);
+        } catch (error) {
+          setShotRunError(current => ({ ...current, [shot.id]: error.message || '应用分析结果失败' }));
+        } finally {
+          applyingShotRunRef.current = null;
+          setApplyingShotRun(null);
+        }
+      };
+
+      const renderShotAnalysis = (shot, videoId) => {
+        const runs = shotRuns[shot.id] || [];
+        const error = shotRunError[shot.id];
+        const loading = shotRunLoading[shot.id];
+        return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: '8px', minWidth: 0 } },
+          loading && h('div', { role: 'status', style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+            shotLocksRef.current.has(shot.id) ? '镜头分析中，请稍候；不会自动修改原有标注。' : '正在读取镜头分析记录…'),
+          error && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, `镜头分析：${error}`),
+          !loading && !runs.length && !error && h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '暂无镜头深度分析记录。'),
+          runs.map(run => {
+            const candidate = run.candidate && typeof run.candidate === 'object' ? run.candidate : {};
+            const baseline = run.baseline && typeof run.baseline === 'object' ? run.baseline : null;
+            const selected = shotSelectedFields[run.id] || [];
+            const boundaryStale = !shotRunBoundaryMatches(run, shot);
+            const conflictFields = selected.filter(field => !baseline || !Object.hasOwn(baseline, field) || JSON.stringify(baseline[field] ?? null) !== JSON.stringify(shot[field] ?? null));
+            const audit = run.audit || {};
+            const tokenValue = v => v === null || v === undefined ? '未提供' : String(v);
+            return h('section', { key: run.id, style: { border: '1px solid var(--dsw-alias-border-l1)', backgroundColor: 'var(--dsw-alias-bg-layer-1)', borderRadius: '6px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '7px', minWidth: 0 } },
+              h('div', { style: { fontSize: '12px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } },
+                `镜头精读 · ${run.status === 'completed' ? '已生成候选' : run.status === 'applied' ? '已应用' : run.status === 'failed' ? '分析失败' : run.status === 'running' ? '分析中' : (run.status || '状态未知')}`),
+              h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                `分析范围：${run.start_time ?? '未知'} – ${run.end_time ?? '未知'} 秒；当前范围：${shot.start_time} – ${shot.end_time} 秒`),
+              boundaryStale && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, '此结果的时间范围与当前镜头不一致或无法确认，不能应用；请重新分析。'),
+              run.status === 'applied' && h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                `已应用字段：${Array.isArray(run.applied_fields) && run.applied_fields.length ? run.applied_fields.map(field => SHOT_ANALYSIS_FIELDS.find(([key]) => key === field)?.[1] || field).join('、') : '未提供'}`),
+              run.error_message && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, `失败原因：${run.error_message}`),
+              run.storyboard_path && run.id && h('img', { src: `/api/video-manager/shot-analysis/${encodeURIComponent(run.id)}/storyboard`, alt: '镜头采样故事板', style: { display: 'block', width: '100%', height: 'auto', borderRadius: '4px' } }),
+              Array.isArray(run.sample_times) && run.sample_times.length > 0 && h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' } }, `采样时间（原视频秒数）：${run.sample_times.map(t => typeof t === 'number' ? t.toFixed(2) : String(t)).join('、')}`),
+              (run.status === 'completed' || run.status === 'applied') && SHOT_ANALYSIS_FIELDS.filter(([field]) => Object.hasOwn(candidate, field)).map(([field, label]) => {
+                const checked = selected.includes(field);
+                return h('label', { key: field, style: { display: 'flex', gap: '7px', alignItems: 'flex-start', fontSize: '11px', color: 'var(--dsw-alias-label-primary)', minWidth: 0 } },
+                  h('input', { type: 'checkbox', checked, disabled: run.status !== 'completed' || editingRef.current || !!applyingShotRun || hasActiveShotAnalysis(shot.id) || boundaryStale,
+                    onChange: e => setShotSelectedFields(current => ({ ...current, [run.id]: e.target.checked ? [...new Set([...(current[run.id] || []), field])] : (current[run.id] || []).filter(item => item !== field) })) }),
+                  h('span', { style: { minWidth: 0, overflowWrap: 'anywhere', lineHeight: '1.5' } },
+                    h('strong', null, label), h('br'), `当前：${shotAnalysisValue(shot[field])}`, h('br'), `候选：${shotAnalysisValue(candidate[field])}`)
+                );
+              }),
+              conflictFields.length > 0 && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, '所选字段自分析后已被修改，请重新分析后再应用，避免覆盖人工修改。'),
+              candidate.uncertainty != null && h('div', { style: { fontSize: '11px', overflowWrap: 'anywhere' } }, h('strong', null, '不确定性：'), shotAnalysisValue(candidate.uncertainty)),
+              candidate.editing_suggestions != null && h('div', { style: { fontSize: '11px', overflowWrap: 'anywhere' } }, h('strong', null, '剪辑建议：'), shotAnalysisValue(candidate.editing_suggestions)),
+              h('div', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' } },
+                `服务商：${audit.provider || '未提供'} · 模型：${audit.model || '未提供'} · 推理档位：${audit.reasoning_effort || '未提供'} · 耗时：${audit.latency_ms == null ? '未提供' : `${(Number(audit.latency_ms) / 1000).toFixed(2)} 秒`} · Token（输入/输出/总计）：${tokenValue(audit.prompt_tokens)} / ${tokenValue(audit.completion_tokens)} / ${tokenValue(audit.total_tokens)} · 分析时间：${audit.finished_at || audit.analyzed_at || run.finished_at || '未提供'}`),
+              run.status === 'completed' && h('button', {
+                type: 'button', style: buttonSecondaryStyle,
+                disabled: editingRef.current || !!applyingShotRun || hasActiveShotAnalysis(shot.id) || boundaryStale || !selected.length || conflictFields.length > 0,
+                onClick: () => handleApplyShotRun(videoId, shot, run, selected)
+              }, applyingShotRun === run.id ? '正在应用…' : `应用选中字段（${selected.length}）`)
+            );
+          })
+        );
+      };
+
+      useEffect(() => {
+        if (!selectedVideo?.id) return;
+        const videoId = selectedVideo.id;
+        const pending = (selectedVideo.shots || []).filter(shot =>
+          openShotRun[shot.id] && !shotLocksRef.current.has(shot.id) && !shotRunLoading[shot.id] &&
+          (shotRuns[shot.id] || []).some(run => run.status === 'running' || run.status === 'queued'));
+        if (!pending.length) return;
+        const timer = setTimeout(() => {
+          for (const shot of pending) loadShotRuns(videoId, shot.id);
+        }, 2000);
+        return () => clearTimeout(timer);
+      }, [selectedVideo?.id, selectedVideo?.shots, openShotRun, shotRuns, shotRunLoading]);
 
       // Direct Multi-modal AI Video Analysis
       const handleAiAnalyze = async (videoId) => {
@@ -1026,6 +1222,10 @@ window.__ModuleLoader__.load({
       };
 
       const handleSaveSettings = async () => {
+        if (!shotPromptLoaded) {
+          alert('镜头深度分析提示词尚未加载，请重试后再保存。');
+          return;
+        }
         try {
           const res = await fetch('/api/video-manager/settings', {
             method: 'POST',
@@ -1035,6 +1235,7 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.success) {
             if (!await handleSaveAiSettings()) return;
+            await saveShotAnalysisSettings();
             setShowSettingsModal(false);
             loadStatus();
           }
@@ -1531,7 +1732,7 @@ window.__ModuleLoader__.load({
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             h('button', {
               style: buttonSecondaryStyle,
-              onClick: () => { loadAiSettings(); setShowSettingsModal(true); }
+              onClick: () => { loadAiSettings(); loadShotAnalysisSettings(); setShowSettingsModal(true); }
             }, Icon.settings({ size: 13 }), '设置'),
             h('button', {
               style: buttonPrimaryStyle,
@@ -2129,7 +2330,8 @@ window.__ModuleLoader__.load({
                           !isEditingShots
                             ? h('button', {
                                 style: buttonSecondaryStyle,
-                                onClick: () => setIsEditingShots(true)
+                                disabled: !!applyingShotRun,
+                                onClick: () => { if (!applyingShotRunRef.current) setIsEditingShots(true); }
                               }, Icon.edit({ size: 12 }), '编辑分镜')
                             : h('button', {
                                 style: buttonSecondaryStyle,
@@ -2168,17 +2370,20 @@ window.__ModuleLoader__.load({
                         h('div', {
                           key: idx,
                           style: {
+                            minWidth: 0,
+                            width: '100%',
+                            boxSizing: 'border-box',
                             backgroundColor: 'var(--dsw-alias-bg-layer-2)',
                             border: '1px solid var(--dsw-alias-border-l1)',
                             borderRadius: '6px',
-                            padding: '10px',
+                            padding: isMobile ? '10px' : '12px',
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: '6px'
+                            gap: '8px'
                           }
                         },
                           // Header line
-                          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                          h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '7px', minWidth: 0, width: '100%' } },
                             isEditingShots
                               ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
                                   h('span', { style: { fontWeight: 600, fontSize: '12px' } }, `镜头 #${shot.shot_index}`),
@@ -2207,9 +2412,9 @@ window.__ModuleLoader__.load({
                                   }),
                                   h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '秒')
                                 )
-                              : h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-                                  h('span', { style: { fontWeight: 600, fontSize: '12px', color: 'var(--dsw-alias-label-primary)' } },
-                                    `镜头 #${shot.shot_index}  [${formatDuration(shot.start_time)} - ${formatDuration(shot.end_time)}]`
+                              : h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', minWidth: 0, width: '100%' } },
+                                  h('span', { style: { fontWeight: 600, fontSize: '12px', color: 'var(--dsw-alias-label-primary)', minWidth: 0, overflowWrap: 'anywhere' } },
+                                    `镜头 #${shot.shot_index} · ${formatDuration(shot.start_time)} – ${formatDuration(shot.end_time)}`
                                   ),
                                   h('span', {
                                     style: {
@@ -2239,11 +2444,28 @@ window.__ModuleLoader__.load({
                                     }
                                   }, `★ ${shot.quality_score}`)
                                 ),
-                            h('div', { style: { display: 'flex', gap: '4px' } },
+                            h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', width: '100%', minWidth: 0 } },
                               h('button', {
-                                style: { ...buttonPrimaryStyle, padding: '2px 6px', fontSize: '10px' },
+                                type: 'button',
+                                style: { ...buttonPrimaryStyle, padding: '5px 9px', fontSize: '11px', minHeight: '30px', whiteSpace: 'nowrap' },
                                 onClick: () => handleJumpToShot(shot.start_time)
-                              }, Icon.play({ size: 9, fill: '#fff', color: '#fff' }), '播放'),
+                              }, Icon.play({ size: 11, fill: '#fff', color: '#fff' }), '播放片段'),
+                              !isEditingShots && h('button', {
+                                type: 'button',
+                                style: { ...buttonSecondaryStyle, padding: '5px 9px', fontSize: '11px', minHeight: '30px', whiteSpace: 'nowrap' },
+                                disabled: !shot.id || editingRef.current || !!applyingShotRun || !!shotRunLoading[shot.id] || hasActiveShotAnalysis(shot.id),
+                                title: shot.id ? '对当前镜头时间范围进行精读' : '请先保存镜头',
+                                onClick: () => handleShotDeepAnalysis(selectedVideo.id, shot.id)
+                              }, Icon.sparkles({ size: 11 }), hasActiveShotAnalysis(shot.id) ? '分析中' : '深度分析'),
+                              !isEditingShots && h('button', {
+                                type: 'button',
+                                style: { ...buttonSecondaryStyle, padding: '5px 9px', fontSize: '11px', minHeight: '30px', whiteSpace: 'nowrap' },
+                                disabled: !shot.id,
+                                onClick: () => {
+                                  if (!openShotRun[shot.id] && !shotLocksRef.current.has(shot.id)) loadShotRuns(selectedVideo.id, shot.id);
+                                  setOpenShotRun(current => ({ ...current, [shot.id]: !current[shot.id] }));
+                                }
+                              }, openShotRun[shot.id] ? '收起结果' : '分析记录'),
                               isEditingShots && h('button', {
                                 style: { ...buttonDangerStyle, padding: '2px 6px', fontSize: '10px' },
                                 onClick: () => {
@@ -2311,7 +2533,8 @@ window.__ModuleLoader__.load({
                                   lineHeight: '1.5',
                                   marginTop: '2px'
                                 }
-                              }, shot.visual_description || '暂无详细描述')
+                              }, shot.visual_description || '暂无详细描述'),
+                          !isEditingShots && shot.id && openShotRun[shot.id] && renderShotAnalysis(shot, selectedVideo.id)
                         )
                       ),
 
@@ -3302,6 +3525,18 @@ window.__ModuleLoader__.load({
                   onChange: (e) => setAiPromptTemplate(e.target.value),
                   style: { ...inputStyle, resize: 'vertical', lineHeight: '1.4', fontFamily: 'monospace', fontSize: '11px' }
                 })
+              ),
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+                  h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '4. 镜头深度分析提示词'),
+                  h('button', { type: 'button', style: { ...buttonSecondaryStyle, padding: '2px 8px', fontSize: '10px' }, disabled: !shotPromptLoaded, onClick: () => setShotPrompt(shotDefaultPrompt) }, '恢复镜头默认提示词')
+                ),
+                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '仅影响镜头精读；修改后点击“保存全部配置”才会生效。'),
+                shotPromptError && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, shotPromptError,
+                  h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadShotAnalysisSettings }, '重试读取')),
+                h('textarea', { 'aria-label': '镜头深度分析提示词', rows: 8, value: shotPrompt, disabled: !shotPromptLoaded,
+                  onChange: e => setShotPrompt(e.target.value),
+                  style: { ...inputStyle, resize: 'vertical', lineHeight: '1.4', fontFamily: 'monospace', fontSize: '11px' } })
               )
             ),
 
