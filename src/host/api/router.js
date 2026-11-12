@@ -303,6 +303,16 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, ...scanResult });
       }
 
+      // Scan multiple direct child directories under the current asset folder.
+      if (pathname === '/api/video-manager/folders/scan-selected' && method === 'POST') {
+        const body=await parseJsonBody(req);
+        if (!Array.isArray(body.directory_paths) || body.directory_paths.length===0) {
+          return jsonResponse(res,{success:false,error:'directory_paths array is required'},400);
+        }
+        const result=await mediaEngine.scanAndImportDirectories(body.directory_paths,body.parent_directory_path,body.parent_id||null);
+        return jsonResponse(res,{success:true,...result});
+      }
+
       // 6.1 Browse Local Filesystem: GET /api/video-manager/fs/browse
       if (pathname === '/api/video-manager/fs/browse' && method === 'GET') {
         const dir = parsedUrl.searchParams.get('dir') || undefined;

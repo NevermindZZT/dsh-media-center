@@ -221,25 +221,38 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   // 2. video_manager_scan_directory
   addTool({
     name: 'video_manager_scan_directory',
-    description: '扫描指定物理文件夹并导入视频素材。会自动按照物理子目录结构镜像创建多级分类目录（如 甘南环线旅游 -> 扎尕那），提取视频基础参数并生成故事板大图。',
+    description: '扫描用户明确指定的目录并导入其中视频，按物理子目录镜像分类；可归入指定素材父分类。源媒体只读引用。',
     parameters: {
       type: 'object',
       properties: {
-        directory_path: {
-          type: 'string',
-          description: '要扫描导入的本地文件夹绝对物理路径。'
-        }
+        directory_path: {type:'string',description:'用户明确指定、需要递归导入的文件夹绝对路径。'},
+        folder_id: {type:'string',description:'可选的素材库父分类 ID；扫描目录会作为其子分类导入。'}
       },
       required: ['directory_path'],
       additionalProperties: false
     },
     async execute(args) {
       try {
-        const result = await mediaEngine.scanAndImportDirectory(args.directory_path);
+        const result = await mediaEngine.scanAndImportDirectory(args.directory_path,args.folder_id||null);
         return { success: true, ...result };
       } catch (e) {
         return { success: false, error: e.message };
       }
+    }
+  });
+
+  // Import multiple checked child folders under one asset parent.
+  addTool({
+    name: 'video_manager_import_subfolders',
+    description: '将用户明确选择的多个直接子文件夹作为指定素材分类的子分类导入，并递归导入其中视频；源视频只读引用，不复制、修改或删除。',
+    parameters: {type:'object',properties:{
+      parent_directory_path:{type:'string',description:'用户正在浏览的父文件夹绝对路径。'},
+      directory_paths:{type:'array',items:{type:'string'},minItems:1,maxItems:50,description:'用户明确选择的直接子文件夹绝对路径列表。'},
+      parent_folder_id:{type:'string',description:'可选的当前素材库父分类 ID。'}
+    },required:['parent_directory_path','directory_paths'],additionalProperties:false},
+    async execute(args){
+      try{return {success:true,...await mediaEngine.scanAndImportDirectories(args.directory_paths,args.parent_directory_path,args.parent_folder_id||null)};}
+      catch(e){return {success:false,error:e.message};}
     }
   });
 

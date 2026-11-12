@@ -326,55 +326,93 @@ export class MediaEngine {
     return shots;
   }
 
-  // Scan a directory recursively and import videos into multi-level folders
+  // Import several direct child directories under the currently selected asset folder.
+  // The browser supplies the directory being viewed plus explicitly checked children.
+  async scanAndImportDirectories(directoryPaths, expectedParentPath, targetParentFolderId = null) {
+    if (!Array.isArray(directoryPaths) || directoryPaths.length < 1 || directoryPaths.length > 50) {
+      throw new Error('请选中 1–50 个子文件夹');
+    }
+    let parentReal;
+    try {
+      if (typeof expectedParentPath !== 'string' || !path.isAbsolute(expectedParentPath)) throw new Error();
+      parentReal = fs.realpathSync(expectedParentPath);
+      if (!fs.statSync(parentReal).isDirectory()) throw new Error();
+      fs.accessSync(parentReal, fs.constants.R_OK);
+    } catch { throw new Error('当前浏览目录不可用'); }
+    if (targetParentFolderId && !this.db.db.prepare('SELECT id FROM folders WHERE id = ?').get(targetParentFolderId)) {
+      throw new Error('目标父分类不存在，请刷新后重试');
+    }
+    const seen = new Set();
+    const checked = directoryPaths.map(input => {
+      try {
+        if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error();
+        const real = fs.realpathSync(input), lstat = fs.lstatSync(input), stat = fs.statSync(real);
+        const relative = path.relative(parentReal, real);
+        if (lstat.isSymbolicLink() || !stat.isDirectory() || path.dirname(real) !== parentReal || !relative || relative === '..' || path.isAbsolute(relative) || relative.startsWith(`..${path.sep}`) || relative.includes(path.sep)) throw new Error();
+        const key = process.platform === 'win32' ? real.toLowerCase() : real;
+        if (seen.has(key)) throw new Error();
+        seen.add(key);
+        fs.accessSync(real, fs.constants.R_OK);
+        return {path:real,name:path.basename(real)};
+      } catch { throw new Error('所选项必须是当前浏览目录中的直接子文件夹'); }
+    });
+    const folders = [];
+    for (const directory of checked) {
+      try {
+        const result = await this.scanAndImportDirectory(directory.path, targetParentFolderId);
+        folders.push({name:directory.name,imported_count:result.imported_count,failed_count:result.failed_count});
+      } catch {
+        folders.push({name:directory.name,imported_count:0,error:'该文件夹导入失败；请刷新目录并检查权限'});
+      }
+    }
+    return {scanned_count:folders.length,imported_count:folders.reduce((n,item)=>n+item.imported_count,0),failed_count:folders.reduce((n,item)=>n+(item.failed_count||0)+(item.error?1:0),0),folders};
+  }
+
+  // Scan one directory recursively and import videos into mirrored asset categories.
   async scanAndImportDirectory(dirPath, targetParentFolderId = null) {
-    if (!fs.existsSync(dirPath)) {
-      throw new Error(`Directory does not exist: ${dirPath}`);
+    let canonicalDir;
+    try {
+      if (typeof dirPath !== 'string' || !path.isAbsolute(dirPath)) throw new Error();
+      canonicalDir = fs.realpathSync(dirPath);
+      if (!fs.statSync(canonicalDir).isDirectory()) throw new Error();
+      fs.accessSync(canonicalDir, fs.constants.R_OK);
+    } catch { throw new Error('目录不可用或不是文件夹'); }
+    if (targetParentFolderId && !this.db.db.prepare('SELECT id FROM folders WHERE id = ?').get(targetParentFolderId)) {
+      throw new Error('目标父分类不存在，请刷新后重试');
     }
 
     const videoExts = new Set(['.mp4', '.mov', '.mkv', '.avi', '.webm', '.flv', '.m4v', '.wmv']);
     const importedVideos = [];
-    const rootDirName = path.basename(dirPath);
+    const failedFiles = [];
+    const rootDirName = path.basename(canonicalDir);
+    this.db.ensureFolder(rootDirName, canonicalDir, targetParentFolderId);
 
     const scanRec = async (currentDir, relativePrefix) => {
       const entries = fs.readdirSync(currentDir, { withFileTypes: true });
-
       for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name.startsWith('$') || entry.isSymbolicLink()) continue;
         const fullPath = path.join(currentDir, entry.name);
-
         if (entry.isDirectory()) {
           const nextPrefix = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+          this.db.ensureFolder(`${rootDirName}/${nextPrefix}`, fullPath, targetParentFolderId);
           await scanRec(fullPath, nextPrefix);
-        } else if (entry.isFile()) {
-          const ext = path.extname(entry.name).toLowerCase();
-          if (videoExts.has(ext)) {
-            // Determine folder
-            const folderRelPath = relativePrefix ? `${rootDirName}/${relativePrefix}` : rootDirName;
-            const folder = this.db.ensureFolder(folderRelPath, currentDir, targetParentFolderId);
-
-            // Probe video parameters
+        } else if (entry.isFile() && videoExts.has(path.extname(entry.name).toLowerCase())) {
+          const folderRelPath = relativePrefix ? `${rootDirName}/${relativePrefix}` : rootDirName;
+          const folder = this.db.ensureFolder(folderRelPath, currentDir, targetParentFolderId);
+          try {
             const meta = await this.probeVideo(fullPath);
-            const savedVideo = this.db.upsertVideo({
-              ...meta,
-              folder_id: folder ? folder.id : null,
-              status: 'imported'
-            });
-
-            // Trigger storyboard generation asynchronously / sequentially
+            const savedVideo = this.db.upsertVideo({...meta,folder_id:folder ? folder.id : null,status:'imported'});
             await this.generateStoryboard(savedVideo);
-
             importedVideos.push(savedVideo);
+          } catch {
+            failedFiles.push(path.basename(fullPath));
           }
         }
       }
     };
 
-    await scanRec(dirPath, '');
-    return {
-      scanned_directory: dirPath,
-      imported_count: importedVideos.length,
-      videos: importedVideos
-    };
+    await scanRec(canonicalDir, '');
+    return {scanned_directory:canonicalDir,imported_count:importedVideos.length,failed_count:failedFiles.length,failed_files:failedFiles,videos:importedVideos};
   }
 
   // Import individual or multiple video files directly

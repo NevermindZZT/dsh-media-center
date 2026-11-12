@@ -641,6 +641,7 @@ window.__ModuleLoader__.load({
       const [browserData, setBrowserData] = useState(null);
       const [browserLoading, setBrowserLoading] = useState(false);
       const [selectedBrowserFiles, setSelectedBrowserFiles] = useState(new Set()); // Set of selected filePaths
+      const [selectedBrowserFolders, setSelectedBrowserFolders] = useState(new Set()); // Set of checked child folder paths
 
       // Workbench root & Video Player refs
       const workbenchRef = useRef(null);
@@ -893,6 +894,7 @@ window.__ModuleLoader__.load({
       const loadBrowseDir = async (dirPath) => {
         setBrowserLoading(true);
         setSelectedBrowserFiles(new Set());
+        setSelectedBrowserFolders(new Set());
         try {
           const url = dirPath
             ? `/api/video-manager/fs/browse?dir=${encodeURIComponent(dirPath)}`
@@ -916,17 +918,33 @@ window.__ModuleLoader__.load({
         if (next.has(filePath)) next.delete(filePath);
         else next.add(filePath);
         setSelectedBrowserFiles(next);
+        setSelectedBrowserFolders(new Set());
       };
 
       // Toggle select all video files in current browsing directory
       const toggleSelectAllBrowserFiles = () => {
         const allFiles = (browserData && browserData.video_files) || [];
         if (allFiles.length === 0) return;
+        setSelectedBrowserFolders(new Set());
         if (selectedBrowserFiles.size === allFiles.length) {
           setSelectedBrowserFiles(new Set());
         } else {
           setSelectedBrowserFiles(new Set(allFiles.map(f => f.path)));
         }
+      };
+      const toggleBrowserFolder = folderPath => {
+        const next=new Set(selectedBrowserFolders);
+        if(next.has(folderPath))next.delete(folderPath);
+        else {if(next.size>=50){alert('一次最多选择 50 个子文件夹。');return;}next.add(folderPath);}
+        setSelectedBrowserFolders(next);
+        setSelectedBrowserFiles(new Set());
+      };
+      const toggleSelectAllBrowserFolders = () => {
+        const folders=browserData?.folders||[];
+        if(!folders.length)return;
+        if(folders.length>50){alert('当前目录子文件夹超过 50 个，请手动选择需要导入的文件夹。');return;}
+        setSelectedBrowserFiles(new Set());
+        setSelectedBrowserFolders(selectedBrowserFolders.size===folders.length?new Set():new Set(folders.map(folder=>folder.path)));
       };
 
       useEffect(() => {
@@ -1428,6 +1446,26 @@ window.__ModuleLoader__.load({
           setImportNotice('');
           await refreshCurrentViewRef.current();
         }
+      };
+
+      const handleScanSelectedFolders = async () => {
+        const directoryPaths=Array.from(selectedBrowserFolders);
+        if(importLockRef.current||!directoryPaths.length||!browserData?.current_path)return;
+        if(directoryPaths.length>50){alert('一次最多选择 50 个子文件夹。');return;}
+        if(!window.confirm(`将递归导入 ${directoryPaths.length} 个所选文件夹中的所有视频，并把它们作为当前素材分类的子分类。源视频不会复制或修改。继续？`))return;
+        importLockRef.current=true;setIsImporting(true);setImportNotice(`正在扫描 ${directoryPaths.length} 个子文件夹并生成故事板，请稍候...`);
+        try{
+          const response=await fetch('/api/video-manager/folders/scan-selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            parent_directory_path:browserData.current_path,directory_paths:directoryPaths,parent_id:selectedFolderId||null
+          })});
+          const data=await response.json();
+          if(!response.ok||!data.success)throw new Error(data.error||'多文件夹导入失败');
+          const failures=(data.folders||[]).filter(folder=>folder.error||folder.failed_count>0);
+          setShowScanModal(false);await refreshCurrentViewRef.current();
+          if(failures.length)alert(`已扫描 ${data.scanned_count} 个文件夹，成功导入 ${data.imported_count} 个视频；${data.failed_count||failures.length} 个视频导入失败，涉及：${failures.map(item=>item.name).join('、')}。请检查权限或文件后重试。`);
+          else alert(`已将 ${data.scanned_count} 个子文件夹加入当前分类，共导入 ${data.imported_count} 个视频。`);
+        }catch(error){alert('多文件夹导入失败：'+(error?.message||'请检查目录和权限'));}
+        finally{importLockRef.current=false;setIsImporting(false);setImportNotice('');setSelectedBrowserFolders(new Set());await refreshCurrentViewRef.current();}
       };
 
       // Import selected video files directly (supports multiple / select all)
@@ -3358,42 +3396,26 @@ window.__ModuleLoader__.load({
                 browserLoading
                   ? h('div', { style: { padding: '20px', textAlign: 'center', color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' } }, '正在读取目录...')
                   : browserData
-                    ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } },
-                        (browserData.folders || []).map(folder =>
-                          h('div', {
-                            key: folder.path,
-                            style: {
-                              padding: '6px 10px',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              backgroundColor: 'transparent',
-                              fontSize: '12px'
-                            },
-                            onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
-                            onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
-                            onClick: () => { if (!isImporting) loadBrowseDir(folder.path); }
-                          },
-                            h('span', { style: { fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '6px' } },
-                              Icon.folder({ size: 14, color: '#3b82f6' }),
-                              folder.name
-                            ),
-                            h('span', {
-                              style: {
-                                fontSize: '11px',
-                                color: 'var(--dsw-alias-label-secondary)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }
-                            },
-                              '进入',
-                              Icon.chevronRight({ size: 11 })
-                            )
-                          )
+                    ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
+                        (browserData.folders || []).length > 0 && h('div', {
+                          style:{padding:'6px 10px',backgroundColor:'var(--dsw-alias-bg-layer-2)',borderRadius:'4px',display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'11px'}
+                        },
+                          h('label',{style:{display:'inline-flex',alignItems:'center',gap:'6px',cursor:'pointer'}},
+                            h('input',{type:'checkbox','aria-label':'选择当前目录所有子文件夹',disabled:isImporting||browserData.folders.length>50,checked:selectedBrowserFolders.size===browserData.folders.length,onChange:toggleSelectAllBrowserFolders,style:{cursor:'pointer'}}),
+                            h('span',null,`选择子文件夹（${selectedBrowserFolders.size}/${browserData.folders.length}，最多50）`)
+                          ),
+                          selectedBrowserFolders.size>0&&h('span',{style:{color:'var(--dsw-alias-label-primary)',fontWeight:600}},`已选 ${selectedBrowserFolders.size} 个文件夹`)
                         ),
+                        (browserData.folders || []).map(folder => {
+                          const selected=selectedBrowserFolders.has(folder.path);
+                          return h('div',{key:folder.path,style:{minHeight:'38px',padding:'0 4px',borderRadius:'4px',display:'flex',alignItems:'center',gap:'8px',backgroundColor:selected?'var(--dsw-alias-bg-layer-2)':'transparent',border:selected?'1px solid var(--dsw-alias-border-l2)':'1px solid transparent',fontSize:'13px'}},
+                            h('input',{type:'checkbox','aria-label':`选择文件夹 ${folder.name}`,checked:selected,disabled:isImporting,onChange:()=>toggleBrowserFolder(folder.path),style:{cursor:'pointer',flexShrink:0}}),
+                            h('button',{type:'button',disabled:isImporting,style:{...buttonSecondaryStyle,padding:'6px 10px',minHeight:'38px',fontSize:'13px',flex:1,textAlign:'left',display:'inline-flex',alignItems:'center',justifyContent:'space-between'},onClick:()=>loadBrowseDir(folder.path)},
+                              h('span',{style:{display:'inline-flex',alignItems:'center',gap:'6px',minWidth:0}},Icon.folder({size:14,color:'var(--dsw-alias-label-secondary)'}),folder.name),
+                              h('span',{style:{display:'inline-flex',alignItems:'center',gap:'3px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'进入',Icon.chevronRight({size:11}))
+                            )
+                          );
+                        }),
                         // Video Files Header with Select All
                         (browserData.video_files || []).length > 0 && h('div', {
                           style: {
@@ -3486,36 +3508,18 @@ window.__ModuleLoader__.load({
 
               // Action Toolbar
               h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '6px' } },
-                selectedBrowserFiles.size > 0
-                  ? h('div', { style: { fontSize: '12px', color: '#2563eb', fontWeight: 600 } },
-                      `已选 ${selectedBrowserFiles.size} 个视频文件`
-                    )
-                  : h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } },
-                      '未勾选特定视频，将扫描导入当前文件夹及所有子目录'
-                    ),
+                selectedBrowserFolders.size > 0
+                  ? h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-primary)', fontWeight: 600 } }, `已选 ${selectedBrowserFolders.size} 个子文件夹，将递归导入其中视频`)
+                  : selectedBrowserFiles.size > 0
+                    ? h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-primary)', fontWeight: 600 } }, `已选 ${selectedBrowserFiles.size} 个视频文件`)
+                    : h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '勾选视频文件或子文件夹，也可扫描当前文件夹及其子目录'),
                 h('div', { style: { display: 'flex', gap: '8px' } },
-                  h('button', {
-                    style: buttonSecondaryStyle,
-                    disabled: isImporting,
-                    onClick: () => setShowScanModal(false)
-                  }, '取消'),
-                  selectedBrowserFiles.size > 0
-                    ? h('button', {
-                        style: buttonPrimaryStyle,
-                        disabled: isImporting,
-                        onClick: () => handleImportSelectedFiles()
-                      },
-                        isImporting ? Icon.loader({ size: 13, color: '#fff' }) : Icon.upload({ size: 13 }),
-                        isImporting ? '导入处理中...' : `导入所选视频 (${selectedBrowserFiles.size}个)`
-                      )
-                    : h('button', {
-                        style: buttonPrimaryStyle,
-                        disabled: isImporting,
-                        onClick: () => handleScanDirectory(browserData ? browserData.current_path : null)
-                      },
-                        isImporting ? Icon.loader({ size: 13, color: '#fff' }) : Icon.upload({ size: 13 }),
-                        isImporting ? '扫描处理中...' : '扫描导入当前文件夹'
-                      )
+                  h('button', {style:buttonSecondaryStyle,disabled:isImporting,onClick:()=>setShowScanModal(false)},'取消'),
+                  selectedBrowserFolders.size > 0
+                    ? h('button',{style:buttonPrimaryStyle,disabled:isImporting,onClick:handleScanSelectedFolders},isImporting?Icon.loader({size:13,color:'#fff'}):Icon.upload({size:13}),isImporting?'导入处理中...':`导入所选文件夹 (${selectedBrowserFolders.size}个)`)
+                    : selectedBrowserFiles.size > 0
+                      ? h('button',{style:buttonPrimaryStyle,disabled:isImporting,onClick:()=>handleImportSelectedFiles()},isImporting?Icon.loader({size:13,color:'#fff'}):Icon.upload({size:13}),isImporting?'导入处理中...':`导入所选视频 (${selectedBrowserFiles.size}个)`)
+                      : h('button',{style:buttonPrimaryStyle,disabled:isImporting,onClick:()=>handleScanDirectory(browserData?browserData.current_path:null)},isImporting?Icon.loader({size:13,color:'#fff'}):Icon.upload({size:13}),isImporting?'扫描处理中...':'扫描导入当前文件夹')
                 )
               )
             ),

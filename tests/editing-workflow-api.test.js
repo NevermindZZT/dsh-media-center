@@ -33,7 +33,8 @@ function fixture() {
     const res={writeHead(status,headers){this.status=status;this.headers=headers;},end(buffer){try{resolve({status:this.status,body:buffer?JSON.parse(buffer.toString()):null});}catch(e){reject(e);}}};
     Promise.resolve(handler(req,res)).catch(reject);
   });
-  const defs=[];registerVideoManagerTools({tools:{register:def=>{defs.push(def);return()=>{};}}},{editingWorkflow:service});
+  const mediaEngine={scanAndImportDirectories:async(paths,parentPath,parentId)=>{calls.push(['scan_subfolders',paths,parentPath,parentId]);return {scanned_count:paths.length,imported_count:3,failed_count:0,folders:[]};}};
+  const defs=[];registerVideoManagerTools({tools:{register:def=>{defs.push(def);return()=>{};}}},{editingWorkflow:service,mediaEngine});
   return {service,calls,request,defs,tool:name=>defs.find(d=>d.name===name)};
 }
 const base='/api/video-manager/editing';
@@ -49,6 +50,15 @@ test('music CRUD and license confirmation use the shared catalog and reject unco
   assert.equal((await f.request('POST',`${base}/music/${MUSIC}/confirm-personal`,{confirmed:true})).status,200);
   assert.equal((await f.request('GET',`${base}/music?limit=1&offset=0`)).body.items[0].id,MUSIC);
   assert.equal((await f.request('DELETE',`${base}/music/${MUSIC}`)).body.removed,true);
+});
+
+test('multi-folder import tool uses selected parent and safe host service operation',async()=>{
+  const f=fixture(),tool=f.tool('video_manager_import_subfolders');
+  const paths=['C:\\parent\\scene-a','C:\\parent\\scene-b'];
+  const result=await tool.execute({parent_directory_path:'C:\\parent',directory_paths:paths,parent_folder_id:'folder_trip'});
+  assert.equal(result.success,true);assert.equal(result.imported_count,3);
+  assert.deepEqual(f.calls[0],['scan_subfolders',paths,'C:\\parent','folder_trip']);
+  assert.equal(tool.parameters.properties.directory_paths.maxItems,50);
 });
 
 test('AI music recommendation is absent from plugin tools and API',async()=>{

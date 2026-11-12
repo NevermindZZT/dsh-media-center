@@ -80,6 +80,7 @@
 
 1. **找素材与素材证据**：
    - 使用 `video_manager_search_shots` 搜索镜头，并用 `video_manager_get_video({ video_id, include_shots:true, include_audio:true })` 查看完整分镜标注与时间范围；必要时先查看故事板或使用单片段精读候选。
+   - 如果用户要求导入多个文件夹，使用视频资产库的“导入文件夹”浏览器多选当前目录的直接子文件夹；系统会将其建在左侧当前选中素材分类下，并递归导入所选目录中的视频。Agent 工具 `video_manager_import_subfolders` 只能传用户明确选定的目录，不能猜测本地路径。
    - 分镜是既有文字标注，不代表本轮 AI 已观看原片；请在会话中如实标明未核验的内容。
 2. **音乐与测量**：
    - 使用 `video_manager_edit_music_list` 检索本地音乐，`video_manager_edit_music_analyze` 只读分析用户许可的音乐窗口。将 BPM 视作估算、将 onsets 视作瞬态候选，不得把它们冒充已确认拍点；需结合用户试听意见。
