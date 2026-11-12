@@ -219,96 +219,72 @@ export class MediaEngine {
     }
   }
 
-  // Detect silence intervals using silencedetect filter
-  async detectSilence(video) {
-    const bins = await this.getBinaries();
-    if (!bins.ffmpeg) return [];
-
+  // Detailed result distinguishes successful empty detection from missing tools/audio/errors.
+  async detectSilenceResult(video) {
+    let bins;
+    try { bins = await this.getBinaries(); }
+    catch { return { status: 'unavailable', reason: 'binary_detection_failed', intervals: null }; }
+    if (!bins.ffmpeg) return { status: 'unavailable', reason: 'ffmpeg_missing', intervals: null };
+    if (!video || typeof video.file_path !== 'string' || !video.file_path) {
+      return { status: 'error', reason: 'invalid_video', intervals: null };
+    }
+    // When available, probing distinguishes a valid no-audio file from a decoding failure.
+    if (bins.ffprobe) {
+      try {
+        const { stdout } = await execFileAsync(bins.ffprobe, ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=index', '-of', 'json', video.file_path], { maxBuffer: 1024 * 1024, timeout: 30000 });
+        const parsed = JSON.parse(stdout);
+        if (!Array.isArray(parsed.streams)) return { status: 'error', reason: 'probe_invalid_response', intervals: null };
+        if (!parsed.streams.length) return { status: 'unavailable', reason: 'no_audio_stream', intervals: null };
+      } catch { return { status: 'error', reason: 'audio_probe_failed', intervals: null }; }
+    }
     const threshold = this.db.getSetting('silence_threshold_db', '-30');
     const minDuration = this.db.getSetting('silence_duration_s', '0.5');
-
-    const args = [
-      '-i', video.file_path,
-      '-af', `silencedetect=noise=${threshold}dB:d=${minDuration}`,
-      '-f', 'null',
-      '-'
-    ];
-
-    return new Promise((resolve) => {
-      const proc = spawn(bins.ffmpeg, args);
-      let stderr = '';
-
-      proc.stderr.on('data', (d) => {
-        stderr += d.toString();
-      });
-
-      proc.on('close', () => {
-        const intervals = [];
-        let currentStart = null;
-
-        const lines = stderr.split(/\r?\n/);
-        for (const line of lines) {
-          const startMatch = line.match(/silence_start:\s*([0-9.]+)/);
-          if (startMatch) {
-            currentStart = parseFloat(startMatch[1]);
+    const args = ['-nostdin', '-i', video.file_path, '-map', '0:a:0', '-af', `silencedetect=noise=${threshold}dB:d=${minDuration}`, '-f', 'null', '-'];
+    return new Promise(resolve => {
+      let proc;
+      try { proc = spawn(bins.ffmpeg, args, { windowsHide: true }); }
+      catch { resolve({ status: 'error', reason: 'ffmpeg_spawn_failed', intervals: null }); return; }
+      const intervals = [];
+      let stderrRemainder = '', currentStart = null, noAudio = false, spawnFailed = false;
+      const processLine = line => {
+        if (/Stream map .*matches no streams|does not contain any stream/i.test(line)) noAudio = true;
+        const start = line.match(/silence_start:\s*([0-9.]+)/);
+        if (start) currentStart = Number(start[1]);
+        const end = line.match(/silence_end:\s*([0-9.]+)\s*\|\s*silence_duration:\s*([0-9.]+)/);
+        if (end && currentStart !== null) {
+          const stop = Number(end[1]), duration = Number(end[2]);
+          if (Number.isFinite(currentStart) && Number.isFinite(stop) && Number.isFinite(duration)) {
+            intervals.push({ start: Math.round(currentStart * 100) / 100, end: Math.round(stop * 100) / 100, duration: Math.round(duration * 100) / 100 });
           }
-          const endMatch = line.match(/silence_end:\s*([0-9.]+)\s*\|\s*silence_duration:\s*([0-9.]+)/);
-          if (endMatch && currentStart != null) {
-            const end = parseFloat(endMatch[1]);
-            const duration = parseFloat(endMatch[2]);
-            intervals.push({
-              start: Math.round(currentStart * 100) / 100,
-              end: Math.round(end * 100) / 100,
-              duration: Math.round(duration * 100) / 100
-            });
-            currentStart = null;
-          }
+          currentStart = null;
         }
-        resolve(intervals);
+      };
+      proc.stderr.on('data', data => {
+        stderrRemainder += data.toString();
+        const lines = stderrRemainder.split(/\r?\n/);
+        stderrRemainder = lines.pop().slice(-16384);
+        for (const line of lines) processLine(line);
       });
-
-      proc.on('error', () => resolve([]));
+      proc.on('error', () => { spawnFailed = true; });
+      proc.on('close', code => {
+        processLine(stderrRemainder);
+        if (spawnFailed) return resolve({ status: 'error', reason: 'ffmpeg_spawn_failed', intervals: null });
+        if (code !== 0) return resolve({ status: noAudio ? 'unavailable' : 'error', reason: noAudio ? 'no_audio_stream' : 'ffmpeg_failed', intervals: null });
+        if (currentStart !== null) return resolve({ status: 'error', reason: 'incomplete_silence_output', intervals: null });
+        resolve({ status: 'ok', reason: null, intervals });
+      });
     });
   }
 
-  // Estimate BPM and Rhythm Beats
-  async detectBpmAndBeats(video) {
-    const bins = await this.getBinaries();
-    if (!bins.ffmpeg || !video.duration || video.duration <= 0) {
-      return { bpm: 120, beats: [] };
-    }
+  // Compatibility: callers expecting an array still get one on success; failure is null, never [].
+  async detectSilence(video) {
+    const result = await this.detectSilenceResult(video);
+    return result.status === 'ok' ? result.intervals : null;
+  }
 
-    // Extract light audio envelope / energy peaks via astats or ebur128
-    return new Promise((resolve) => {
-      const args = [
-        '-i', video.file_path,
-        '-af', 'ebur128=metadata=1',
-        '-f', 'null',
-        '-'
-      ];
-
-      const proc = spawn(bins.ffmpeg, args);
-      let stderr = '';
-
-      proc.stderr.on('data', (d) => {
-        stderr += d.toString();
-      });
-
-      proc.on('close', () => {
-        // Fallback or simple harmonic beat generator based on common 120bpm
-        // For video editing, 4-beat grids aligned with duration
-        const duration = video.duration;
-        const bpm = 120; // Default estimate
-        const interval = 60 / bpm; // 0.5s
-        const beats = [];
-        for (let t = interval; t < duration; t += interval) {
-          beats.push(Math.round(t * 100) / 100);
-        }
-        resolve({ bpm, beats: beats.slice(0, 100) });
-      });
-
-      proc.on('error', () => resolve({ bpm: 120, beats: [] }));
-    });
+  // No real beat detector is integrated. Do not manufacture a tempo or beat grid.
+  async detectBpmAndBeats(_video) {
+    return { status: 'unavailable', reason: 'tempo_detector_not_integrated', bpm: null, beats: null };
   }
 
   // Auto detect initial shots (Scene change or uniform sampling)
@@ -427,6 +403,7 @@ export class MediaEngine {
     const isWin = process.platform === 'win32';
     const homedir = os.homedir();
     const videoExts = new Set(['.mp4', '.mov', '.mkv', '.avi', '.webm', '.flv', '.m4v', '.wmv']);
+    const audioExts = new Set(['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.aiff', '.aif', '.wma']);
 
     // Common quick places
     const quickPlaces = [
@@ -462,6 +439,7 @@ export class MediaEngine {
 
     const folders = [];
     const videoFiles = [];
+    const audioFiles = [];
 
     try {
       const entries = fs.readdirSync(targetDir, { withFileTypes: true });
@@ -478,14 +456,11 @@ export class MediaEngine {
             });
           } else if (entry.isFile()) {
             const ext = path.extname(entry.name).toLowerCase();
-            if (videoExts.has(ext)) {
+            if (videoExts.has(ext) || audioExts.has(ext)) {
               const stat = fs.statSync(fullPath);
-              videoFiles.push({
-                name: entry.name,
-                path: fullPath,
-                size: stat.size,
-                ext: ext.slice(1).toUpperCase()
-              });
+              const item = { name:entry.name, path:fullPath, size:stat.size, ext:ext.slice(1).toUpperCase() };
+              if (videoExts.has(ext)) videoFiles.push(item);
+              if (audioExts.has(ext)) audioFiles.push(item);
             }
           }
         } catch {
@@ -499,6 +474,7 @@ export class MediaEngine {
     // Sort alphabetically
     folders.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     videoFiles.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    audioFiles.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 
     return {
       current_path: targetDir,
@@ -506,7 +482,8 @@ export class MediaEngine {
       quick_places: quickPlaces,
       drive_roots: driveRoots,
       folders,
-      video_files: videoFiles
+      video_files: videoFiles,
+      audio_files: audioFiles
     };
   }
 }

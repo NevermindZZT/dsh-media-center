@@ -33,8 +33,8 @@
   不再需要手动打字输入路径！内置磁盘盘符（`C:\`, `D:\`）、项目工作区、常用目录快捷直达；支持可视化展开目录层级，支持单选/多选视频文件直接导入。
 - 🖼️ **4x4 故事板大图 (Contact Sheet) 自动生成**：
   视频导入或分析时自动通过 FFmpeg 抽取 16 个代表性关键画面拼合成单张轻量雪碧图。AI Agent **仅需“看”一张图片** 即可纵览全片镜头节奏与视觉走向，**节约 90% 以上视觉 Token 开销**。
-- 🔇 **音频静音停顿检测与音乐 BPM 卡点**：
-  自动通过 `silencedetect` 滤镜标出所有气口停顿区间 `[start, end, duration]`，便于解说口播快速切除空白；自动计算音乐节奏 `BPM` 与节拍时间戳，为卡点混剪提供精准依据。
+- **音频静音与音乐节奏**：
+  视频底层分析可检测静音区间；历史 BPM/节拍来源未确认，不能直接作为实测数据。素材分析和音乐测量只提供有限证据；瞬态不一定是节拍或强拍，均需复核。
 - 📝 **全流程结构化人机协同编辑**：
   保持专业生产力软件克制美感，**默认呈现舒适的正常阅读浏览模式**。点击【✏️ 编辑】即可就地调整分镜秒数、景别（大远景至大特写）、运镜（推拉摇移跟俯冲）、画面描述、语音字幕与标签，并支持一键保存。
 - **单片段 AI 精读**：
@@ -43,8 +43,8 @@
   支持多选勾选素材，一键【批量移动到分类】、【批量移出素材库】。
 - ↕️ **多维双向排序体系**：
   中栏支持按 **拍摄时间**（最新/最早）、**导入时间**（最新/最早）、**文件名**（A ➔ Z / Z ➔ A）、**视频时长**（长到短/短到长）进行实时动态排序。上次选择保存在当前浏览器，下次打开自动恢复。拍摄时间只读取媒体容器/视频流的录制时间标签（如 `creation_time`、QuickTime 创建日期），带时区的时间按浏览器本地时区显示；没有时区的标签保留相机墙上时间。没有有效标签时显示“拍摄时间未知”，不使用文件创建时间、修改时间或导入时间冒充。旧素材会在首次加载列表时只读重探测，保留导入时间、分镜和 AI 标注；未知拍摄时间在升降序中均排在末尾。
-- ✂️ **主流剪辑软件工程一键导出**：
-  AI Agent 排布或人工整理好的镜头片段，可一键直出 **剪映电脑版本地草稿目录（`draft_content.json`）**、**Final Cut Pro / Premiere XML（FCPXML v1.9）** 或 **CMX 3600 EDL**，在剪辑软件中秒开粗剪时间线。
+- **剪辑工程导出（实验性）**：
+  现有导出器可生成简化剪映草稿、FCPXML 或 EDL 文件；兼容性尚未在剪映 11.7.3 等目标软件中完成验证。当前剪映导出仅包含视频轨道，不含音乐；请不要将生成文件视为已能在剪映中打开的成品。
 - 🔍 **分镜多维与自然语言语义检索**：
   基于 SQLite FTS5 与多维分词打权算法，输入如 *“晨光照耀雪山日落金山”*，毫秒级跨视频精准召回最匹配的分镜片段与毫秒级入出点。
 - 🎨 **DSH 官方主题 100% 自适应**：
@@ -54,7 +54,7 @@
 
 ---
 
-## 面向 AI Agent 的专属工具集（15 个）
+## 面向 AI Agent 的专属工具集（24 个）
 
 插件安装后，系统运行时会自动向 AI Agent 暴露以下标准化工具：
 
@@ -65,16 +65,25 @@
 | `video_manager_import_files` | 直接导入一个或多个指定视频文件到指定分类目录中 | `{ file_paths: string[], folder_id? }` |
 | `video_manager_search_videos` | 多条件检索素材库（按目录、标签、分析状态、关键词、拍摄时间/时长排序） | `{ folder_id?, status?, query?, tag?, limit?, sort_by?, sort_dir? }` |
 | `video_manager_get_video` | 获取单个视频的完整详情（物理绝对路径、基本参数、分镜列表、音频提示） | `{ video_id, include_shots?, include_audio? }` |
-| `video_manager_trigger_analysis` | 触发后台抽取故事板大图、音频静音检测、BPM 分析与初始切分点 | `{ video_id }` |
+| `video_manager_trigger_analysis` | 抽取故事板、初始片段和静音区间；视频原音轨的节奏检测不可用 | `{ video_id }` |
 | `video_manager_upsert_shots` | Agent 完成视觉理解后，批量回写分镜（景别、运镜、画面详述、评分） | `{ video_id, shots: [...] }` |
 | `video_manager_update_audio_info` | 写入或校正语音转录字幕时间轴、BGM 情绪/BPM、音效（SFX）打点 | `{ video_id, transcripts?, bgm_mood?, bpm?, sfx_cues? }` |
 | `video_manager_update_video` | 更新视频全局摘要（summary）、业务标签（tags）与人工备注 | `{ video_id, summary?, tags?, user_notes?, status? }` |
 | `video_manager_search_shots` | 跨视频进行分镜语义检索，根据自然语言召回最契合的镜头及其入出点 | `{ query, shot_type?, camera_movement?, min_duration?, limit? }` |
-| `video_manager_export_project` | 将选定镜头导出为专业工程文件（`jianying` 剪映草稿、`fcpxml`、`edl`） | `{ sequence_name, format, clips: [{ video_id, in_point, out_point }] }` |
+| `video_manager_export_project` | 生成实验性工程文件（剪映草稿/FCPXML/EDL；未验证目标软件兼容，剪映格式不含音乐） | `{ sequence_name, format, clips: [{ video_id, in_point, out_point }] }` |
 | `video_manager_analyze_shot` | 仅生成单片段精读候选，不覆盖原标注 | `{ video_id, shot_id }` |
 | `video_manager_get_shot_analysis` | 查询片段精读记录、候选和用量 | `{ video_id, shot_id, limit? }` |
 | `video_manager_apply_shot_analysis` | 经用户明确授权后应用指定候选字段 | `{ run_id, fields, confirmed: true }` |
 | `video_manager_configure_ffmpeg` | 查看或手动指定 `ffmpeg.exe` / `ffprobe.exe` 的绝对路径 | `{ ffmpeg_path?, ffprobe_path? }` |
+| `video_manager_edit_music_list` | 搜索/分页读取本地音乐资产目录；授权只是用户声明 | `{ query?, license_status?, limit?, offset? }` |
+| `video_manager_edit_music_import` | 将用户指定音频加入音乐资产目录（只引用，不复制） | `{ file_path, title?, artist?, source_name? }` |
+| `video_manager_edit_music_remove` | 移除音乐目录记录，不删除磁盘文件 | `{ music_id }` |
+| `video_manager_edit_music_confirm_personal` | 用户明确确认后记录个人分享声明 | `{ music_id, confirmed: true, license_note? }` |
+| `video_manager_edit_music_analyze` | 只读测量音乐 BPM 估计与瞬态候选；不声称已试听或精确卡点 | `{ music_id, start_seconds?, duration_seconds? }` |
+| `video_manager_edit_jamendo_search` | 搜索 Jamendo 曲目元数据；不下载、不验证使用许可 | `{ query, limit?, offset? }` |
+| `video_manager_edit_preview_project` | 校验 DSH Agent 在会话中迭代形成的结构化时间线；不调用第二个模型或保存 | `{ project: EditProjectV1 }` |
+| `video_manager_edit_save_project` | 用户明确同意后保存当前服务端预览 ID | `{ preview_id, confirmed: true }` |
+| `video_manager_edit_projects` | 列出或读取本机已保存的剪辑项目 | `{ project_id?, limit?, offset? }` |
 
 ---
 
@@ -86,7 +95,7 @@
 
 2. 触发底层音视频特征抽取
    Agent ➔ video_manager_trigger_analysis({ video_id: "vid_xxx" })
-   返回: 故事板大图绝对路径 (4x4 拼图) + 初始分镜切分点 + 静音区间 + 估算 BPM
+   返回: 故事板大图绝对路径 (4x4 拼图) + 初始片段 + 静音检测状态；BPM 检测不可用
 
 3. 多模态理解与审美分析
    Agent 查看故事板大图与代表性关键帧图片，推理出每个镜头的景别、运镜特征与详细画面描述。
@@ -107,7 +116,7 @@
        { video_id: "vid_02", in_point: 6.2, out_point: 10.0 }
      ]
    })
-   用户打开剪映电脑版，草稿箱中已就绪排好轨道的完整粗剪工程！
+   当前导出为实验性简化草稿；不包含音乐轨道，目标版本兼容性未验证。
 ```
 
 ---
@@ -123,7 +132,23 @@
 
 ---
 
-## 工作台 AI 模型与推理档位
+## DSH 会话 Agent 剪辑项目工作流
+
+创意讨论、选曲决定、时间线编排和多轮修改均在 DSH 会话 Agent 中完成，避免插件内第二个模型界面与会话割裂。Agent 在对话中调用素材检索、视频/分镜详情、本地音乐库、只读音频测量与 Jamendo 元数据工具；它依据用户审阅的候选素材与实测摘要构造结构化剪辑项目，并可多轮修改。
+
+当用户要求预览时，`video_manager_edit_preview_project` 只校验 project v1、素材库 ID、分镜范围、时间线帧边界、音乐库成员、源文件可用性和授权状态，不调用模型、不写数据库、不修改或复制源素材。预览会返回规范化项目与服务端 30 分钟预览 ID；素材文件以 realpath 与文件系统属性弱指纹进行前后检查（非内容哈希），分镜更新后旧预览会失效。
+
+用户查看完整预览并明确要求保存后，Agent 可调用 `video_manager_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果出现在插件的【剪辑项目】管理视图。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。插件的剪映草稿导出仍是实验性简化版本，不含音乐轨，Windows 剪映 11.7.3 尚未验证可打开。
+
+---
+
+## 插件内 AI 能力边界
+
+插件继续负责素材/分镜/音频资产管理、素材深度分析、只读音乐测量、项目数据校验与持久化。创意决策、AI 选曲及反复编排仅在 DSH 会话中进行。素材分析模型配置用于素材标注，不属于旅行短片剪辑工作台。
+
+---
+
+## 素材分析模型与推理档位
 
 在工作台【设置】中选择 DSH 已配置的服务商及支持图片输入的模型。如果该模型声明了可选推理档位，还须明确选择并保存档位；切换服务商或模型后，需要重新选择。请求直接使用已保存的档位，不会因请求失败而自动更换档位重试。已有配置如果尚未设置推理档位，需先打开设置完成选择。未声明推理档位的模型无需选择；无法读取能力时需刷新或检查模型配置。自定义 OpenAI 兼容端点维持原有调用方式，不使用 DSH 档位列表。
 

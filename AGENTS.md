@@ -76,15 +76,18 @@
 
 ## 五、面向 AI Agent 的交互与工具调用指南
 
-在 AI 视频剪辑工作流中，Agent 应遵循以下标准编排范式：
+在 AI 视频工作流中，素材发现和标注管理在插件工具中完成；创意讨论、选曲和时间线迭代始终在当前 DSH 会话 Agent 中进行。插件不再内置另一套创意规划/推荐模型。
 
-1. **找素材与灵感召回**：
-   - 使用 `video_manager_search_shots({ query: "日落金山 远景航拍" })` 进行自然语言分镜语义检索，获取镜头毫秒级入出点与文件物理路径。
-   - 使用 `video_manager_get_video({ video_id, include_shots: true, include_audio: true })` 获取完整素材时序信息。
-2. **素材多模态分析流程**：
-   - 触发底层切分与故事板：调用 `video_manager_trigger_analysis({ video_id })`，获取 4x4 拼图大图绝对路径。
-   - Agent 查看故事板大图后，调用 `video_manager_upsert_shots` 回写审美解析（景别、运镜、画面详述、评分）。
-   - 调用 `video_manager_update_audio_info` 回写字幕时间戳、BPM 与音乐情绪。
-   - 调用 `video_manager_update_video` 回写全片摘要并将状态设为 `analyzed`。
-3. **成片工程导出**：
-   - 当编排好剪辑序列后，调用 `video_manager_export_project`，优先输出 `jianying`（剪映本地草稿目录）或 `fcpxml`，直接交付给用户剪辑软件打开。
+1. **找素材与素材证据**：
+   - 使用 `video_manager_search_shots` 搜索镜头，并用 `video_manager_get_video({ video_id, include_shots:true, include_audio:true })` 查看完整分镜标注与时间范围；必要时先查看故事板或使用单片段精读候选。
+   - 分镜是既有文字标注，不代表本轮 AI 已观看原片；请在会话中如实标明未核验的内容。
+2. **音乐与测量**：
+   - 使用 `video_manager_edit_music_list` 检索本地音乐，`video_manager_edit_music_analyze` 只读分析用户许可的音乐窗口。将 BPM 视作估算、将 onsets 视作瞬态候选，不得把它们冒充已确认拍点；需结合用户试听意见。
+   - Jamendo 只搜索元数据；它不是授权验证或自动下载。只有用户明确确认个人用途后，才能用 `video_manager_edit_music_confirm_personal` 记录其声明。
+3. **会话内反复编排**：
+   - Agent 在对话中根据用户创作需求、候选镜头、真实音乐元数据/测量摘要提出想法；展示后接受反馈并修改。此阶段不调用插件内的 AI 规划器，因为该规划器已移除。
+   - 形成 EditProject v1 时，视频与音乐 source 只引用素材库 ID（不传绝对路径）；时间线使用项目整数帧，视频片段必须提供现有 `shot_id` 证据，音乐必须为一条且含权利状态声明。未确认拍点时不填写 beats。
+4. **预览与用户授权保存**：
+   - 调用 `video_manager_edit_preview_project({ project })` 让插件核验工程结构、来源 ID、分镜范围、音乐成员、文件可用性和预览时源/标注快照。项目暂不持久化；工具返回规范化项目、警告和预览 ID。
+   - 在 DSH 会话中向用户展示完整规范化项目和警告；只有用户明确要求保存后，才调用 `video_manager_edit_save_project({ preview_id, confirmed:true })`。保存只能提交该服务端预览 ID，不能替换内容。
+   - 保存后的项目可用 `video_manager_edit_projects` 查询。剪映导出仍为实验性视频轨简化格式，不包含音乐，也未在 Windows 剪映 11.7.3 验证；不得承诺用户可直接打开。

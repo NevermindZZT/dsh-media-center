@@ -4,6 +4,7 @@ import { ProjectExporter } from './src/host/export/project-exporter.js';
 import { ShotSearchService } from './src/host/search/shot-search.js';
 import { VideoAiAnalyzer } from './src/host/ai/video-analyzer.js';
 import { ShotAnalysisService } from './src/host/ai/shot-analysis-service.js';
+import { EditingWorkflow } from './src/host/edit/editing-workflow.js';
 import { createVideoManagerApiHandler } from './src/host/api/router.js';
 import { registerVideoManagerTools } from './src/host/tools/register-tools.js';
 
@@ -17,6 +18,7 @@ export function apply(ctx, config) {
   const shotSearchService = new ShotSearchService(db);
   const videoAiAnalyzer = new VideoAiAnalyzer(db, mediaEngine, { llm: ctx.llm, attachments: ctx.attachments });
   const shotAnalysisService = new ShotAnalysisService(db, mediaEngine, videoAiAnalyzer);
+  const editingWorkflow = new EditingWorkflow(db, mediaEngine);
 
   ctx.effect(() => {
     // 1. Register Host Web API Route
@@ -28,7 +30,8 @@ export function apply(ctx, config) {
         projectExporter,
         shotSearchService,
         videoAiAnalyzer,
-        shotAnalysisService
+        shotAnalysisService,
+        editingWorkflow
       });
       disposeRoute = ctx.webServer.register({
         kind: 'prefix',
@@ -43,7 +46,8 @@ export function apply(ctx, config) {
       mediaEngine,
       projectExporter,
       shotSearchService,
-      shotAnalysisService
+      shotAnalysisService,
+      editingWorkflow
     });
 
     return () => {

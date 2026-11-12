@@ -1,6 +1,6 @@
 import { SHOT_ANALYSIS_FIELDS } from '../db/shot-analysis-store.js';
 
-export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporter, shotSearchService, shotAnalysisService }) {
+export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporter, shotSearchService, shotAnalysisService, editingWorkflow }) {
   if (!ctx.tools || typeof ctx.tools.register !== 'function') {
     return () => {};
   }
@@ -21,6 +21,62 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     const dispose = ctx.tools.register(fullDef);
     disposers.push(dispose);
   };
+
+  // One shared editing workflow backs both tools and UI.
+  const editingFailure = () => ({ success:false, error:'剪辑项目操作失败，请检查项目结构、素材状态和用户授权' });
+  const editTool = (name, description, properties, required, execute) => addTool({
+    name, description, parameters:{type:'object',properties,required,additionalProperties:false},
+    async execute(args, context) {
+      if (!editingWorkflow) return {success:false,error:'剪辑工作流不可用'};
+      try { return await execute(args || {}, context); } catch { return editingFailure(); }
+    }
+  });
+  const musicId = {type:'string',description:'本地音乐库记录 ID（mus_…）。'};
+  const pageFields = {limit:{type:'integer',minimum:1,maximum:100,description:'最多返回数量，默认 25。'},offset:{type:'integer',minimum:0,maximum:1000000,description:'分页偏移，默认 0。'}};
+  editTool('video_manager_edit_music_list','列出本地音乐库；授权状态是用户声明，不是版权验证。',
+    {query:{type:'string',description:'按标题、艺术家或文件名搜索。'},license_status:{type:'string',enum:['unknown','personal_confirmed']},...pageFields}, [],
+    args => ({success:true,...editingWorkflow.catalog.list(args)}));
+  editTool('video_manager_edit_music_import','导入本地音乐引用，不复制、修改或删除源文件。',
+    {file_path:{type:'string',description:'用户明确指定的本地音频绝对路径。'},title:{type:'string'},artist:{type:'string'},source_name:{type:'string'},source_url:{type:'string'},license_note:{type:'string'}}, ['file_path'],
+    async args => ({success:true,...await editingWorkflow.catalog.importFile({file_path:args.file_path,title:args.title,artist:args.artist,source_name:args.source_name,source_url:args.source_url,license_note:args.license_note,license_status:'unknown'})}));
+  editTool('video_manager_edit_music_remove','从音乐库移出记录，不删除或更改源文件。', {music_id:musicId}, ['music_id'],
+    args => ({success:true,removed:editingWorkflow.catalog.remove(args.music_id)}));
+  editTool('video_manager_edit_music_confirm_personal','记录用户对个人分享用途的许可声明，不验证版权。',
+    {music_id:musicId,license_note:{type:'string',description:'用户提供的授权说明。'},confirmed:{type:'boolean',description:'仅在用户明确确认此音乐可用于个人分享时设为 true。'}}, ['music_id','confirmed'],
+    args => args.confirmed !== true ? {success:false,error:'须先由用户明确确认个人分享使用权限'} :
+      ({success:true,music:editingWorkflow.catalog.confirmPersonalUse(args.music_id,{confirmed:true,license_note:args.license_note})}));
+  editTool('video_manager_edit_music_analyze','分析本地音乐的实测瞬态；瞬态不一定是节拍，需试听复核。',
+    {music_id:musicId,start_seconds:{type:'number',minimum:0,description:'分析窗口的源音频起点（秒），默认 0。'},duration_seconds:{type:'number',minimum:0.1,maximum:180,description:'分析窗口时长（秒，最多180），默认60。'}}, ['music_id'],
+    async args => ({success:true,analysis:await editingWorkflow.analyzeMusic(args.music_id,{startSeconds:args.start_seconds,durationSeconds:args.duration_seconds})}));
+  editTool('video_manager_edit_jamendo_search','搜索 Jamendo 曲目元数据；结果不代表已获授权，不能直接导入。使用主机环境变量 JAMENDO_CLIENT_ID。',
+    {query:{type:'string',description:'曲目、作者或风格关键词。'},limit:{type:'integer',minimum:1,maximum:20},offset:{type:'integer',minimum:0,maximum:1000}}, ['query'],
+    async (args,context) => {
+      const clientId=process.env.JAMENDO_CLIENT_ID;
+      if (!clientId) return {success:false,error:'主机未设置 JAMENDO_CLIENT_ID；可在工作台单次提供'};
+      const result=await editingWorkflow.searchJamendo({clientId,query:args.query,limit:args.limit,offset:args.offset,signal:context?.signal});
+      const serialized=JSON.stringify(result);
+      if (serialized.includes(clientId) || serialized.includes(JSON.stringify(clientId).slice(1,-1))) return editingFailure();
+      return {success:true,...result};
+    });
+  const editSourceSchema={type:'object',properties:{id:{type:'string',minLength:1,maxLength:200,description:'素材库视频 ID（vid_…）或本地音乐库 ID（mus_…）；禁止 path 字段。'},duration_seconds:{type:'number',minimum:0.001}},required:['id','duration_seconds'],additionalProperties:false};
+  const editClipSchema={type:'object',properties:{id:{type:'string',minLength:1,maxLength:200},source:editSourceSchema,source_in_seconds:{type:'number',minimum:0},source_out_seconds:{type:'number',exclusiveMinimum:0},timeline_start_frame:{type:'integer',minimum:0},timeline_end_frame:{type:'integer',minimum:1},rationale:{type:'string',maxLength:500},evidence:{type:'object',properties:{shot_id:{type:'string',minLength:1},purpose:{type:'string',maxLength:300},beat_relation:{type:'string',maxLength:300}},required:['shot_id'],additionalProperties:false},rights:{type:'object',properties:{status:{type:'string',enum:['confirmed','restricted','unknown']},scope:{type:'string',maxLength:100},note:{type:'string',maxLength:2000}},required:['status'],additionalProperties:false}},required:['id','source','source_in_seconds','source_out_seconds','timeline_start_frame','timeline_end_frame'],additionalProperties:false};
+  const musicClipSchema={...editClipSchema,required:[...editClipSchema.required,'rights']};
+  const editProjectSchema={type:'object',description:'版本化非线性剪辑时间线。由当前 DSH 会话 Agent 根据用户需求设计创意与时序；插件仅校验素材/范围、规范化并预览/保存，不调用另一个 AI 代替 Agent。来源仅引用素材库 ID，不传本地路径。tracks.music 恰有一条音乐片段，必须填写授权状态声明；用户声明不等于版权核验。',properties:{schema_version:{type:'integer',const:1},title:{type:'string',minLength:1,maxLength:300},rationale:{type:'string',minLength:1,maxLength:10000},fps:{type:'object',properties:{num:{type:'integer',minimum:1},den:{type:'integer',minimum:1}},required:['num','den'],additionalProperties:false},canvas:{type:'object',properties:{width:{type:'integer',minimum:1},height:{type:'integer',minimum:1},aspect:{type:'string',enum:['16:9','9:16']}},required:['width','height','aspect'],additionalProperties:false},duration_frames:{type:'integer',minimum:1},tracks:{type:'object',properties:{video:{type:'array',minItems:1,maxItems:40,items:editClipSchema},music:{type:'array',minItems:1,maxItems:1,items:musicClipSchema}},required:['video','music'],additionalProperties:false},evidence:{type:'object',properties:{story_arc:{type:'array',maxItems:20,items:{type:'object',properties:{label:{type:'string',maxLength:200},rationale:{type:'string',maxLength:1000}},required:['label','rationale'],additionalProperties:false}},uncertainties:{type:'array',maxItems:30,items:{type:'string',maxLength:1000}},notice:{type:'string',maxLength:2000},beat_evidence:{type:'string',maxLength:2000}},additionalProperties:false}},required:['schema_version','title','rationale','fps','duration_frames','tracks'],additionalProperties:false};
+  editTool('video_manager_edit_preview_project','预览并校验当前 DSH 会话 Agent 自行编排的结构化剪辑项目。插件不调用模型、不解码/复制/修改媒体；会做只读文件属性检查，并核验素材库 ID、分镜范围、轨道、音视频时长和项目帧边界。输入只含素材库 ID，禁止客户端绝对路径。音乐分析仅返回 BPM 估计与瞬态候选，不提供已确认拍点；不要把瞬态写成 beats 或声称准确卡点。预览不落库；将完整规范化项目与警告展示给用户，依据反馈留在 DSH 会话中继续迭代。',
+    {project:editProjectSchema}, ['project'],
+    args => editingWorkflow.previewProject(args.project));
+  editTool('video_manager_edit_save_project','仅在用户已看到完整规范化预览并明确授权后保存该预览；只提交服务端预览 ID，客户端不能替换方案内容。confirmed=true 必须对应本轮用户明确确认。',
+    {preview_id:{type:'string',description:'尚未过期的服务端剪辑方案预览 ID。'},confirmed:{type:'boolean',description:'仅当用户已查看完整预览并明确授权保存时为 true。'}}, ['preview_id','confirmed'],
+    args => {
+       if(args.confirmed!==true)return {success:false,error:'须先获得用户对完整预览的明确授权'};
+       const result=editingWorkflow.commitPreview({previewId:args.preview_id,confirmed:true});
+       const record=result?.record;
+       return result?.success?{success:true,project:record?{id:record.id,title:record.title,revision:record.revision,created_at:record.created_at,updated_at:record.updated_at}:undefined,warnings:result.warnings||[]}:result;
+     });
+  editTool('video_manager_edit_projects','列出已保存的剪辑项目摘要，或按 project_id 读取完整项目。',
+    {project_id:{type:'string',description:'项目 ID；省略时列出摘要。'},...pageFields}, [],
+    args => args.project_id ? (()=>{const project=editingWorkflow.projects.get(args.project_id);return project ? {success:true,project} : {success:false,error:'剪辑项目不存在'};})() :
+      ({success:true,projects:editingWorkflow.projects.list({limit:args.limit ?? 25,offset:args.offset ?? 0})}));
 
   // 0. Shot deep-analysis tools: candidate creation is separate from application.
   const shotFields = new Set(SHOT_ANALYSIS_FIELDS);
@@ -286,7 +342,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   // 4. video_manager_get_video
   addTool({
     name: 'video_manager_get_video',
-    description: '获取单个视频的完整详情，包含视频源物理文件路径、基础参数、分镜列表（Shots）及音频信息（语音转录、静音区间、BPM）。',
+    description: '获取视频源路径、基础参数及可选的分镜和音频信息。历史 BPM/节拍值来源未确认，不能视为实测。',
     parameters: {
       type: 'object',
       properties: {
@@ -313,14 +369,14 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
       if (!video) {
         return { success: false, error: `Video not found: ${args.video_id}` };
       }
-      return { success: true, video };
+      return { success: true, video, ...(includeAudio ? { audio_tempo_notice: '历史 BPM 和节拍来源未确认，不应视为实测；自动 BPM 检测当前不可用。' } : {}) };
     }
   });
 
   // 5. video_manager_trigger_analysis
   addTool({
     name: 'video_manager_trigger_analysis',
-    description: '触发对指定视频的底层特征分析。生成 4x4 故事板大图拼图（Contact Sheet）、自动检测音频静音区间、提取音乐节奏/BPM，并切分出初始分镜及其代表性关键帧图片。返回可供 AI 阅读的视觉故事板图片路径与初始切分点。',
+    description: '提取视频故事板、初始分镜与静音区间。节拍和 BPM 检测目前不可用；旧值来源未确认，不应视为实测结果。',
     parameters: {
       type: 'object',
       properties: {
@@ -344,18 +400,14 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
         // 1. Storyboard
         const storyboardPath = await mediaEngine.generateStoryboard(video);
 
-        // 2. Silence detection
-        const silenceIntervals = await mediaEngine.detectSilence(video);
-
-        // 3. BPM and Beats
-        const { bpm, beats } = await mediaEngine.detectBpmAndBeats(video);
-
-        // Save audio analysis
-        db.upsertVideoAudio(video.id, {
-          silence_intervals: silenceIntervals,
-          bpm,
-          beats
-        });
+        // Silence can be empty on success; failures remain distinct and do not write.
+        let silenceResult;
+        try { silenceResult = await mediaEngine.detectSilenceResult(video); }
+        catch { silenceResult = { status: 'error', reason: 'silence_detection_failed', intervals: null }; }
+        const tempoResult = { status: 'unavailable', reason: 'tempo_detector_not_integrated', bpm: null, beats: null };
+        if (silenceResult?.status === 'ok' && Array.isArray(silenceResult.intervals)) {
+          db.upsertVideoAudio(video.id, { silence_intervals: silenceResult.intervals });
+        }
 
         // 4. Initial shots & keyframes
         const shots = await mediaEngine.detectInitialShots(video);
@@ -369,8 +421,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
           video_id: video.id,
           storyboard_image_path: storyboardPath,
           shots_count: shots.length,
-          silence_intervals_count: silenceIntervals.length,
-          estimated_bpm: bpm,
+          silence_intervals_count: silenceResult?.status === 'ok' && Array.isArray(silenceResult.intervals) ? silenceResult.intervals.length : null,
+          estimated_bpm: null,
+          audio_analysis: { silence: silenceResult, tempo: tempoResult },
           shots: updated.shots
         };
       } catch (e) {
@@ -570,7 +623,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   // 10. video_manager_export_project
   addTool({
     name: 'video_manager_export_project',
-    description: '将选定或编排好的镜头片段一键导出为专业剪辑软件工程文件。支持剪映本地草稿（jianying）、Final Cut Pro XML（fcpxml）或 CMX 3600 EDL。',
+    description: '生成实验性剪辑工程文件（jianying、fcpxml、edl）；剪映仅包含视频轨道、不含音乐，也未经 11.7.3 打开验证，不会自动安装草稿。',
     parameters: {
       type: 'object',
       properties: {
@@ -636,7 +689,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
 
       return {
         success: true,
-        message: `工程成功导出至：${result.file_path || result.draft_folder}`,
+        message: `已生成实验性工程文件（兼容性未验证；剪映格式不含音乐）：${result.file_path || result.draft_folder}`,
         export_result: result
       };
     }

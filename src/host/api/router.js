@@ -3,7 +3,7 @@ import path from 'node:path';
 import { URL } from 'node:url';
 import { AnalysisQueue } from '../ai/analysis-queue.js';
 
-export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer, shotAnalysisService }) {
+export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer, shotAnalysisService, editingWorkflow }) {
   const analysisQueue = new AnalysisQueue(db);
   if (shotAnalysisService?.store) shotAnalysisService.store.isVideoBusy = id => analysisQueue.active.has(id);
   const recordAnalysisFailure = (id) => {
@@ -29,7 +29,10 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
   const parseJsonBody = (req) => {
     return new Promise((resolve, reject) => {
       let data = '';
-      req.on('data', chunk => { data += chunk; });
+      req.on('data', chunk => {
+        data += chunk;
+        if (data.length > 1024 * 1024) { reject(new Error('Request too large')); req.destroy(); }
+      });
       req.on('end', () => {
         try {
           resolve(data ? JSON.parse(data) : {});
@@ -76,6 +79,30 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
     }
   };
 
+  const streamMusicFile = (req, res, filePath) => {
+    let stat;
+    try {
+      if (fs.realpathSync(filePath) !== filePath) throw new Error('source changed');
+      stat = fs.statSync(filePath);
+      if (!stat.isFile() || stat.size <= 0) throw new Error('unavailable');
+    } catch { return jsonResponse(res, { success:false, error:'音乐文件不可用' }, 404); }
+    const mime={'.mp3':'audio/mpeg','.wav':'audio/wav','.m4a':'audio/mp4','.aac':'audio/aac','.ogg':'audio/ogg','.opus':'audio/ogg','.flac':'audio/flac','.aif':'audio/aiff','.aiff':'audio/aiff','.wma':'audio/x-ms-wma'}[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+    let start=0, end=stat.size-1, status=200;
+    if (req.headers.range) {
+      const match=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+      if (!match || (!match[1] && !match[2])) { res.writeHead(416,{'Content-Range':`bytes */${stat.size}`}); return res.end(); }
+      if (!match[1]) { const suffix=Number(match[2]); if (!Number.isSafeInteger(suffix) || suffix<=0) { res.writeHead(416,{'Content-Range':`bytes */${stat.size}`}); return res.end(); } start=Math.max(0,stat.size-suffix); }
+      else { start=Number(match[1]); if (match[2]) end=Math.min(Number(match[2]),end); }
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start>end || start>=stat.size) { res.writeHead(416,{'Content-Range':`bytes */${stat.size}`}); return res.end(); }
+      status=206;
+    }
+    res.writeHead(status, {'Content-Type':mime,'Content-Length':end-start+1,'Accept-Ranges':'bytes',
+      ...(status===206 ? {'Content-Range':`bytes ${start}-${end}/${stat.size}`} : {}), 'Cache-Control':'no-store'});
+    const stream=fs.createReadStream(filePath,{start,end});
+    stream.on('error',()=>res.destroy());
+    stream.pipe(res);
+  };
+
   const streamImageFile = (res, filePath) => {
     if (!fs.existsSync(filePath)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
@@ -120,6 +147,99 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
     const method = req.method;
 
     try {
+      // Editing endpoints accept catalog IDs except the explicit local-music import.
+      if (pathname.startsWith('/api/video-manager/editing/')) {
+        if (!editingWorkflow) return jsonResponse(res, { success:false, error:'剪辑工作流不可用' }, 503);
+        const base = '/api/video-manager/editing';
+        const integer = (value, fallback, max) => {
+          if (value == null || value === '') return fallback;
+          if (!/^\d+$/.test(String(value))) throw new Error('invalid pagination');
+          const number = Number(value);
+          if (!Number.isSafeInteger(number) || number > max) throw new Error('invalid pagination');
+          return number;
+        };
+        try {
+          if (pathname === `${base}/music` && method === 'GET') {
+            const result = editingWorkflow.catalog.list({ query:parsedUrl.searchParams.get('query') || '',
+              ...(parsedUrl.searchParams.has('license_status') ? {license_status:parsedUrl.searchParams.get('license_status')} : {}),
+              limit:integer(parsedUrl.searchParams.get('limit'),25,100), offset:integer(parsedUrl.searchParams.get('offset'),0,1000000) });
+            return jsonResponse(res,{success:true,...result});
+          }
+          if (pathname === `${base}/music` && method === 'POST') {
+            const body = await parseJsonBody(req);
+            if (body.license_status === 'personal_confirmed' && body.license_confirmed !== true)
+              return jsonResponse(res,{success:false,error:'个人使用许可须由用户明确确认'},400);
+            const result = await editingWorkflow.catalog.importFile({file_path:body.file_path,title:body.title,artist:body.artist,
+              source_name:body.source_name,source_url:body.source_url,license_status:body.license_status,
+              license_note:body.license_note,license_confirmed:body.license_confirmed});
+            return jsonResponse(res,{success:true,...result});
+          }
+          const musicStreamMatch = pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/stream$/);
+          if (musicStreamMatch && method === 'GET') {
+            const item=editingWorkflow.catalog.get(musicStreamMatch[1]);
+            if (!item) return jsonResponse(res,{success:false,error:'音乐记录不存在'},404);
+            return streamMusicFile(req,res,item.file_path);
+          }
+          const musicMatch = pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})(?:\/(confirm-personal|analyze))?$/);
+          if (musicMatch && method === 'DELETE' && !musicMatch[2]) {
+            return jsonResponse(res,{success:true,removed:editingWorkflow.catalog.remove(musicMatch[1])});
+          }
+          if (musicMatch && method === 'POST' && musicMatch[2] === 'confirm-personal') {
+            const body=await parseJsonBody(req);
+            if (body.confirmed !== true) return jsonResponse(res,{success:false,error:'须由用户明确确认个人分享使用权限'},400);
+            return jsonResponse(res,{success:true,music:editingWorkflow.catalog.confirmPersonalUse(musicMatch[1],{confirmed:true,license_note:body.license_note})});
+          }
+          if (musicMatch && method === 'POST' && musicMatch[2] === 'analyze') {
+            const body=await parseJsonBody(req);
+            const analysis=await editingWorkflow.analyzeMusic(musicMatch[1],{startSeconds:body.startSeconds,durationSeconds:body.durationSeconds});
+            return jsonResponse(res,{success:true,analysis});
+          }
+          if (pathname === `${base}/jamendo/search` && method === 'POST') {
+            const body=await parseJsonBody(req);
+            const clientId=body.clientId || process.env.JAMENDO_CLIENT_ID;
+            if (typeof clientId !== 'string' || !clientId.trim()) return jsonResponse(res,{success:false,error:'请提供 Jamendo Client ID 或设置 JAMENDO_CLIENT_ID'},400);
+            const result=await editingWorkflow.searchJamendo({clientId,query:body.query,limit:body.limit,offset:body.offset});
+            // Guard against a malicious source echoing the one-time credential in metadata.
+            const serialized = JSON.stringify(result);
+            if (serialized.includes(clientId) || serialized.includes(JSON.stringify(clientId).slice(1,-1))) throw new Error('sensitive search response');
+            return jsonResponse(res,{success:true,...result});
+          }
+          if (pathname === `${base}/projects/preview` && method === 'POST') {
+            const body=await parseJsonBody(req);
+            const result=editingWorkflow.previewProject(body.project);
+            return jsonResponse(res,{success:true,...result});
+          }
+          if (pathname === `${base}/projects/commit` && method === 'POST') {
+            const body=await parseJsonBody(req);
+            if (body.confirmed !== true) return jsonResponse(res,{success:false,error:'必须由用户在 DSH 会话中明确确认项目保存'},400);
+            if (typeof body.preview_id !== 'string' || !/^preview_[a-f0-9]{32}$/.test(body.preview_id)) return jsonResponse(res,{success:false,error:'预览标识无效'},400);
+            const result=editingWorkflow.commitPreview({previewId:body.preview_id,confirmed:true});
+            return jsonResponse(res,result,result.success?200:400);
+          }
+          if (pathname === `${base}/projects` && method === 'GET') {
+            const projects=editingWorkflow.projects.list({limit:integer(parsedUrl.searchParams.get('limit'),30,100),offset:integer(parsedUrl.searchParams.get('offset'),0,1000000)});
+            return jsonResponse(res,{success:true,projects});
+          }
+          const projectMatch=pathname.match(/^\/api\/video-manager\/editing\/projects\/(edit_[0-9a-f]{32})$/);
+          if (projectMatch && method === 'GET') {
+            const project=editingWorkflow.projects.get(projectMatch[1]);
+            return project ? jsonResponse(res,{success:true,project}) : jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
+          }
+          return jsonResponse(res,{success:false,error:'未知剪辑工作流操作'},404);
+        } catch (error) {
+          const safeMessages = new Set([
+            '项目预览已过期，请重新预览','分镜已删除或重建，请重新生成预览','分镜描述已修改，请重新生成预览',
+            '剪辑项目至少需要一个视频片段','所引用的视频素材不存在','所引用的素材库分镜不存在',
+            '视频源区间超出已选择分镜范围','音乐记录不存在','音乐源文件不可用或已变化',
+            '音乐时长与音乐库记录不一致','所选音乐尚未由用户声明可用于个人分享',
+            '当前仅有瞬态候选，不能将其作为已确认拍点写入项目','需由用户明确确认剪辑项目'
+          ]);
+          const safeProjectPrefixes = ['剪辑项目无效：','视频源文件不可用：','视频源文件已变化：','音乐源文件不可用：','音乐源文件已变化：','当前项目限制为'];
+          const message=String(error?.message||'');
+          const safe=safeMessages.has(message)||safeProjectPrefixes.some(prefix=>message.startsWith(prefix));
+          return jsonResponse(res,{success:false,error:safe?message:'剪辑项目操作失败，请检查项目引用和素材状态'},400);
+        }
+      }
       // 1. Status & Binaries: GET /api/video-manager/status
       if (pathname === '/api/video-manager/status' && method === 'GET') {
         const bins = await mediaEngine.getBinaries();
@@ -285,14 +405,13 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
 
         // Execute background features
         const storyboardPath = await mediaEngine.generateStoryboard(video);
-        const silenceIntervals = await mediaEngine.detectSilence(video);
-        const { bpm, beats } = await mediaEngine.detectBpmAndBeats(video);
-
-        db.upsertVideoAudio(videoId, {
-          silence_intervals: silenceIntervals,
-          bpm,
-          beats
-        });
+        let silenceResult;
+        try { silenceResult = await mediaEngine.detectSilenceResult(video); }
+        catch { silenceResult = { status: 'error', reason: 'silence_detection_failed', intervals: null }; }
+        const tempoResult = { status: 'unavailable', reason: 'tempo_detector_not_integrated', bpm: null, beats: null };
+        if (silenceResult?.status === 'ok' && Array.isArray(silenceResult.intervals)) {
+          db.upsertVideoAudio(videoId, { silence_intervals: silenceResult.intervals });
+        }
 
         const shots = await mediaEngine.detectInitialShots(video);
         db.upsertShots(videoId, shots);
@@ -301,7 +420,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, {
           success: true,
           video: updated,
-          storyboard_path: storyboardPath
+          storyboard_path: storyboardPath,
+          audio_analysis: { silence: silenceResult, tempo: tempoResult }
         });
       }
 

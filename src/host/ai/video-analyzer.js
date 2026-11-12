@@ -203,14 +203,17 @@ export class VideoAiAnalyzer {
       throw new Error('无法生成故事板大图，请检查 FFmpeg 配置');
     }
 
-    // 2. Prepare silence & BPM in background
-    let silenceIntervals = [];
-    let bpm = 120;
+    // Silence is written only after a verified successful detection. Tempo is unavailable.
+    let silenceResult = { status: 'unavailable', reason: 'silence_detector_unavailable', intervals: null };
     try {
-      silenceIntervals = await this.mediaEngine.detectSilence(video);
-      const audioBeats = await this.mediaEngine.detectBpmAndBeats(video);
-      bpm = audioBeats.bpm;
-    } catch {}
+      if (typeof this.mediaEngine.detectSilenceResult === 'function') {
+        silenceResult = await this.mediaEngine.detectSilenceResult(video);
+      } else {
+        const intervals = await this.mediaEngine.detectSilence(video);
+        silenceResult = Array.isArray(intervals) ? { status: 'ok', reason: null, intervals } : silenceResult;
+      }
+    } catch { silenceResult = { status: 'error', reason: 'silence_detection_failed', intervals: null }; }
+    const tempoResult = { status: 'unavailable', reason: 'tempo_detector_not_integrated', bpm: null, beats: null };
 
     const promptText = this.renderPrompt(config.custom_prompt, video);
     const imageBuffer = fs.readFileSync(storyboardPath);
@@ -341,11 +344,11 @@ export class VideoAiAnalyzer {
     this.db.upsertShots(video.id, shotsList);
 
     // 6.2 Update Audio
-    this.db.upsertVideoAudio(video.id, {
+    const audioPatch = {
       ...(typeof parsedResult.bgm_mood === 'string' ? { bgm_mood: parsedResult.bgm_mood } : {}),
-      bpm,
-      silence_intervals: silenceIntervals
-    });
+      ...(silenceResult?.status === 'ok' && Array.isArray(silenceResult.intervals) ? { silence_intervals: silenceResult.intervals } : {})
+    };
+    if (Object.keys(audioPatch).length) this.db.upsertVideoAudio(video.id, audioPatch);
 
     // 6.3 Update Video Master with Audit Metrics
     const updatedVideo = this.db.upsertVideo({
@@ -371,6 +374,7 @@ export class VideoAiAnalyzer {
     return {
       success: true,
       video: this.db.getVideoById(video.id, true, true),
+      audio_analysis: { silence: silenceResult, tempo: tempoResult },
       audit: {
         provider: config.mode === 'dsh' ? config.provider : 'custom',
         model: config.model,

@@ -365,6 +365,154 @@ window.__ModuleLoader__.load({
       return Number.isFinite(start) && Number.isFinite(end) && start === Number(shot.start_time) && end === Number(shot.end_time);
     }
 
+    // Local music and saved edit-project management only; AI planning happens in DSH chat.
+    function EditingWorkbench({ onClose, isMobile, styles }) {
+      const [items, setItems] = useState([]);
+      const [musicId, setMusicId] = useState('');
+      const [filePath, setFilePath] = useState('');
+      const [musicBrowser, setMusicBrowser] = useState(null);
+      const [showMusicBrowser, setShowMusicBrowser] = useState(false);
+      const [title, setTitle] = useState('');
+      const [sourceName, setSourceName] = useState('');
+      const [licenseNote, setLicenseNote] = useState('');
+      const [busy, setBusy] = useState('');
+      const lockRef = useRef(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const [analysis, setAnalysis] = useState(null);
+      const [musicWindowStart, setMusicWindowStart] = useState('0');
+      const [musicWindowLength, setMusicWindowLength] = useState('60');
+      const [projects, setProjects] = useState([]);
+      const [projectDetail, setProjectDetail] = useState(null);
+      const [jamendoQuery, setJamendoQuery] = useState('');
+      const [jamendoKey, setJamendoKey] = useState('');
+      const [jamendoItems, setJamendoItems] = useState([]);
+      const endpoint = '/api/video-manager/editing';
+      const request = async (suffix, body) => {
+        const response = await fetch(endpoint + suffix, body === undefined ? {} : {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        let data;
+        try { data = await response.json(); } catch { throw new Error('服务返回了无法读取的响应，请检查插件版本。'); }
+        if (!response.ok || data?.success === false) throw new Error(data?.error || `请求失败 (${response.status})`);
+        return data;
+      };
+      const action = async (name, fn) => {
+        if (lockRef.current) return;
+        lockRef.current = true; setBusy(name); setError(''); setNotice('');
+        try { await fn(); } catch (e) { setError(e?.message || '操作失败，请重试'); }
+        finally { lockRef.current = false; setBusy(''); }
+      };
+      const loadMusicBrowser = async dir => {
+        const response=await fetch(`/api/video-manager/fs/browse${dir ? `?dir=${encodeURIComponent(dir)}` : ''}`);
+        const data=await response.json();
+        if (!response.ok || !data.success || !Array.isArray(data.folders) || !Array.isArray(data.audio_files)) throw new Error('无法浏览音乐目录，请确认插件版本。');
+        setMusicBrowser(data); setShowMusicBrowser(true);
+      };
+      const refreshMusic = async () => {
+        const data = await request('/music?limit=100');
+        const list = data.items ?? data.music?.items ?? data.music ?? data.result?.items;
+        if (!Array.isArray(list)) throw new Error('音乐列表格式不兼容，请检查插件版本。');
+        setItems(list);
+      };
+      const refreshProjects = async () => {
+        const data = await request('/projects');
+        const list = data.items ?? data.projects?.items ?? data.projects ?? data.result?.items;
+        if (!Array.isArray(list)) throw new Error('项目列表格式不兼容，请检查插件版本。');
+        setProjects(list);
+      };
+      useEffect(() => { action('load', async () => { await Promise.all([refreshMusic(), refreshProjects()]); }); }, []);
+      const chosen = items.find(item => item.id === musicId);
+      const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '7px', minWidth: 0, overflowWrap: 'anywhere' };
+      const row = { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' };
+      const label = { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 };
+      const input = { ...styles.input, width: '100%', boxSizing: 'border-box' };
+      const button = { ...styles.secondary, minHeight: '34px', whiteSpace: 'normal' };
+      const pre = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', maxWidth: '100%', margin: 0, font: 'inherit' };
+      const show = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+      const postImport = () => action('import', async () => {
+        if (!filePath.trim()) throw new Error('请填写本地音乐文件绝对路径。');
+        const data = await request('/music', { file_path: filePath.trim(), title: title.trim(), source_name: sourceName.trim(), license_status: 'unknown', license_note: licenseNote.trim() });
+        await refreshMusic(); setFilePath(''); setTitle('');
+        if (data.music?.id) setMusicId(data.music.id);
+        setNotice(data.created === false ? '音乐已存在；保留原有记录。' : '音乐已添加，授权状态待确认。源文件保持不变。');
+      });
+      const confirmMusic = () => action('confirm', async () => {
+        if (!musicId || !window.confirm('请确认你有权将该音乐用于本次个人分享。此操作仅记录你的声明，并不代表平台或插件已核验版权。继续？')) return;
+        await request(`/music/${encodeURIComponent(musicId)}/confirm-personal`, { confirmed: true, license_note: licenseNote.trim() });
+        await refreshMusic(); setNotice('已记录个人用途的用户声明；发布前仍需核对授权。');
+      });
+      const analyzeMusic = () => action('analyze', async () => {
+        if (!musicId) throw new Error('请先选择音乐。');
+        const startSeconds=Number(musicWindowStart), durationSeconds=Number(musicWindowLength);
+        if (!Number.isFinite(startSeconds) || startSeconds < 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 180) throw new Error('音乐分析起点须非负，时长须为 0–180 秒。');
+        const data = await request(`/music/${encodeURIComponent(musicId)}/analyze`, {startSeconds,durationSeconds});
+        setAnalysis(data.analysis ?? data.result ?? data);
+      });
+      const search = () => action('jamendo', async () => {
+        const key = jamendoKey.trim(); setJamendoKey(''); setJamendoItems([]);
+        if (!key || !jamendoQuery.trim()) throw new Error('请输入 Jamendo Client ID 和搜索词。');
+        let data;
+        try { data = await request('/jamendo/search', { clientId: key, query: jamendoQuery.trim() }); }
+        catch { throw new Error('Jamendo 搜索失败，请检查 Client ID 和网络。'); }
+        const list = data.items ?? data.results ?? data.result?.items;
+        if (!Array.isArray(list)) throw new Error('音乐搜索响应格式不兼容，请检查插件版本。');
+        setJamendoItems(list);
+      });
+      return h('div', { style: styles.overlay, role: 'dialog', 'aria-modal': true, 'aria-label': '剪辑项目工作台' },
+        h('div', { style: { ...styles.modal, width: isMobile ? '95vw' : '900px', maxHeight: '90vh' } },
+          h('div', { style: { ...row, justifyContent: 'space-between' } },
+            h('strong', null, '剪辑项目工作台'),
+            h('button', { type: 'button', style: button, onClick: onClose, disabled: !!busy }, '关闭')
+          ),
+          h('div', { style: { overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, paddingRight: '3px' } },
+            h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' } }, '本工作台用于本地音乐素材、试听与分析，以及查看 Agent 已保存的剪辑项目。创意构思、选曲和时间线迭代请在 DSH 对话中交给 Agent。此处不会生成方案或导出、修改媒体。'),
+            error && h('div', { role: 'alert' }, error), notice && h('div', { role: 'status' }, notice), busy && h('div', { role: 'status' }, '正在处理，请稍候…'),
+            h('section', { style: card }, h('strong', null, '1. 本地音乐'),
+              h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '导入仅建立只读引用，不复制、修改或删除源音频。授权未知的音乐不代表可发布或商用。'),
+              h('div', { style: row },
+                h('label', { style: { ...label, flex:'1 1 220px' } }, '音乐文件绝对路径', h('input', { 'aria-label': '音乐文件绝对路径', value: filePath, onChange: e => setFilePath(e.target.value), style: input })),
+                h('button', { type:'button', style:button, disabled:!!busy, onClick:() => action('browse-music', () => loadMusicBrowser()) }, '浏览音乐文件')
+              ),
+              showMusicBrowser && musicBrowser && h('div', { style:{...card,maxHeight:'260px',overflowY:'auto'} },
+                h('div', { style:{...row,justifyContent:'space-between'} }, h('strong',null,'选择本地音乐'), h('button',{type:'button',style:button,onClick:()=>setShowMusicBrowser(false)},'关闭浏览器')),
+                h('div',{style:{...pre,fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},musicBrowser.current_path),
+                h('div',{style:row}, musicBrowser.parent_path && h('button',{type:'button',style:button,onClick:()=>action('browse-music',()=>loadMusicBrowser(musicBrowser.parent_path))},'上一级'),
+                  (musicBrowser.drive_roots || []).map(place=>h('button',{key:place.path,type:'button',style:button,onClick:()=>action('browse-music',()=>loadMusicBrowser(place.path))},place.name))),
+                ...(musicBrowser.folders || []).map(folder=>h('button',{key:folder.path,type:'button',style:{...button,textAlign:'left'},onClick:()=>action('browse-music',()=>loadMusicBrowser(folder.path))},`目录：${folder.name}`)),
+                ...(musicBrowser.audio_files || []).map(file=>h('button',{key:file.path,type:'button',style:{...button,textAlign:'left'},onClick:()=>{setFilePath(file.path);setShowMusicBrowser(false);}},`选择：${file.name}`)),
+                !(musicBrowser.audio_files || []).length && h('div',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'当前目录没有可识别的音频文件。')
+              ),
+              h('div', { style: row }, h('label', { style: { ...label, flex: '1 1 180px' } }, '标题（可选）', h('input', { 'aria-label': '音乐标题', value: title, onChange: e => setTitle(e.target.value), style: input })), h('label', { style: { ...label, flex: '1 1 180px' } }, '来源（可选）', h('input', { 'aria-label': '音乐来源', value: sourceName, onChange: e => setSourceName(e.target.value), style: input }))),
+              h('label', { style: label }, '授权备注（可选）', h('input', { 'aria-label': '授权备注', value: licenseNote, onChange: e => setLicenseNote(e.target.value), style: input })),
+              h('div', { style: row }, h('button', { type: 'button', style: button, disabled: !!busy, onClick: postImport }, '导入本地音乐'), h('button', { type: 'button', style: button, disabled: !!busy, onClick: () => action('load', refreshMusic) }, '刷新音乐')),
+              h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '音乐选曲与创意编排请在 DSH 对话中交由 Agent 完成；本工作台仅管理音乐素材、试听和音频检测。授权状态为用户声明，需自行核验。'),
+              h('label', { style: label }, '选择音乐', h('select', { 'aria-label': '选择音乐', value: musicId, style: input, onChange: e => { setMusicId(e.target.value); setAnalysis(null); } }, h('option', { value: '' }, '请选择音乐'), items.map(item => h('option', { key: item.id, value: item.id }, `${item.title || item.file_name || item.id} · ${item.license_status === 'personal_confirmed' ? '用户已声明个人用途' : '授权未知'}`)))),
+              chosen && h('audio', { controls:true, preload:'none', src:`${endpoint}/music/${encodeURIComponent(chosen.id)}/stream`, style:{width:'100%','maxWidth':'100%'} }),
+              chosen && h('div', { style: pre }, `文件：${chosen.file_name || '未知'}\n标题：${chosen.title || '未知'}\n来源：${chosen.source_name || '未提供'}\n授权：${chosen.license_status === 'personal_confirmed' ? '用户已声明个人用途（未独立核验）' : '未知，须确认'}`),
+              h('div', { style: row },
+                h('label', { style: { ...label, flex: '1 1 180px' } }, '音乐分析起点（源音频秒数）', h('input', { 'aria-label': '音乐分析起点', type:'number', min:0, step:0.1, value:musicWindowStart, onChange:e=>{setMusicWindowStart(e.target.value);setAnalysis(null);}, style:input })),
+                h('label', { style: { ...label, flex: '1 1 180px' } }, '分析窗口长度（秒，最多 180）', h('input', { 'aria-label': '音乐分析窗口长度', type:'number', min:1, max:180, value:musicWindowLength, onChange:e=>{setMusicWindowLength(e.target.value);setAnalysis(null);}, style:input }))
+              ),
+              h('div', { style: row }, h('button', { type: 'button', style: button, disabled: !!busy || !musicId, onClick: confirmMusic }, '确认个人使用权限'), h('button', { type: 'button', style: button, disabled: !!busy || !musicId, onClick: analyzeMusic }, '分析音乐')),
+              analysis && h('div', { style: pre }, `音乐分析：${analysis.status || '未知'}\nBPM：${analysis.bpm ?? '未检测到'}\n置信度：${analysis.confidence ?? '未提供'}（低置信度时请人工试听）\n实测节拍（秒）：${Array.isArray(analysis.beats) && analysis.beats.length ? analysis.beats.join('、') : '未提供'}\n检测瞬态候选（秒）：${Array.isArray(analysis.onsets) && analysis.onsets.length ? analysis.onsets.join('、') : '未提供'}\n瞬态不一定是节拍或强拍，请试听确认。\n${analysis.notice || ''}`)
+            ),
+            h('details', { style: card }, h('summary', null, 'Jamendo 搜索（可选）'), h('div', null, '仅搜索预览，不代表已获授权，也不自动下载；请在原来源核对用途和许可。'),
+              h('label', { style: label }, 'Client ID（仅本次请求）', h('input', { 'aria-label': 'Jamendo Client ID', type: 'password', autoComplete: 'off', value: jamendoKey, onChange: e => setJamendoKey(e.target.value), style: input })),
+              h('label', { style: label }, '搜索词', h('input', { 'aria-label': 'Jamendo 搜索词', value: jamendoQuery, onChange: e => setJamendoQuery(e.target.value), style: input })),
+              h('button', { type: 'button', style: button, disabled: !!busy, onClick: search }, '搜索预览'),
+              jamendoItems.map((item, i) => h('div', { key: item.id || i, style: card }, h('strong', null, item.title || item.name || '未命名'), h('div', null, `作者：${item.artist || item.artist_name || '未知'} · 授权需核验`), (item.source_url || item.url) && /^https?:\/\//i.test(item.source_url || item.url) && h('a', { href: item.source_url || item.url, target: '_blank', rel: 'noopener noreferrer' }, '前往来源核验')))
+            ),
+            h('section', { style:card }, h('strong', null, '2. 已保存剪辑项目'), h('button', { type:'button', style:button, disabled:!!busy, onClick:() => action('projects',refreshProjects) }, '刷新项目'),
+              projects.length === 0 && h('div', null, '暂无项目'),
+              projects.map((project,i) => h('button', { key:project.id || i, type:'button', style:button, disabled:!!busy || !project.id, onClick:() => action('project',async()=>{const data=await request(`/projects/${encodeURIComponent(project.id)}`);setProjectDetail(data.project ?? data.record ?? data.result ?? data);}) }, project.title || project.id || '未命名项目')),
+              projectDetail && h('pre', { style:pre }, show(projectDetail))
+            )
+          )
+        )
+      );
+    }
+
     // --- Main Workbench View Component with Mobile Responsive Layout ---
     function VideoManagerWorkbench() {
       // Responsive state (mobile: < 840px)
@@ -419,6 +567,7 @@ window.__ModuleLoader__.load({
       const [showScanModal, setShowScanModal] = useState(false);
       const [showNewFolderModal, setShowNewFolderModal] = useState(false);
       const [showExportModal, setShowExportModal] = useState(false);
+      const [showEditingWorkbench, setShowEditingWorkbench] = useState(false);
 
       // Folder Action Popup state
       const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
@@ -654,7 +803,7 @@ window.__ModuleLoader__.load({
             });
             setEditingShots(Array.isArray(data.video.shots) ? JSON.parse(JSON.stringify(data.video.shots)) : []);
             setEditingAudio(data.video.audio ? JSON.parse(JSON.stringify(data.video.audio)) : {
-              bpm: 120, bgm_type: '无', bgm_mood: '自然', transcripts: []
+              bpm: null, bgm_type: '无', bgm_mood: '自然', transcripts: []
             });
             setIsEditingShots(false);
             setIsEditingAudio(false);
@@ -1357,7 +1506,9 @@ window.__ModuleLoader__.load({
           });
           const data = await res.json();
           if (data.success) {
-            alert(`导出成功！\n文件路径: ${data.export_result.file_path || data.export_result.draft_folder}`);
+            alert(exportFormat === 'jianying'
+              ? `已生成实验性视频草稿文件：\n${data.export_result.draft_folder || data.export_result.file_path}\n\n此文件不含音乐轨，尚未验证能否在剪映 11.7.3 打开；不会自动安装到剪映。`
+              : `已生成工程文件（目标软件兼容性尚未验证）：\n${data.export_result.file_path || data.export_result.draft_folder}`);
             setShowExportModal(false);
           } else {
             alert('导出失败: ' + data.error);
@@ -1729,7 +1880,11 @@ window.__ModuleLoader__.load({
               }
             }, status.binaries.available ? 'FFmpeg 就绪' : 'FFmpeg 未配置')
           ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+            h('button', {
+              type: 'button', style: buttonSecondaryStyle,
+              onClick: () => setShowEditingWorkbench(true)
+            }, Icon.scissors({ size: 13 }), '剪辑项目'),
             h('button', {
               style: buttonSecondaryStyle,
               onClick: () => { loadAiSettings(); loadShotAnalysisSettings(); setShowSettingsModal(true); }
@@ -2571,8 +2726,9 @@ window.__ModuleLoader__.load({
                               h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '音乐节奏 BPM:'),
                               h('input', {
                                 type: 'number',
-                                value: editingAudio.bpm || 0,
-                                onChange: (e) => setEditingAudio({ ...editingAudio, bpm: parseFloat(e.target.value) || 0 }),
+                                value: editingAudio.bpm > 0 ? editingAudio.bpm : '',
+                                placeholder: '未知',
+                                onChange: (e) => setEditingAudio({ ...editingAudio, bpm: e.target.value === '' ? null : Number(e.target.value) }),
                                 style: { ...inputStyle, width: '100%', marginTop: '3px' }
                               })
                             ),
@@ -2608,7 +2764,7 @@ window.__ModuleLoader__.load({
                           },
                             h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
                               Icon.music({ size: 14, color: '#3b82f6' }),
-                              `节奏 BPM: ${editingAudio.bpm || '未知'}`
+                              `节奏 BPM: ${editingAudio.bpm > 0 ? `${editingAudio.bpm}（来源未确认）` : '未知'}`
                             ),
                             h('span', null, `配乐: ${editingAudio.bgm_type || '无'}`),
                             h('span', null, `情绪: ${editingAudio.bgm_mood || '自然'}`)
@@ -2988,6 +3144,11 @@ window.__ModuleLoader__.load({
         ),
 
         // --- Modals ---
+        showEditingWorkbench && h(EditingWorkbench, {
+          isMobile,
+          onClose: () => setShowEditingWorkbench(false),
+          styles: { overlay: modalOverlayStyle, modal: modalCardStyle, input: inputStyle, primary: buttonPrimaryStyle, secondary: buttonSecondaryStyle }
+        }),
 
         // 1. Rename Folder Modal
         renamingFolder && h('div', { style: modalOverlayStyle },

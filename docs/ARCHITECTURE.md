@@ -338,8 +338,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
   通过 FFmpeg 滤镜链 `fps=16/${duration},scale=320:180,tile=4x4`，自适应全视频时长，均匀抓取 16 个代表性关键画面，拼成一张 1280x720 分辨率、大小仅约 150KB 的紧凑 JPEG 雪碧图。
 - **气口静音停顿检测**：
   执行 `silencedetect=noise=-30dB:d=0.5`，解析 stderr 输出中的 `silence_start` 与 `silence_end`，输出停顿区间数组，为解说类视频自动气口切除提供毫秒级坐标。
-- **音乐节奏与 BPM 节拍计算**：
-  提取音轨特征流，探测能量突变峰值，估算音频主节奏 BPM（如 120 BPM）及重音时间戳序列。
+- **历史全片音轨节奏状态**：旧版 `detectBpmAndBeats` 不执行真实节奏估计，其历史 `120 BPM` 和规则化节拍网格不能视为测量结果。当前该入口明确返回 unavailable/null，并在检测失败时保留已有人工数据。
+- **本地音乐工作台节奏估计**：独立模块将最多 180 秒音频解码为有界 PCM，做能量瞬态候选与自相关 BPM 估计；不生成假拍点。瞬态不一定是节拍/强拍，结果需试听校正。Jamendo 目前仅搜曲目元数据，不下载、不授予使用权。
 
 ### 5.3 工作台直驱 AI 多模态深度分析与审计闭环
 
@@ -380,44 +380,43 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
    • 分镜解析卡片优雅列出各镜头景别、运镜、画面详述与评分
 ```
 
-### 5.4 AI Agent 自动化剪辑与分镜召回流水线
+## 5.4 单片段按需精读工作流
 
-在复杂的对话式交互场景中，AI Agent 可通过 11 个专用工具执行高阶编排：
+1. 用户在已保存分镜卡片上主动发起精读；系统依据片段时长抽取 4/9/16 帧并展示各帧真实源 PTS，全部取自半开片段范围。
+2. 复用工作台当前服务商/模型/推理档位，对图片和时间戳执行单次分析。模型未看过完整视频；低帧率重复帧被明确提示，候选不自动覆盖原标注。
+3. 每次分析与原分镜快照、源区间、故事板、分析提示词及用量一并保存。用户逐字段勾选应用；后端对边界及所选字段做原子冲突检查。失败保留已获得的审计数据和候选/故事板（如已生成），不覆盖已有描述。
+4. 支持 Agent 的分析候选、读取历史、以及必须有明确用户授权才应用字段的工具。
 
-```
-1. 需求理解与跨视频分镜语义召回:
-   用户: "帮我找一段草原日落航拍大远景，接着接一段红裙旋转的特写镜头"
-   Agent ➔ video_manager_search_shots({
-     query: "草原日落 航拍大远景",
-     shot_type: "大远景",
-     limit: 3
-   })
-   系统 ➔ 基于 FTS5 倒排索引与加权算法，10ms 内返回候选镜头及其精准 start_time, end_time, file_path
+### 5.5 DSH 会话 Agent 剪辑项目流程
 
-2. 素材详情核对与故事板复查:
-   Agent ➔ video_manager_get_video({ video_id: "vid_c0398", include_shots: true })
-   系统 ➔ 返回视频完整参数、各镜头详细构图与音频节拍
+创意讨论、选曲、叙事结构和反复编排均发生在 DSH 会话中。Agent 可按需调用素材检索、已有分镜详情、本地音乐目录、BPM 估算与瞬态候选等工具；可先展示计划、接受反馈、再提交新版结构化候选。
 
-3. 剧本时间线编排与剪辑工程交付:
-   Agent 规划好时间线入出点，调用工程导出工具:
-   Agent ➔ video_manager_export_project({
-     format: "jianying",
-     sequence_name: "甘南草原日落短片",
-     clips: [
-       { video_id: "vid_01", in_point: 0.0, out_point: 4.5, description: "日落金山大远景" },
-       { video_id: "vid_02", in_point: 9.2, out_point: 14.5, description: "红裙女子草原旋转" }
-     ]
-   })
-   系统 ➔ 生成合规剪映草稿目录，用户打开电脑剪映即可看到完整粗剪时间线！
-```
+1. `video_manager_edit_preview_project` 接收 Agent 生成的 EditProject v1。插件不调用模型，只核验项目结构、素材库 ID、音乐库成员、范围/时长、剪辑轨、源文件可读性和授权状态；客户端路径不被接受或写入项目。
+2. 音乐通过本地引用目录试听和有界 PCM 测量；Jamendo 仅搜索元数据，不下载或核发许可。瞬态不等于节拍/强拍，插件会将节奏关系标注为未核验；自由文本也不能当作证据。
+3. 项目预览仅保存在服务器内存 30 分钟，不写入数据库；源文件以 realpath、dev/ino、size、mtime_ns 弱指纹及分镜字段快照检查（不是密码学内容哈希）。保存前会复核源及分镜是否变化。
+4. 用户在 DSH 会话明确确认后，Agent 调用保存工具；插件只接受服务端预览 ID 并将结构化项目写入 SQLite。随后可从插件的【剪辑项目】管理视图查看。
+5. 项目保存目前不生成或打开剪映工程。现有实验性剪映导出仅有视频轨道，Windows 剪映 11.7.3 尚未验证兼容。
 
-### 5.5 主流剪辑软件工程导出流水线
+---
 
-导出引擎 `ProjectExporter` 实现了三种工业级工程格式的精密构建：
+## 5.6 DSH Agent 自动化素材管理与项目保存
+
+---
+
+## 5.6 DSH 会话 Agent：资产发现到项目保存
+
+1. Agent 在 DSH 对话中理解需求，调用 `video_manager_search_videos` / `video_manager_search_shots` 找素材，用 `video_manager_get_video` 查看现有分镜与范围；必要时触发故事板或精读。
+2. Agent 调用音乐库 list/search/analyze 工具，根据用户反馈选择音乐。插件只提供本地音频 metadata、有限窗口 BPM 估算与瞬态候选，不直接请求另一个 AI 给出推荐。
+3. Agent 在会话中提出并迭代 EditProject v1；调用 `video_manager_edit_preview_project` 后向用户展示规范化项目及警告。插件只校验素材 ID、分镜边界、时长、轨道、文件属性和权利声明。
+4. 用户明确要求保存后，Agent 调用 `video_manager_edit_save_project`；保存项目可通过 `video_manager_edit_projects` 查看。保存记录仅是数据库项目，不等于已生成剪映草稿。
+
+### 5.7 主流剪辑软件工程导出流水线（实验性，目标软件兼容性未验证）
+
+当前导出器生成简化工程文件，未建立剪映版本 fixture 自动验收。
 
 | 格式名称 | 适用软件 | 核心技术要点 |
 |---|---|---|
-| **剪映本地草稿 (JianYing / CapCut)** | 剪映电脑版 (Mac / Windows) | • 建立 `draft_content.json` 与 `draft_meta_info.json`\u003cbr>• **微秒（Microseconds, us）时钟对齐**：$1\text{s} = 1,000,000\mu\text{s}$\u003cbr>• 绑定源素材绝对路径与多轨道片段 UUID 映射 |
+| **实验性简化剪映草稿** | Windows 11.7.3 未验证 | • 输出 draft JSON；当前仅有视频轨、不含音乐；• 不写入剪映目录，须用户手动测试 |
 | **Final Cut Pro XML (FCPXML v1.9)** | Final Cut Pro X, Premiere Pro, 达芬奇 | • 标准 XML 骨架，输出 `<spine>` 视音频脊线\u003cbr>• 换算为标准有理数时间单位 `${frames}/${fps}\text{s}`\u003cbr>• 挂载 `<format>` 规格与素材资源库 `<resources>` |
 | **CMX 3600 EDL** | 通用全平台非编剪辑软件 | • 生成标准 8 栏 EDL 文本时间线\u003cbr>• 计算精准时间码格式 `HH:MM:SS:FF` (帧数基于帧率取整对齐) |
 
