@@ -42,7 +42,7 @@ function fixture(t, initial = {}) {
   };
   const attachments = { saveImage: async input => { calls.push(['image', input]); return ref; } };
   const analyzer = new VideoAiAnalyzer(db, engine, {llm, attachments});
-  return { analyzer, db, settings, writes, calls, llm, ref };
+  return { analyzer, db, settings, writes, calls, llm, ref, imagePath };
 }
 
 test('catalog preserves exact provider/model pair and omits secrets', async t => {
@@ -85,7 +85,23 @@ test('stream request uses normalized image reference, exact route, deltas and us
   assert.equal(f.writes.find(item=>item[0] === 'video')[1].summary, 'ok');
 });
 
-test('error or incomplete finish never writes analysis and never exposes provider secret', async t => {
+test('spectrogram interpretation uses the configured image model and does not update video annotations',async t=>{
+  const f=fixture(t,{ai_mode:'dsh',ai_provider:'p1',ai_dsh_model:'vision'});
+  fs.writeFileSync(f.imagePath,Buffer.from([137,80,78,71,13,10,26,10,0]));
+  f.llm.stream=async function* (options){
+    f.calls.push(['stream',options]);
+    yield {type:'text-delta',text:JSON.stringify({summary:'层次渐进，整体平稳',rhythm_character:'中慢速、脉冲稀疏',energy_arc:'中段略有增强',scene_suggestions:[{scene:'山地日出延时',reason:'渐进能量适合缓慢铺陈',fit:'medium'}],uncertainties:['不能据图确定精确拍点']})};
+    yield {type:'usage',usage:{inputTokens:12,outputTokens:30,totalTokens:42}};
+    yield {type:'finish',reason:{kind:'stop'}};
+  };
+  const result=await f.analyzer.analyzeImagePrompt({imagePath:f.imagePath,promptText:'Analyze this log-frequency spectrogram; do not invent exact beat timestamps.'});
+  assert.equal(f.calls[0][0],'image');assert.equal(f.calls[0][1].mediaType,'image/png');
+  const options=f.calls[1][1];assert.equal(options.provider,'p1');assert.equal(options.model,'vision');
+  assert.match(options.messages[0].content[0].text,/spectrogram/i);assert.deepEqual(result.interpretation.scene_suggestions[0].scene,'山地日出延时');
+  assert.equal(result.audit.total_tokens,42);assert.equal(f.writes.length,0);
+});
+
+  test('error or incomplete finish never writes analysis and never exposes provider secret', async t => {
   const f = fixture(t, { ai_mode:'dsh', ai_provider:'p1', ai_dsh_model:'vision' });
   f.llm.stream = async function* () { yield {type:'text-delta',text:'{"shots":[]}'}; yield {type:'finish',reason:{kind:'error',failure:{message:'secret'}}}; };
   await assert.rejects(f.analyzer.analyzeVideo('v1'), error => !error.message.includes('secret') && /error/.test(error.message));

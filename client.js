@@ -342,6 +342,8 @@ window.__ModuleLoader__.load({
     }
 
     const SORT_STORAGE_KEY = 'dsh-video-manager.sortRule';
+    const MAX_MUSIC_ANALYSIS_SECONDS = 600;
+    const MAX_MUSIC_IMPORT_BATCH = 50;
     const DEFAULT_SORT_RULE = 'captured_at_desc';
     const SORT_RULES = new Set([
       'captured_at_desc', 'captured_at_asc', 'created_at_desc', 'created_at_asc',
@@ -365,151 +367,707 @@ window.__ModuleLoader__.load({
       return Number.isFinite(start) && Number.isFinite(end) && start === Number(shot.start_time) && end === Number(shot.end_time);
     }
 
-    // Local music and saved edit-project management only; AI planning happens in DSH chat.
-    function EditingWorkbench({ onClose, isMobile, styles }) {
-      const [items, setItems] = useState([]);
-      const [musicId, setMusicId] = useState('');
-      const [filePath, setFilePath] = useState('');
-      const [musicBrowser, setMusicBrowser] = useState(null);
-      const [showMusicBrowser, setShowMusicBrowser] = useState(false);
-      const [title, setTitle] = useState('');
-      const [sourceName, setSourceName] = useState('');
-      const [licenseNote, setLicenseNote] = useState('');
-      const [busy, setBusy] = useState('');
-      const lockRef = useRef(false);
-      const [error, setError] = useState('');
-      const [notice, setNotice] = useState('');
-      const [analysis, setAnalysis] = useState(null);
-      const [musicWindowStart, setMusicWindowStart] = useState('0');
-      const [musicWindowLength, setMusicWindowLength] = useState('60');
-      const [projects, setProjects] = useState([]);
-      const [projectDetail, setProjectDetail] = useState(null);
-      const [jamendoQuery, setJamendoQuery] = useState('');
-      const [jamendoKey, setJamendoKey] = useState('');
-      const [jamendoItems, setJamendoItems] = useState([]);
-      const endpoint = '/api/video-manager/editing';
-      const request = async (suffix, body) => {
-        const response = await fetch(endpoint + suffix, body === undefined ? {} : {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-        });
-        let data;
-        try { data = await response.json(); } catch { throw new Error('服务返回了无法读取的响应，请检查插件版本。'); }
-        if (!response.ok || data?.success === false) throw new Error(data?.error || `请求失败 (${response.status})`);
+    const LIBRARY_TABS = [
+      // Keep this registry data-driven so a future image library can join the same centered tab bar.
+      { id: 'video', label: '视频库', shortLabel: '视频', icon: 'clapperboard' },
+      { id: 'music', label: '音乐库', shortLabel: '音乐', icon: 'music' }
+    ];
+
+    function LibraryPageTabs({ active, onSelect, isMobile }) {
+      return h('div', {
+        role: 'tablist',
+        'aria-label': '媒体资源库页面',
+        style: {
+          display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px',
+          border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '7px',
+          backgroundColor: 'var(--dsw-alias-bg-layer-2)', whiteSpace: 'nowrap'
+        }
+      }, LIBRARY_TABS.map(tab => {
+        const TabIcon = Icon[tab.icon];
+        const selected = active === tab.id;
+        return h('button', {
+          key: tab.id, type: 'button', role: 'tab',
+          'aria-label': `切换到${tab.label}`, 'aria-selected': selected,
+          onClick: () => onSelect(tab.id),
+          style: {
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+            minHeight: '34px', padding: isMobile ? '5px 8px' : '5px 11px',
+            border: selected ? '1px solid var(--dsw-alias-border-l2)' : '1px solid transparent',
+            borderRadius: '5px',
+            backgroundColor: selected ? 'var(--dsw-alias-bg-layer-1)' : 'transparent',
+            color: 'var(--dsw-alias-label-primary)', fontSize: '12px',
+            fontWeight: selected ? 600 : 400, cursor: 'pointer'
+          }
+        }, TabIcon({ size: 14 }), isMobile ? tab.shortLabel : tab.label);
+      }));
+    }
+
+    function renderMediaLibraryHeader({ active, onSelect, isMobile, status, onSettings, buttonStyle }) {
+      const binaries = status?.binaries;
+      return h('header', {
+        'aria-label': '媒体资源库通用标题栏',
+        style: {
+          minHeight: isMobile ? '48px' : '54px', flexShrink: 0,
+          borderBottom: '1px solid var(--dsw-alias-border-l1)',
+          display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+          alignItems: 'center', gap: isMobile ? '4px' : '10px',
+          padding: isMobile ? '0 7px' : '0 14px',
+          backgroundColor: 'var(--dsw-alias-bg-layer-1)', position: 'relative', zIndex: 20
+        }
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: isMobile ? '5px' : '8px', minWidth: 0 } },
+          Icon.hardDrive({ size: isMobile ? 17 : 19, color: '#3b82f6' }),
+          h('strong', { style: { fontSize: isMobile ? '12px' : '14px', fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '媒体资源库'),
+          !isMobile && binaries && h('span', {
+            style: {
+              fontSize: '10px', padding: '2px 6px', borderRadius: '4px', whiteSpace: 'nowrap',
+              backgroundColor: 'var(--dsw-alias-bg-layer-2)',
+              color: binaries.available ? '#22c55e' : '#eab308',
+              border: `1px solid ${binaries.available ? '#22c55e' : '#eab308'}`
+            }
+          }, binaries.available ? 'FFmpeg 就绪' : 'FFmpeg 未配置')
+        ),
+        h('div', { style: { justifySelf: 'center', minWidth: 0, display: 'flex', justifyContent: 'center' } },
+          LibraryPageTabs({ active, onSelect, isMobile })
+        ),
+        h('div', { style: { justifySelf: 'end', display: 'flex', alignItems: 'center', minWidth: 0 } },
+          h('button', {
+            type: 'button', 'aria-label': '媒体资源库设置', title: '设置', style: buttonStyle,
+            onClick: onSettings
+          }, Icon.settings({ size: 13 }), !isMobile && '设置')
+        )
+      );
+    }
+
+    function renderLibrarySectionHeader({ icon, title, description, actions }) {
+      return h('div', {
+        style: {
+          minHeight: '48px', flexShrink: 0, padding: '0 14px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+          borderBottom: '1px solid var(--dsw-alias-border-l1)',
+          backgroundColor: 'var(--dsw-alias-bg-layer-1)'
+        }
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 } },
+          icon({ size: 17, color: '#3b82f6' }),
+          h('strong', { style: { fontSize: '14px', whiteSpace: 'nowrap' } }, title),
+          description && h('span', {
+            style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+          }, description)
+        ),
+        actions && h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 } }, actions)
+      );
+    }
+
+    function renderMobilePanelNavigation({ isMobile, active, onSelect, labels }) {
+      if (!isMobile) return null;
+      return h('div', {
+        'aria-label': '当前媒体库面板',
+        style: {
+          display: 'flex', flexShrink: 0, backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+          borderBottom: '1px solid var(--dsw-alias-border-l1)', padding: '4px 8px', gap: '6px'
+        }
+      }, labels.map(tab => {
+        const selected = active === tab.id;
+        return h('button', {
+          key: tab.id, type: 'button', 'aria-pressed': selected,
+          onClick: () => onSelect(tab.id),
+          style: {
+            flex: 1, minWidth: 0, padding: '7px 4px', border: 'none', borderRadius: '5px',
+            backgroundColor: selected ? '#2563eb' : 'var(--dsw-alias-bg-layer-2)',
+            color: selected ? '#ffffff' : 'var(--dsw-alias-label-primary)',
+            fontSize: '12px', fontWeight: selected ? 600 : 400, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px'
+          }
+        }, tab.icon, h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tab.label));
+      }));
+    }
+
+    function renderLibraryColumnLayout({ bodyStyle, isMobile, onResizeStart, isDraggingRef, columns }) {
+      return h('div', { style: bodyStyle },
+        columns[0],
+        !isMobile && h('div', {
+          'aria-label': '调整目录栏宽度',
+          style: { width: '5px', backgroundColor: 'transparent', cursor: 'col-resize', flexShrink: 0, zIndex: 10 },
+          onMouseEnter: e => { e.currentTarget.style.backgroundColor = '#2563eb'; },
+          onMouseLeave: e => { if (!isDraggingRef?.current) e.currentTarget.style.backgroundColor = 'transparent'; },
+          onMouseDown: onResizeStart
+        }),
+        ...columns.slice(1)
+      );
+    }
+
+    function renderImportMethodTabs({ active, onSelect, disabled, secondaryStyle, primaryStyle }) {
+      return h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+        h('button', {
+          type: 'button', style: active === 'browse' ? primaryStyle : secondaryStyle, disabled,
+          onClick: () => onSelect('browse')
+        }, Icon.compass({ size: 13 }), '图形化选择'),
+        h('button', {
+          type: 'button', style: active === 'manual' ? primaryStyle : secondaryStyle, disabled,
+          onClick: () => onSelect('manual')
+        }, Icon.edit({ size: 13 }), '手动填路径')
+      );
+    }
+
+    function renderAssetImportDialog({ isMobile, overlayStyle, cardStyle, ariaLabel, children }) {
+      const overlay = overlayStyle || {
+        position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.65)', backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000
+      };
+      const card = cardStyle || {
+        width: isMobile ? '95vw' : '660px', maxWidth: '95vw', maxHeight: isMobile ? '90vh' : '85vh',
+        backgroundColor: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)',
+        padding: isMobile ? '14px' : '20px', borderRadius: '10px',
+        border: '1px solid var(--dsw-alias-border-l2)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+        display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden'
+      };
+      return h('div', { style: overlay }, h('div', { style: card, role: 'dialog', 'aria-modal': true, 'aria-label': ariaLabel || '导入媒体资源' },
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minHeight: 0, overflowY: 'auto' } }, children)
+      ));
+    }
+
+    function MusicLibraryWorkbench({ isMobile, mobileTab, setMobileTab, layout, styles, onResizeStart, isDraggingRef }) {
+      const [items,setItems]=useState([]);
+      const [selectedId,setSelectedId]=useState('');
+      const [profile,setProfile]=useState(null);
+      const [analysisId,setAnalysisId]=useState('');
+      const [loading,setLoading]=useState(false);
+      const [busy,setBusy]=useState('');
+      const [error,setError]=useState('');
+      const [notice,setNotice]=useState('');
+      const [query,setQuery]=useState('');
+      const [licenseFilter,setLicenseFilter]=useState('all');
+      const [analysisFilter,setAnalysisFilter]=useState('all');
+      const [styleFilter,setStyleFilter]=useState('all');
+      const [bpmMin,setBpmMin]=useState('');
+      const [bpmMax,setBpmMax]=useState('');
+      const [filePath,setFilePath]=useState('');
+      const [musicTitle,setMusicTitle]=useState('');
+      const [artist,setArtist]=useState('');
+      const [licenseNote,setLicenseNote]=useState('');
+      const [browser,setBrowser]=useState(null);
+      const [showBrowser,setShowBrowser]=useState(false);
+      const [selectedAudioPaths,setSelectedAudioPaths]=useState(new Set());
+      const [importProgress,setImportProgress]=useState({completed:0,total:0});
+       const [showImportModal,setShowImportModal]=useState(false);
+      const [importTab,setImportTab]=useState('browse');
+      const [selectedDirectory,setSelectedDirectory]=useState('');
+      const [collapsedDirectories,setCollapsedDirectories]=useState(new Set());
+      const [startSeconds,setStartSeconds]=useState(0);
+      const [durationSeconds,setDurationSeconds]=useState(60);
+      const [selectedCandidates,setSelectedCandidates]=useState(new Set());
+       const [modelInterpretationDraft,setModelInterpretationDraft]=useState(null);
+       const [selectedModelBeatSuggestions,setSelectedModelBeatSuggestions]=useState(new Set());
+      const lock=useRef(false);
+      const fieldStyle=styles?.inputStyle||{backgroundColor:'var(--dsw-alias-bg-layer-2)',color:'var(--dsw-alias-label-primary)',border:'1px solid var(--dsw-alias-border-l2)',borderRadius:'5px',padding:'7px 9px',fontSize:'12px',width:'100%',boxSizing:'border-box'};
+      const secondary=styles?.buttonSecondaryStyle||{backgroundColor:'var(--dsw-alias-bg-layer-2)',color:'var(--dsw-alias-label-primary)',border:'1px solid var(--dsw-alias-border-l2)',borderRadius:'5px',padding:'6px 9px',fontSize:'12px',cursor:'pointer',minHeight:'34px'};
+      const primary=styles?.buttonPrimaryStyle||{...secondary,backgroundColor:'#2563eb',border:'1px solid #2563eb',color:'#fff',fontWeight:600};
+      const listPre={whiteSpace:'pre-wrap',overflowWrap:'anywhere',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'};
+      const call=async(url,options)=>{
+        const response=await fetch(url,options);
+        let data;try{data=await response.json();}catch{throw new Error('音乐库服务响应无效');}
+        if(!response.ok||data?.success===false)throw new Error(data?.error||'音乐库操作失败');
         return data;
       };
-      const action = async (name, fn) => {
-        if (lockRef.current) return;
-        lockRef.current = true; setBusy(name); setError(''); setNotice('');
-        try { await fn(); } catch (e) { setError(e?.message || '操作失败，请重试'); }
-        finally { lockRef.current = false; setBusy(''); }
+      const loadLibrary=async(nextQuery=query,nextLicense=licenseFilter,keepSelected=true)=>{
+        setLoading(true);setError('');
+        try{
+          const params=new URLSearchParams({limit:'100'});
+          if(nextQuery.trim())params.set('query',nextQuery.trim());
+          if(nextLicense!=='all')params.set('license_status',nextLicense);
+          const data=await call(`/api/video-manager/editing/music?${params}`);
+          const list=data.items||data.music?.items||[];setItems(list);
+          if(!keepSelected||!list.some(item=>item.id===selectedId)){setSelectedId(list[0]?.id||'');setProfile(null);setAnalysisId('');setSelectedCandidates(new Set());}else if(selectedId)await loadProfile(selectedId);
+        }catch(e){setError(e?.message||'无法读取音乐库');}
+        finally{setLoading(false);}
       };
-      const loadMusicBrowser = async dir => {
-        const response=await fetch(`/api/video-manager/fs/browse${dir ? `?dir=${encodeURIComponent(dir)}` : ''}`);
-        const data=await response.json();
-        if (!response.ok || !data.success || !Array.isArray(data.folders) || !Array.isArray(data.audio_files)) throw new Error('无法浏览音乐目录，请确认插件版本。');
-        setMusicBrowser(data); setShowMusicBrowser(true);
+      const isLegacyMusicHostError=error=>/未知剪辑工作流操作/.test(error?.message||'');
+      const defaultWindowDuration=id=>{const duration=Number(items.find(item=>item.id===id)?.duration);return Number.isFinite(duration)&&duration>0?Math.min(duration,MAX_MUSIC_ANALYSIS_SECONDS):60;};
+       const resetAnalysisWindow=id=>{setStartSeconds(0);setDurationSeconds(defaultWindowDuration(id));};
+       const extractProfile=data=>data?.profile||data?.analysis||(data&&(typeof data.status==='string'||'beat_candidates'in data||'bpm'in data||'analysis_window'in data)?data:null);
+      const loadProfile=async id=>{
+        if(!id){setProfile(null);setAnalysisId('');setModelInterpretationDraft(null);setSelectedModelBeatSuggestions(new Set());return;}
+        setError('');
+        try{
+          const data=await call(`/api/video-manager/editing/music/${encodeURIComponent(id)}/analysis`);
+          const loadedProfile=extractProfile(data);
+          setProfile(loadedProfile);setAnalysisId(data.analysis_id||loadedProfile?.analysis_id||'');setSelectedCandidates(new Set());setModelInterpretationDraft(null);setSelectedModelBeatSuggestions(new Set());
+
+           const storedWindow=loadedProfile?.analysis_window||loadedProfile?.window;const storedStart=Number(storedWindow?.start_seconds),storedDuration=Number(storedWindow?.duration_seconds);
+           if(Number.isFinite(storedStart)&&Number.isFinite(storedDuration)){setStartSeconds(storedStart);setDurationSeconds(storedDuration);}else resetAnalysisWindow(id);
+
+        }catch(e){
+          if(isLegacyMusicHostError(e)){setProfile(null);setAnalysisId('');resetAnalysisWindow(id);setNotice('当前 Host 尚未加载新版音乐分析接口；重载插件/Host 后即可使用 BPM、节奏候选和风格档案。');return;}
+           if(/404|没有|尚无|不存在/.test(e?.message||'')){setProfile(null);setAnalysisId('');resetAnalysisWindow(id);return;}
+          setError(e?.message||'无法读取音乐分析记录');
+        }
       };
-      const refreshMusic = async () => {
-        const data = await request('/music?limit=100');
-        const list = data.items ?? data.music?.items ?? data.music ?? data.result?.items;
-        if (!Array.isArray(list)) throw new Error('音乐列表格式不兼容，请检查插件版本。');
-        setItems(list);
+      useEffect(()=>{loadLibrary('', 'all',false);},[]);
+      useEffect(()=>{if(selectedId)loadProfile(selectedId);},[selectedId]);
+      const selected=items.find(item=>item.id===selectedId)||null;
+      const styleOptions=Array.from(new Set(items.flatMap(item=>Array.isArray(item.analysis_summary?.style_tags)?item.analysis_summary.style_tags.map(tag=>typeof tag==='string'?tag:String(tag?.tag||'')):[]).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'zh-CN'));
+      const musicDirectoryTree=(()=>{
+        const root={id:'',name:'',count:0,children:[]},nodes=new Map([['',root]]);
+        for(const item of items){
+          const parts=String(item?.file_path||'').replace(/\\/g,'/').split('/').filter(Boolean);
+          parts.pop();
+          if(!parts.length){root.count++;continue;}
+          let parentId='';
+          for(const part of parts){
+            const id=parentId?`${parentId}/${part}`:part;
+            let node=nodes.get(id);
+            if(!node){node={id,name:part,count:0,children:[]};nodes.set(id,node);nodes.get(parentId).children.push(node);}
+            node.count++;
+            parentId=id;
+          }
+        }
+        for(const node of nodes.values())node.children.sort((a,b)=>a.name.localeCompare(b.name,'zh-CN'));
+        return root.children;
+      })();
+      const directoryItems=items.filter(item=>{
+        if(!selectedDirectory)return true;
+        const parts=String(item?.file_path||'').replace(/\\/g,'/').split('/').filter(Boolean);parts.pop();
+        const directory=parts.join('/');
+        return directory===selectedDirectory||directory.startsWith(`${selectedDirectory}/`);
+      });
+      const selectMusicDirectory=id=>{
+        const matching=items.filter(item=>{
+          const parts=String(item?.file_path||'').replace(/\\/g,'/').split('/').filter(Boolean);parts.pop();
+          const directory=parts.join('/');
+          return !id||directory===id||directory.startsWith(`${id}/`);
+        });
+        setSelectedDirectory(id);
+        if(!matching.some(item=>item.id===selectedId))setSelectedId(matching[0]?.id||'');
+        if(isMobile)setMobileTab?.('videos');
       };
-      const refreshProjects = async () => {
-        const data = await request('/projects');
-        const list = data.items ?? data.projects?.items ?? data.projects ?? data.result?.items;
-        if (!Array.isArray(list)) throw new Error('项目列表格式不兼容，请检查插件版本。');
-        setProjects(list);
+      const visibleItems=directoryItems.filter(item=>{
+        const summary=item.analysis_summary||{},bpmValues=[summary.bpm,...(summary.tempo_candidates||[]).map(value=>typeof value==='number'?value:value?.bpm)].map(Number).filter(Number.isFinite);
+        if(analysisFilter!=='all'&&(summary.status||'not_analyzed')!==analysisFilter)return false;
+        if(styleFilter!=='all'&&!(summary.style_tags||[]).some(tag=>(typeof tag==='string'?tag:tag?.tag)===styleFilter))return false;
+        if((bpmMin!==''||bpmMax!=='')&&!bpmValues.some(bpm=>(bpmMin===''||bpm>=Number(bpmMin))&&(bpmMax===''||bpm<=Number(bpmMax))))return false;
+        return true;
+      });
+      const toggleMusicDirectory=(id,event)=>{
+        event?.stopPropagation?.();
+        setCollapsedDirectories(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next;});
       };
-      useEffect(() => { action('load', async () => { await Promise.all([refreshMusic(), refreshProjects()]); }); }, []);
-      const chosen = items.find(item => item.id === musicId);
-      const card = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '7px', minWidth: 0, overflowWrap: 'anywhere' };
-      const row = { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' };
-      const label = { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 };
-      const input = { ...styles.input, width: '100%', boxSizing: 'border-box' };
-      const button = { ...styles.secondary, minHeight: '34px', whiteSpace: 'normal' };
-      const pre = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word', maxWidth: '100%', margin: 0, font: 'inherit' };
-      const show = value => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-      const postImport = () => action('import', async () => {
-        if (!filePath.trim()) throw new Error('请填写本地音乐文件绝对路径。');
-        const data = await request('/music', { file_path: filePath.trim(), title: title.trim(), source_name: sourceName.trim(), license_status: 'unknown', license_note: licenseNote.trim() });
-        await refreshMusic(); setFilePath(''); setTitle('');
-        if (data.music?.id) setMusicId(data.music.id);
-        setNotice(data.created === false ? '音乐已存在；保留原有记录。' : '音乐已添加，授权状态待确认。源文件保持不变。');
-      });
-      const confirmMusic = () => action('confirm', async () => {
-        if (!musicId || !window.confirm('请确认你有权将该音乐用于本次个人分享。此操作仅记录你的声明，并不代表平台或插件已核验版权。继续？')) return;
-        await request(`/music/${encodeURIComponent(musicId)}/confirm-personal`, { confirmed: true, license_note: licenseNote.trim() });
-        await refreshMusic(); setNotice('已记录个人用途的用户声明；发布前仍需核对授权。');
-      });
-      const analyzeMusic = () => action('analyze', async () => {
-        if (!musicId) throw new Error('请先选择音乐。');
-        const startSeconds=Number(musicWindowStart), durationSeconds=Number(musicWindowLength);
-        if (!Number.isFinite(startSeconds) || startSeconds < 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 180) throw new Error('音乐分析起点须非负，时长须为 0–180 秒。');
-        const data = await request(`/music/${encodeURIComponent(musicId)}/analyze`, {startSeconds,durationSeconds});
-        setAnalysis(data.analysis ?? data.result ?? data);
-      });
-      const search = () => action('jamendo', async () => {
-        const key = jamendoKey.trim(); setJamendoKey(''); setJamendoItems([]);
-        if (!key || !jamendoQuery.trim()) throw new Error('请输入 Jamendo Client ID 和搜索词。');
-        let data;
-        try { data = await request('/jamendo/search', { clientId: key, query: jamendoQuery.trim() }); }
-        catch { throw new Error('Jamendo 搜索失败，请检查 Client ID 和网络。'); }
-        const list = data.items ?? data.results ?? data.result?.items;
-        if (!Array.isArray(list)) throw new Error('音乐搜索响应格式不兼容，请检查插件版本。');
-        setJamendoItems(list);
-      });
-      return h('div', { style: styles.overlay, role: 'dialog', 'aria-modal': true, 'aria-label': '剪辑项目工作台' },
-        h('div', { style: { ...styles.modal, width: isMobile ? '95vw' : '900px', maxHeight: '90vh' } },
-          h('div', { style: { ...row, justifyContent: 'space-between' } },
-            h('strong', null, '剪辑项目工作台'),
-            h('button', { type: 'button', style: button, onClick: onClose, disabled: !!busy }, '关闭')
+      const renderMusicDirectory=(node,depth=0)=>{
+        const selected=selectedDirectory===node.id,collapsed=collapsedDirectories.has(node.id),hasChildren=node.children.length>0;
+        return h('div',{key:node.id,style:{position:'relative'}},
+          h('div',{style:{display:'flex',alignItems:'center',gap:'4px',minHeight:'34px',padding:`3px 6px 3px ${6+depth*12}px`,margin:'2px 4px',borderRadius:'5px',backgroundColor:selected?'rgba(37,99,235,0.12)':'transparent'}},
+            hasChildren?h('button',{type:'button','aria-label':collapsed?`展开目录 ${node.name}`:`折叠目录 ${node.name}`,onClick:event=>toggleMusicDirectory(node.id,event),style:{border:'none',background:'transparent',padding:'2px',color:'var(--dsw-alias-label-secondary)',cursor:'pointer',display:'flex',flexShrink:0}},collapsed?Icon.chevronRight({size:11}):Icon.chevronDown({size:11})):h('span',{style:{width:'15px',flexShrink:0}}),
+            Icon.folder({size:14,color:selected?'#2563eb':'#3b82f6'}),
+            h('button',{type:'button','aria-label':`选择目录 ${node.id}`,title:node.id,onClick:()=>selectMusicDirectory(node.id),style:{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'left',border:'none',background:'transparent',padding:'4px 2px',color:selected?'#2563eb':'var(--dsw-alias-label-primary)',fontSize:'12px',fontWeight:selected?600:400,cursor:'pointer'}},node.name),
+            h('span',{style:{fontSize:'10px',padding:'1px 5px',borderRadius:'10px',backgroundColor:'var(--dsw-alias-bg-layer-2)',color:'var(--dsw-alias-label-secondary)',flexShrink:0}},String(node.count))
           ),
-          h('div', { style: { overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, paddingRight: '3px' } },
-            h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' } }, '本工作台用于本地音乐素材、试听与分析，以及查看 Agent 已保存的剪辑项目。创意构思、选曲和时间线迭代请在 DSH 对话中交给 Agent。此处不会生成方案或导出、修改媒体。'),
-            error && h('div', { role: 'alert' }, error), notice && h('div', { role: 'status' }, notice), busy && h('div', { role: 'status' }, '正在处理，请稍候…'),
-            h('section', { style: card }, h('strong', null, '1. 本地音乐'),
-              h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '导入仅建立只读引用，不复制、修改或删除源音频。授权未知的音乐不代表可发布或商用。'),
-              h('div', { style: row },
-                h('label', { style: { ...label, flex:'1 1 220px' } }, '音乐文件绝对路径', h('input', { 'aria-label': '音乐文件绝对路径', value: filePath, onChange: e => setFilePath(e.target.value), style: input })),
-                h('button', { type:'button', style:button, disabled:!!busy, onClick:() => action('browse-music', () => loadMusicBrowser()) }, '浏览音乐文件')
-              ),
-              showMusicBrowser && musicBrowser && h('div', { style:{...card,maxHeight:'260px',overflowY:'auto'} },
-                h('div', { style:{...row,justifyContent:'space-between'} }, h('strong',null,'选择本地音乐'), h('button',{type:'button',style:button,onClick:()=>setShowMusicBrowser(false)},'关闭浏览器')),
-                h('div',{style:{...pre,fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},musicBrowser.current_path),
-                h('div',{style:row}, musicBrowser.parent_path && h('button',{type:'button',style:button,onClick:()=>action('browse-music',()=>loadMusicBrowser(musicBrowser.parent_path))},'上一级'),
-                  (musicBrowser.drive_roots || []).map(place=>h('button',{key:place.path,type:'button',style:button,onClick:()=>action('browse-music',()=>loadMusicBrowser(place.path))},place.name))),
-                ...(musicBrowser.folders || []).map(folder=>h('button',{key:folder.path,type:'button',style:{...button,textAlign:'left'},onClick:()=>action('browse-music',()=>loadMusicBrowser(folder.path))},`目录：${folder.name}`)),
-                ...(musicBrowser.audio_files || []).map(file=>h('button',{key:file.path,type:'button',style:{...button,textAlign:'left'},onClick:()=>{setFilePath(file.path);setShowMusicBrowser(false);}},`选择：${file.name}`)),
-                !(musicBrowser.audio_files || []).length && h('div',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'当前目录没有可识别的音频文件。')
-              ),
-              h('div', { style: row }, h('label', { style: { ...label, flex: '1 1 180px' } }, '标题（可选）', h('input', { 'aria-label': '音乐标题', value: title, onChange: e => setTitle(e.target.value), style: input })), h('label', { style: { ...label, flex: '1 1 180px' } }, '来源（可选）', h('input', { 'aria-label': '音乐来源', value: sourceName, onChange: e => setSourceName(e.target.value), style: input }))),
-              h('label', { style: label }, '授权备注（可选）', h('input', { 'aria-label': '授权备注', value: licenseNote, onChange: e => setLicenseNote(e.target.value), style: input })),
-              h('div', { style: row }, h('button', { type: 'button', style: button, disabled: !!busy, onClick: postImport }, '导入本地音乐'), h('button', { type: 'button', style: button, disabled: !!busy, onClick: () => action('load', refreshMusic) }, '刷新音乐')),
-              h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '音乐选曲与创意编排请在 DSH 对话中交由 Agent 完成；本工作台仅管理音乐素材、试听和音频检测。授权状态为用户声明，需自行核验。'),
-              h('label', { style: label }, '选择音乐', h('select', { 'aria-label': '选择音乐', value: musicId, style: input, onChange: e => { setMusicId(e.target.value); setAnalysis(null); } }, h('option', { value: '' }, '请选择音乐'), items.map(item => h('option', { key: item.id, value: item.id }, `${item.title || item.file_name || item.id} · ${item.license_status === 'personal_confirmed' ? '用户已声明个人用途' : '授权未知'}`)))),
-              chosen && h('audio', { controls:true, preload:'none', src:`${endpoint}/music/${encodeURIComponent(chosen.id)}/stream`, style:{width:'100%','maxWidth':'100%'} }),
-              chosen && h('div', { style: pre }, `文件：${chosen.file_name || '未知'}\n标题：${chosen.title || '未知'}\n来源：${chosen.source_name || '未提供'}\n授权：${chosen.license_status === 'personal_confirmed' ? '用户已声明个人用途（未独立核验）' : '未知，须确认'}`),
-              h('div', { style: row },
-                h('label', { style: { ...label, flex: '1 1 180px' } }, '音乐分析起点（源音频秒数）', h('input', { 'aria-label': '音乐分析起点', type:'number', min:0, step:0.1, value:musicWindowStart, onChange:e=>{setMusicWindowStart(e.target.value);setAnalysis(null);}, style:input })),
-                h('label', { style: { ...label, flex: '1 1 180px' } }, '分析窗口长度（秒，最多 180）', h('input', { 'aria-label': '音乐分析窗口长度', type:'number', min:1, max:180, value:musicWindowLength, onChange:e=>{setMusicWindowLength(e.target.value);setAnalysis(null);}, style:input }))
-              ),
-              h('div', { style: row }, h('button', { type: 'button', style: button, disabled: !!busy || !musicId, onClick: confirmMusic }, '确认个人使用权限'), h('button', { type: 'button', style: button, disabled: !!busy || !musicId, onClick: analyzeMusic }, '分析音乐')),
-              analysis && h('div', { style: pre }, `音乐分析：${analysis.status || '未知'}\nBPM：${analysis.bpm ?? '未检测到'}\n置信度：${analysis.confidence ?? '未提供'}（低置信度时请人工试听）\n实测节拍（秒）：${Array.isArray(analysis.beats) && analysis.beats.length ? analysis.beats.join('、') : '未提供'}\n检测瞬态候选（秒）：${Array.isArray(analysis.onsets) && analysis.onsets.length ? analysis.onsets.join('、') : '未提供'}\n瞬态不一定是节拍或强拍，请试听确认。\n${analysis.notice || ''}`)
-            ),
-            h('details', { style: card }, h('summary', null, 'Jamendo 搜索（可选）'), h('div', null, '仅搜索预览，不代表已获授权，也不自动下载；请在原来源核对用途和许可。'),
-              h('label', { style: label }, 'Client ID（仅本次请求）', h('input', { 'aria-label': 'Jamendo Client ID', type: 'password', autoComplete: 'off', value: jamendoKey, onChange: e => setJamendoKey(e.target.value), style: input })),
-              h('label', { style: label }, '搜索词', h('input', { 'aria-label': 'Jamendo 搜索词', value: jamendoQuery, onChange: e => setJamendoQuery(e.target.value), style: input })),
-              h('button', { type: 'button', style: button, disabled: !!busy, onClick: search }, '搜索预览'),
-              jamendoItems.map((item, i) => h('div', { key: item.id || i, style: card }, h('strong', null, item.title || item.name || '未命名'), h('div', null, `作者：${item.artist || item.artist_name || '未知'} · 授权需核验`), (item.source_url || item.url) && /^https?:\/\//i.test(item.source_url || item.url) && h('a', { href: item.source_url || item.url, target: '_blank', rel: 'noopener noreferrer' }, '前往来源核验')))
-            ),
-            h('section', { style:card }, h('strong', null, '2. 已保存剪辑项目'), h('button', { type:'button', style:button, disabled:!!busy, onClick:() => action('projects',refreshProjects) }, '刷新项目'),
-              projects.length === 0 && h('div', null, '暂无项目'),
-              projects.map((project,i) => h('button', { key:project.id || i, type:'button', style:button, disabled:!!busy || !project.id, onClick:() => action('project',async()=>{const data=await request(`/projects/${encodeURIComponent(project.id)}`);setProjectDetail(data.project ?? data.record ?? data.result ?? data);}) }, project.title || project.id || '未命名项目')),
-              projectDetail && h('pre', { style:pre }, show(projectDetail))
-            )
+          hasChildren&&!collapsed&&node.children.map(child=>renderMusicDirectory(child,depth+1))
+        );
+      };
+      const toggleAudioFile=audioPath=>{
+        if(selectedAudioPaths.has(audioPath)){const next=new Set(selectedAudioPaths);next.delete(audioPath);setSelectedAudioPaths(next);return;}
+        if(selectedAudioPaths.size>=MAX_MUSIC_IMPORT_BATCH){setError(`一次最多选择 ${MAX_MUSIC_IMPORT_BATCH} 个音频文件。`);return;}
+        setSelectedAudioPaths(new Set([...selectedAudioPaths,audioPath]));setError('');
+      };
+      const toggleCurrentAudioFiles=()=>{
+        const paths=(browser?.audio_files||[]).map(item=>item.path),allSelected=paths.length>0&&paths.every(audioPath=>selectedAudioPaths.has(audioPath));
+        if(allSelected){const next=new Set(selectedAudioPaths);for(const audioPath of paths)next.delete(audioPath);setSelectedAudioPaths(next);return;}
+        const missing=paths.filter(audioPath=>!selectedAudioPaths.has(audioPath));
+        if(selectedAudioPaths.size+missing.length>MAX_MUSIC_IMPORT_BATCH){setError(`批量导入最多 ${MAX_MUSIC_IMPORT_BATCH} 个音频；请分批选择。`);return;}
+        setSelectedAudioPaths(new Set([...selectedAudioPaths,...missing]));setError('');
+      };
+      const browse=async dir=>{
+        setBusy('browse');setError('');
+        try{
+          const url=dir?`/api/video-manager/fs/browse?dir=${encodeURIComponent(dir)}`:'/api/video-manager/fs/browse';
+          const data=await call(url);setBrowser(data);setShowBrowser(true);
+        }catch(e){setError(e?.message||'无法浏览本地目录');}
+        finally{setBusy('');}
+      };
+      const importMusic=async()=>{
+        const paths=importTab==='browse'&&selectedAudioPaths.size?[...selectedAudioPaths]:filePath.trim()?[filePath.trim()]:[];
+        if(!paths.length){setError('请先选择一个或多个本地音频文件，或输入单个绝对路径。');return;}
+        if(paths.length>MAX_MUSIC_IMPORT_BATCH){setError(`一次最多导入 ${MAX_MUSIC_IMPORT_BATCH} 个音频文件。`);return;}
+        if(lock.current)return;lock.current=true;setBusy('import');setImportProgress({completed:0,total:paths.length});setError('');setNotice('');
+        const imported=[],failed=[];
+        try{
+          for(const [index,sourcePath] of paths.entries()){
+            try{
+              const result=await call('/api/video-manager/editing/music',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_path:sourcePath,title:paths.length===1?musicTitle.trim():'',artist:paths.length===1?artist.trim():'',license_status:'unknown',license_note:licenseNote.trim()})});
+              imported.push({music:result.music,created:result.created!==false});
+            }catch(error){failed.push({path:sourcePath,message:error?.message||'导入失败'});}
+            finally{setImportProgress({completed:index+1,total:paths.length});}
+          }
+          if(imported.length){
+            setFilePath('');setSelectedAudioPaths(new Set());setMusicTitle('');setArtist('');setShowBrowser(false);setShowImportModal(false);
+            const created=imported.filter(item=>item.created).length,existing=imported.length-created;
+            setNotice(`批量导入完成：新增 ${created} 条${existing?`，已有记录 ${existing} 条`:''}；源文件未复制或修改。`);
+            await loadLibrary(query,licenseFilter,false);
+            const lastMusic=imported.at(-1)?.music;if(lastMusic?.id)setSelectedId(lastMusic.id);
+          }
+          if(failed.length){
+            const names=failed.slice(0,3).map(item=>`${item.path.split(/[\\/]/).at(-1)||item.path}：${item.message}`);
+            setError(`导入失败 ${failed.length} 条：${names.join('；')}${failed.length>3?'；其余失败项已省略':''}`);
+          }else if(!imported.length)setError('没有成功导入音频引用。');
+        }finally{lock.current=false;setBusy('');}
+      };
+      const confirmPersonal=async()=>{
+        if(!selectedId||!window.confirm('请确认你有权将这首音乐用于个人分享。此操作只记录你的声明，不代表插件或平台核验版权。继续？'))return;
+        setBusy('rights');setError('');
+        try{
+          await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/confirm-personal`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,license_note:licenseNote.trim()})});
+          setNotice('个人用途声明已记录；该声明未经独立核验。');await loadLibrary(query,licenseFilter,true);
+        }catch(e){setError(e?.message||'无法记录许可声明');}
+        finally{setBusy('');}
+      };
+      const analyze=async()=>{
+        if(!selectedId)return;
+        const start=Number(startSeconds),duration=Number(durationSeconds);
+        if(!Number.isFinite(start)||start<0||!Number.isFinite(duration)||duration<=0||duration>MAX_MUSIC_ANALYSIS_SECONDS){setError(`分析窗口起点须非负，长度须为 0–${MAX_MUSIC_ANALYSIS_SECONDS} 秒（10分钟）。`);return;}
+        setBusy('analyze');setError('');setNotice('');setSelectedCandidates(new Set());
+        try{
+          const result=await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startSeconds:start,durationSeconds:duration})});
+          const analyzedProfile=extractProfile(result);
+          setAnalysisId(result.analysis_id||analyzedProfile?.analysis_id||'');setProfile(analyzedProfile);
+          setNotice('本地节奏分析已保存；拍点候选须试听确认，模型节奏/风格建议会单独标注。');
+          await loadLibrary(query,licenseFilter,true);
+        }catch(e){if(isLegacyMusicHostError(e))setNotice('当前 Host 尚未加载新版音乐分析接口；请重载插件/Host 后再分析。');else setError(e?.message||'音乐分析失败');}
+        finally{setBusy('');}
+      };
+      const interpretMusic=async()=>{
+        if(!selectedId||!analysisId||!modelWindowMatches){setError('请先对当前音频窗口运行本地分析，再进行频谱图模型解读。');return;}
+        if(!sourceCurrent){setError('音乐源文件缺失或身份已变化，无法生成频谱图。');return;}
+        setBusy('interpret');setError('');setNotice('');
+        try{
+          await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/interpret`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId})});
+          await loadProfile(selectedId);
+          setNotice('频谱图模型解读已记录；速度与节奏点是近似视觉提示，与DSP候选分开，标签可手动编辑。');
+        }catch(e){if(isLegacyMusicHostError(e))setNotice('当前 Host 尚未加载新版频谱解读接口；重载插件/Host 后即可使用。');else setError(e?.message||'频谱图模型解读失败');}
+        finally{setBusy('');}
+      };
+      const submitModelInterpretationEdits=async(edits,noticeText)=>{
+        if(!selectedId||!analysisId||!profile?.model_interpretation)return;
+        setBusy('interpretEdit');setError('');setNotice('');
+        try{
+          const result=await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/interpret/edits`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId,edits,confirmed:true})});
+          setProfile(current=>current?{...current,model_interpretation_edits:result.model_interpretation_edits,model_interpretation_edits_provenance:result.model_interpretation_edits_provenance}:current);
+          setModelInterpretationDraft(null);setSelectedModelBeatSuggestions(new Set());setNotice(noticeText);
+        }catch(e){setError(e?.message||'无法保存频谱解读编辑');}
+        finally{setBusy('');}
+      };
+      const beginModelInterpretationEdit=()=>{
+        const generated=profile?.model_interpretation,edits=profile?.model_interpretation_edits||{};if(!generated)return;
+        setModelInterpretationDraft({summary:edits.summary??generated.summary??'',rhythm_character:edits.rhythm_character??generated.rhythm_character??'',
+          energy_arc:edits.energy_arc??generated.energy_arc??'',style_tags:(edits.style_tags??generated.style_tags??[]).join(', ')});
+      };
+      const saveModelInterpretationEdit=()=>{
+        if(!modelInterpretationDraft)return;
+        const edits=profile?.model_interpretation_edits||{},generated=profile?.model_interpretation||{};
+        const styleTags=String(modelInterpretationDraft.style_tags||'').split(/[\n,，、]/).map(tag=>tag.trim()).filter(Boolean);
+        return submitModelInterpretationEdits({summary:String(modelInterpretationDraft.summary||'').trim()||generated.summary,
+          rhythm_character:String(modelInterpretationDraft.rhythm_character||'').trim()||generated.rhythm_character,
+          energy_arc:String(modelInterpretationDraft.energy_arc||'').trim()||generated.energy_arc,style_tags:styleTags,
+          user_confirmed_model_beats:edits.user_confirmed_model_beats||[]},'已保存人工编辑的频谱解读和风格标签。');
+      };
+      const confirmModelBeatHints=()=>{
+        const selected=Array.from(selectedModelBeatSuggestions).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);if(!selected.length)return;
+        if(!window.confirm('你已试听并确认这些模型估计的近似节奏位置？它们会与DSP测量拍点分开记录。'))return;
+        const edits=profile?.model_interpretation_edits||{},generated=profile?.model_interpretation||{};
+        return submitModelInterpretationEdits({summary:edits.summary??generated.summary,rhythm_character:edits.rhythm_character??generated.rhythm_character,
+          energy_arc:edits.energy_arc??generated.energy_arc,style_tags:edits.style_tags??generated.style_tags??[],
+          user_confirmed_model_beats:[...new Set([...(edits.user_confirmed_model_beats||[]),...selected])]},'已记录用户确认的模型节奏提示（独立于DSP拍点）。');
+      };
+      const removeMusic=async()=>{
+        if(!selectedId||!window.confirm('仅从音乐库移除这条引用；不会删除或修改磁盘源文件。继续？'))return;
+        setBusy('remove');setError('');
+        try{await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}`,{method:'DELETE'});setSelectedId('');setProfile(null);setAnalysisId('');await loadLibrary(query,licenseFilter,false);}
+        catch(e){setError(e?.message||'移除音乐记录失败');}
+        finally{setBusy('');}
+      };
+      const eventTime=value=>{
+        if(typeof value==='number'&&Number.isFinite(value))return value;
+        if(!value||typeof value!=='object')return null;
+        for(const key of ['source_seconds','time_seconds','time','seconds','timestamp'])if(Number.isFinite(Number(value[key])))return Number(value[key]);
+        return null;
+      };
+      const listTimes=value=>Array.isArray(value)?value.map(eventTime).filter(Number.isFinite):[];
+      const profileWindow=profile?.window||profile?.analysis_window||{};
+      const windowStart=Number(profileWindow.start_seconds??profileWindow.startSeconds??startSeconds)||0;
+      const windowDuration=Number(profileWindow.duration_seconds??profileWindow.durationSeconds??durationSeconds)||0;
+
+      const beatCandidates=listTimes(profile?.beat_candidates);
+      const confirmedBeats=listTimes(profile?.user_confirmed_beats);
+      const tempoAlternatives=Array.isArray(profile?.tempo_alternatives)?profile.tempo_alternatives:Array.isArray(profile?.tempo_candidates)?profile.tempo_candidates:[];
+      const confidence=profile?.confidence==null?Number.NaN:Number(profile.confidence);
+      const status=profile?.status||profile?.analysis_status||'unavailable';
+       const featureSummary=profile?.feature_summary||{};
+      const ambiguous=profile?.ambiguous===true||tempoAlternatives.some(item=>item?.ambiguous===true)||status==='ambiguous';
+      const canConfirmBeats=beatCandidates.length>0&&!!analysisId;
+      const selectedBeatTimes=Array.from(selectedCandidates).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+       const confirmBeatsDisabled=!canConfirmBeats||!selectedBeatTimes.length||!!busy;
+      const beatConfirmationGuidance=!analysisId?'缺少版本化 analysis_id，不能保存人工确认。':!beatCandidates.length?'此窗口没有 beat candidates；可查看独立的模型节奏提示。':ambiguous||status!=='ok'||!Number.isFinite(confidence)||confidence<0.55?'系统节奏估值置信度有限/存在速度歧义；仍可试听后逐项确认真实拍点，确认不会提升或覆盖 BPM 估值。':`请试听核对后勾选拍点候选；${selectedBeatTimes.length} 个已选。`;
+      const toggleCandidate=time=>{
+        const key=String(Number(time.toFixed(4))),next=new Set(selectedCandidates);
+        if(next.has(key))next.delete(key);else next.add(key);setSelectedCandidates(next);
+      };
+      const confirmBeats=async()=>{
+        if(!canConfirmBeats||!selectedBeatTimes.length)return;
+        if(!window.confirm(`确认你已试听并核对这 ${selectedBeatTimes.length} 个候选拍点？这只记录你的人工判断。`))return;
+        setBusy('confirm-beats');setError('');
+        try{
+          const result=await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/analysis/confirm-beats`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId,beats:selectedBeatTimes,confirmed:true})});
+          const confirmedProfile=extractProfile(result);
+          setProfile(confirmedProfile);setAnalysisId(result.analysis_id||confirmedProfile?.analysis_id||analysisId);setSelectedCandidates(new Set());setNotice('已记录所选人工确认拍点。');await loadLibrary(query,licenseFilter,true);
+        }catch(e){if(isLegacyMusicHostError(e))setNotice('当前 Host 尚未加载新版音乐分析接口；请重载插件/Host 后再确认。');else setError(e?.message||'无法确认拍点');}
+        finally{setBusy('');}
+      };
+      const styleProfile=profile?.style_tags||{};
+      const styleArray=Array.isArray(styleProfile)?styleProfile:null;
+      const suggestedStyles=styleArray?[]:Array.isArray(styleProfile.suggested)?styleProfile.suggested:Array.isArray(styleProfile.agent_suggestions)?styleProfile.agent_suggestions:[];
+      const confirmedStyles=styleArray?(profile?.style_provenance==='dsh-agent-user-approved'?styleArray:styleArray.filter(item=>item?.status==='user_confirmed'||item?.status==='confirmed'||item?.source==='user')):Array.isArray(styleProfile?.user_confirmed)?styleProfile.user_confirmed:Array.isArray(styleProfile?.confirmed)?styleProfile.confirmed:Array.isArray(profile?.user_confirmed_style_tags)?profile.user_confirmed_style_tags:[];
+       const styleRationale=profile?.style_rationale||'';
+      const unclassifiedStyles=styleArray?styleArray.filter(item=>!suggestedStyles.includes(item)&&!confirmedStyles.includes(item)):[];
+      const tagText=item=>typeof item==='string'?item:String(item?.tag??item?.name??item?.label??'');
+      const tagRationale=item=>typeof item==='object'?(item?.rationale||item?.reason||'') : '';
+      const renderStyleTag=(item,index,kind)=>h('div',{key:`${kind}-${index}`,style:{display:'flex',alignItems:'flex-start',gap:'7px',padding:'5px 7px',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'5px',fontSize:'11px',minWidth:0}},
+        h('span',{style:{border:'1px solid var(--dsw-alias-border-l2)',borderRadius:'10px',padding:'2px 6px',whiteSpace:'nowrap'}},tagText(item)),
+        tagRationale(item)&&h('span',{style:{color:'var(--dsw-alias-label-secondary)',overflowWrap:'anywhere'}},tagRationale(item))
+      );
+      const trackStyles={position:'relative',height:'44px',margin:'10px 4px 16px',borderBottom:'1px solid var(--dsw-alias-border-l1)',borderTop:'1px solid var(--dsw-alias-border-l1)'};
+      const markers=(times,kind)=>times.filter(t=>windowDuration>0&&t>=windowStart&&t<=windowStart+windowDuration).map((time,index)=>{
+        const left=Math.max(0,Math.min(100,((time-windowStart)/windowDuration)*100));
+        const userConfirmed=kind==='confirmed';
+        return h('span',{key:`${kind}-${time}-${index}`,title:`${kind==='onset'?'瞬态':kind==='candidate'?'候选拍点':'人工确认拍点'} ${time.toFixed(3)} 秒`,style:{position:'absolute',left:`${left}%`,top:userConfirmed?'2px':'8px',height:userConfirmed?'38px':'30px',borderLeft:userConfirmed?'2px solid #2563eb':kind==='candidate'?'2px dashed var(--dsw-alias-label-primary)':'1px solid var(--dsw-alias-label-secondary)',opacity:kind==='onset'?0.55:1}});
+      });
+      const timeRows=(label,times,canSelect,limit=80)=>h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'8px'}},
+        h('strong',{style:{fontSize:'12px'}},`${label} (${times.length})`),
+        times.slice(0,limit).map((time,index)=>h('label',{key:`${label}-${index}`,style:{display:'flex',alignItems:'center',gap:'7px',fontSize:'12px',color:'var(--dsw-alias-label-secondary)',padding:'3px 0'}},
+          canSelect&&h('input',{type:'checkbox','aria-label':`确认候选拍点 ${time.toFixed(3)} 秒`,checked:selectedCandidates.has(String(Number(time.toFixed(4)))),disabled:!canConfirmBeats||busy==='confirm-beats',onChange:()=>toggleCandidate(time)}),
+          h('span',null,`${time.toFixed(3)} 秒`)
+        )),times.length>limit&&h('span',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},`仅显示前 ${limit} 个，另有 ${times.length-limit} 个`)
+      );
+      const activeRights=selected?.license_status==='personal_confirmed';
+       const sourceCurrent=selected?.source_status==='current';
+       const modelWindowMatches=!!profile?.analysis_window&&profile.status!=='stale'&&Number(profile.analysis_window.start_seconds)===Number(startSeconds)&&Number(profile.analysis_window.duration_seconds)===Number(durationSeconds);
+       const modelInterpretationView=profile?.model_interpretation?{...profile.model_interpretation,...(profile.model_interpretation_edits||{})}:null;
+       const modelBeatHints=Array.isArray(profile?.model_interpretation?.beat_time_hypotheses)?profile.model_interpretation.beat_time_hypotheses:[];
+       const confirmedModelBeatTimes=listTimes(profile?.model_interpretation_edits?.user_confirmed_model_beats);
+      const statusLabel={ok:'可用测量',low_confidence:'低置信度',silence:'静音/无明显音频',no_audio:'无音轨',error:'分析失败',unavailable:'尚未分析'}[status]||status;
+      const confidenceLabel=Number.isFinite(confidence)?`${Math.round(confidence*100)}%`:'未提供';
+      const busyLabel=busy==='import'?`正在导入 ${importProgress.completed}/${importProgress.total}`:{browse:'正在浏览',rights:'正在记录声明',analyze:'正在测量',interpret:'正在生成谱图并请求模型',interpretEdit:'正在保存解读编辑/模型节奏确认',remove:'正在移除',"confirm-beats":'正在保存确认'}[busy];
+      const musicBodyStyle=layout?.bodyStyle||{display:'flex',flex:1,minHeight:0,overflow:'hidden',position:'relative'};
+      const musicLeftStyle={...(layout?.leftColStyle||{width:isMobile?'100%':'250px',minWidth:isMobile?'100%':'180px',display:'flex',flexDirection:'column',backgroundColor:'var(--dsw-alias-bg-layer-1)',overflowY:'auto',overflowX:'hidden'}),minHeight:0};
+      const musicMiddleStyle={...(layout?.midColStyle||{flex:1,width:isMobile?'100%':'auto',display:'flex',flexDirection:'column',backgroundColor:'var(--dsw-alias-bg-base)',overflow:'hidden'}),minWidth:0,minHeight:0};
+      const musicRightStyle={...(layout?.rightColStyle||{width:isMobile?'100%':'440px',display:'flex',flexDirection:'column',backgroundColor:'var(--dsw-alias-bg-layer-1)',overflowY:'auto'}),minHeight:0};
+      const musicMobileLabels=[{id:'folders',label:'目录',icon:Icon.folder({size:13})},{id:'videos',label:`音乐列表 (${visibleItems.length})`,icon:Icon.music({size:13})},{id:'detail',label:'音乐详情',icon:Icon.hardDrive({size:13})}];
+      const busyStatus=!!busyLabel&&h('div',{role:'status',style:{padding:'6px 12px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)',borderBottom:'1px solid var(--dsw-alias-border-l1)'}},busyLabel);
+      const closeImport=()=>{setShowImportModal(false);setShowBrowser(false);setSelectedAudioPaths(new Set());setFilePath('');setError('');};
+      const importDialog=showImportModal&&renderAssetImportDialog({
+        isMobile,overlayStyle:styles?.modalOverlayStyle,cardStyle:styles?.modalCardStyle,ariaLabel:'导入本地音乐',
+        children:h(React.Fragment,null,
+          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'8px'}},
+            h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},Icon.music({size:18,color:'#3b82f6'}),h('strong',{style:{fontSize:'15px',fontWeight:600}},'导入本地音乐')),
+            renderImportMethodTabs({active:importTab,onSelect:next=>{setImportTab(next);setShowBrowser(false);},disabled:busy==='import',secondaryStyle:secondary,primaryStyle:primary})
+          ),
+          h('div',{style:{padding:'8px 10px',backgroundColor:'var(--dsw-alias-bg-layer-2)',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'5px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'支持一次勾选最多 50 个音频文件；批量时各曲目使用嵌入元数据或文件名，手动标题/作者仅用于单文件。这里只登记本地引用，不复制、移动、修改或删除源文件。许可状态是用户声明，不代表插件核验版权。'),
+          error&&h('div',{role:'alert',style:{padding:'8px 10px',border:'1px solid var(--dsw-alias-border-l2)',borderRadius:'5px',fontSize:'12px'}},error),
+          importTab==='browse'
+            ? h('div',{style:{display:'flex',flexDirection:'column',gap:'8px',minHeight:0}},
+                h('label',{style:{fontSize:'12px',display:'flex',flexDirection:'column',gap:'5px'}},'音频文件',
+                  h('div',{style:{display:'flex',gap:'8px',alignItems:'center'}},
+                    h('input',{type:'text','aria-label':'本地音频绝对路径',value:selectedAudioPaths.size?`已选 ${selectedAudioPaths.size} 个音频文件`:filePath,onChange:e=>setFilePath(e.target.value),readOnly:selectedAudioPaths.size>0,placeholder:'可选择多个本地音频文件',style:{...fieldStyle,flex:1}}),
+                    h('button',{type:'button',style:secondary,disabled:!!busy,onClick:()=>browse()},Icon.folder({size:13}),'浏览')
+                  )
+                ),
+                showBrowser&&browser&&h('div',{style:{border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'6px',padding:'8px',maxHeight:'240px',overflowY:'auto',display:'flex',flexDirection:'column',gap:'4px',backgroundColor:'var(--dsw-alias-bg-base)'}},
+                  h('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'6px 8px',backgroundColor:'var(--dsw-alias-bg-layer-2)',borderRadius:'5px',fontSize:'11px'}},
+                    browser.parent_path&&h('button',{type:'button',style:secondary,disabled:!!busy,onClick:()=>browse(browser.parent_path)},Icon.arrowUp({size:12}),'上一级'),
+                    h('span',{style:{color:'var(--dsw-alias-label-secondary)',flexShrink:0}},'当前目录'),
+                    h('span',{title:browser.current_path,style:{fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}},browser.current_path)
+                  ),
+                  h('div',{style:{display:'flex',flexWrap:'wrap',gap:'5px'}},
+                    ...(browser.drive_roots||[]).map(item=>h('button',{key:`drive-${item.path}`,type:'button',style:{...secondary,padding:'3px 8px',fontSize:'11px'},disabled:!!busy,onClick:()=>browse(item.path)},Icon.hardDrive({size:12}),item.name)),
+                    ...(browser.quick_places||[]).map(item=>h('button',{key:`quick-${item.path}`,type:'button',style:{...secondary,padding:'3px 8px',fontSize:'11px'},disabled:!!busy,onClick:()=>browse(item.path)},Icon.folder({size:12}),item.name))
+                  ),
+                  ...(browser.folders||[]).map(item=>h('button',{key:`folder-${item.path}`,type:'button',style:{...secondary,minHeight:'38px',textAlign:'left',justifyContent:'flex-start'},disabled:!!busy,onClick:()=>browse(item.path)},Icon.folder({size:14}),`目录：${item.name}`)),
+                  (browser.audio_files||[]).length>0&&h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px',padding:'6px 8px',backgroundColor:'var(--dsw-alias-bg-layer-2)',borderRadius:'5px',fontSize:'11px'}},
+                    h('label',{style:{display:'inline-flex',alignItems:'center',gap:'6px',cursor:'pointer'}},
+                      h('input',{type:'checkbox','aria-label':'选择当前目录全部音频',checked:browser.audio_files.length>0&&browser.audio_files.every(item=>selectedAudioPaths.has(item.path)),disabled:!!busy,onChange:toggleCurrentAudioFiles}),
+                      `选择当前目录音频 (${browser.audio_files.length})`
+                    ),
+                    h('span',{style:{color:'var(--dsw-alias-label-secondary)'}},`${selectedAudioPaths.size}/${MAX_MUSIC_IMPORT_BATCH} 已选`)
+                  ),
+                  ...(browser.audio_files||[]).map(item=>{
+                    const selectedAudio=selectedAudioPaths.has(item.path);
+                    return h('label',{key:`audio-${item.path}`,style:{minHeight:'38px',padding:'5px 8px',borderRadius:'5px',border:selectedAudio?'1px solid var(--dsw-alias-border-l2)':'1px solid transparent',backgroundColor:selectedAudio?'var(--dsw-alias-bg-layer-2)':'transparent',display:'flex',alignItems:'center',gap:'8px',cursor:'pointer'}},
+                      h('input',{type:'checkbox','aria-label':`选择音频 ${item.name}`,checked:selectedAudio,disabled:!!busy,onChange:()=>toggleAudioFile(item.path)}),
+                      Icon.music({size:14,color:selectedAudio?'#2563eb':'#3b82f6'}),
+                      h('span',{title:item.name,style:{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:'12px'}},item.name),
+                      h('span',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)',flexShrink:0}},item.ext||'音频')
+                    );
+                  }),
+                  !(browser.folders||[]).length&&!(browser.audio_files||[]).length&&h('div',{style:{padding:'14px',textAlign:'center',fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},'当前目录没有支持的音频文件或子目录')
+                )
+              )
+            : h('label',{style:{fontSize:'12px',display:'flex',flexDirection:'column',gap:'6px'}},'音频文件绝对路径',h('input',{type:'text','aria-label':'本地音频绝对路径',value:filePath,onChange:e=>setFilePath(e.target.value),placeholder:'例如：D:\\Music\\track.wav',style:fieldStyle})),
+          h('label',{style:{fontSize:'12px',display:'flex',flexDirection:'column',gap:'5px'}},'标题（可选）',h('input',{type:'text','aria-label':'音乐标题',value:musicTitle,onChange:e=>setMusicTitle(e.target.value),style:fieldStyle})),
+          h('label',{style:{fontSize:'12px',display:'flex',flexDirection:'column',gap:'5px'}},'作者（可选）',h('input',{type:'text','aria-label':'音乐作者',value:artist,onChange:e=>setArtist(e.target.value),style:fieldStyle})),
+          h('label',{style:{fontSize:'12px',display:'flex',flexDirection:'column',gap:'5px'}},'许可备注（可选）',h('textarea',{'aria-label':'个人用途许可备注',value:licenseNote,onChange:e=>setLicenseNote(e.target.value),placeholder:'记录你的授权依据；这不是插件的版权核验。',rows:3,style:fieldStyle})),
+          h('div',{style:{display:'flex',justifyContent:'flex-end',gap:'8px',borderTop:'1px solid var(--dsw-alias-border-l1)',paddingTop:'10px'}},
+            h('button',{type:'button',style:secondary,disabled:busy==='import',onClick:closeImport},'取消'),
+            h('button',{type:'button',style:primary,disabled:!!busy||(!selectedAudioPaths.size&&!filePath.trim()),onClick:importMusic},busy==='import'?`正在导入 ${importProgress.completed}/${importProgress.total}…`:selectedAudioPaths.size?`导入所选音频 (${selectedAudioPaths.size})`:'导入音乐引用')
           )
         )
+      });
+      return h('div',{style:{width:'100%',flex:1,minHeight:0,display:'flex',flexDirection:'column',overflow:'hidden'},'aria-label':'音乐库页面'},
+        renderLibrarySectionHeader({icon:Icon.music,title:'本地音乐库',description:`${items.length} 条音频资产`,actions:h('button',{type:'button','aria-label':'导入音乐',style:primary,disabled:!!busy,onClick:()=>{setError('');setShowImportModal(true);setShowBrowser(false);setImportTab('browse');setSelectedAudioPaths(new Set());setFilePath('');}},Icon.upload({size:13}),'导入音乐')}),
+        renderMobilePanelNavigation({isMobile,active:mobileTab,onSelect:setMobileTab,labels:musicMobileLabels}),
+        !showImportModal&&error&&h('div',{role:'alert',style:{margin:'8px 12px 0',padding:'8px',border:'1px solid var(--dsw-alias-border-l2)',borderRadius:'5px',fontSize:'12px'}},error),
+        !showImportModal&&notice&&h('div',{role:'status',style:{margin:'8px 12px 0',padding:'8px',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'5px',fontSize:'12px'}},notice),
+        busyStatus,
+        renderLibraryColumnLayout({bodyStyle:musicBodyStyle,isMobile,onResizeStart,isDraggingRef,columns:[
+          h('aside',{style:musicLeftStyle,'aria-label':'音乐来源目录'},
+            h('div',{style:{padding:'12px 12px 8px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid var(--dsw-alias-border-l1)'}},
+              h('strong',{style:{fontSize:'12px',display:'inline-flex',alignItems:'center',gap:'7px'}},Icon.folder({size:14,color:'#3b82f6'}),'来源目录'),
+              h('span',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},`${items.length} 首`)
+            ),
+            h('button',{type:'button','aria-label':'显示全部音乐',onClick:()=>selectMusicDirectory(''),style:{display:'flex',alignItems:'center',gap:'7px',margin:'6px 5px',padding:'7px 8px',border:'none',borderRadius:'5px',backgroundColor:selectedDirectory===''?'rgba(37,99,235,0.12)':'transparent',color:selectedDirectory===''?'#2563eb':'var(--dsw-alias-label-primary)',fontSize:'12px',fontWeight:selectedDirectory===''?600:400,textAlign:'left',cursor:'pointer'}},Icon.grid({size:14,color:'#3b82f6'}),'全部音乐',h('span',{style:{marginLeft:'auto',fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},String(items.length))),
+            h('div',{role:'tree','aria-label':'音乐文件夹',style:{flex:1,minHeight:0,overflowY:'auto',paddingBottom:'8px'}},
+              musicDirectoryTree.map(node=>renderMusicDirectory(node)),
+              !musicDirectoryTree.length&&h('div',{style:{padding:'12px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},items.length?'尚无可用来源目录信息':'导入音乐后将按源文件夹显示目录')
+            )
+          ),
+          h('main',{style:musicMiddleStyle,'aria-label':'音乐内容区'},
+            h('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--dsw-alias-border-l1)',backgroundColor:'var(--dsw-alias-bg-layer-1)',display:'flex',flexDirection:'column',gap:'8px',flexShrink:0}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:'7px',flexWrap:'wrap'}},
+                h('input',{type:'search','aria-label':'搜索音乐库',value:query,onChange:e=>setQuery(e.target.value),onKeyDown:e=>{if(e.key==='Enter')loadLibrary();},placeholder:'搜索标题、作者或文件名',style:{...fieldStyle,flex:1,minWidth:'160px'}}),
+                h('button',{type:'button',style:secondary,disabled:loading,onClick:()=>loadLibrary()},'搜索')
+              ),
+              h('div',{style:{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'repeat(4,minmax(100px,1fr))',gap:'6px'}},
+                h('select',{'aria-label':'授权状态筛选',value:licenseFilter,onChange:e=>setLicenseFilter(e.target.value),style:fieldStyle},h('option',{value:'all'},'全部授权状态'),h('option',{value:'unknown'},'授权未知'),h('option',{value:'personal_confirmed'},'用户声明个人用途')),
+                h('select',{'aria-label':'音乐分析状态筛选',value:analysisFilter,onChange:e=>setAnalysisFilter(e.target.value),style:fieldStyle},h('option',{value:'all'},'全部分析状态'),h('option',{value:'not_analyzed'},'未分析'),h('option',{value:'ok'},'高置信度'),h('option',{value:'low_confidence'},'低置信度'),h('option',{value:'stale'},'源文件变更'),h('option',{value:'no_audio'},'无音轨'),h('option',{value:'error'},'分析失败')),
+                h('select',{'aria-label':'音乐风格筛选',value:styleFilter,onChange:e=>setStyleFilter(e.target.value),style:fieldStyle},h('option',{value:'all'},'全部风格'),styleOptions.map(tag=>h('option',{key:tag,value:tag},tag))),
+                h('div',{style:{display:'flex',gap:'5px',minWidth:0}},h('input',{type:'number','aria-label':'最低 BPM',min:1,max:400,value:bpmMin,onChange:e=>setBpmMin(e.target.value),placeholder:'最低 BPM',style:fieldStyle}),h('input',{type:'number','aria-label':'最高 BPM',min:1,max:400,value:bpmMax,onChange:e=>setBpmMax(e.target.value),placeholder:'最高 BPM',style:fieldStyle}))
+              ),
+              h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},
+                h('span',null,selectedDirectory?`目录：${selectedDirectory.replaceAll('/',' / ')}`:'全部来源目录'),
+                h('span',null,`${visibleItems.length} / ${directoryItems.length} 首`)
+              )
+            ),
+            h('div',{style:{flex:1,minHeight:0,overflowY:'auto',padding:isMobile?'8px':'12px',display:'grid',gridTemplateColumns:isMobile?'1fr':'repeat(auto-fill,minmax(210px,1fr))',alignContent:'start',gap:'12px'}},
+              loading&&h('div',{role:'status',style:{gridColumn:'1 / -1',padding:'10px',fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},'读取音乐目录…'),
+              ...visibleItems.map(item=>{
+                const summary=item.analysis_summary||{},active=selectedId===item.id,bpm=summary.bpm??summary.estimated_bpm,conf=summary.confidence;
+                const title=item.title||item.file_name;
+                return h('button',{key:item.id,type:'button','aria-label':`选择音乐 ${title}`,style:{padding:0,borderRadius:'7px',border:active?'1px solid var(--dsw-alias-border-l2)':'1px solid var(--dsw-alias-border-l1)',backgroundColor:active?'var(--dsw-alias-bg-layer-2)':'var(--dsw-alias-bg-layer-1)',color:'var(--dsw-alias-label-primary)',cursor:'pointer',textAlign:'left',overflow:'hidden',display:'flex',flexDirection:'column',minWidth:0},onClick:()=>{setSelectedId(item.id);if(isMobile)setMobileTab?.('detail');}},
+                  h('div',{style:{position:'relative',width:'100%',aspectRatio:'16 / 9',overflow:'hidden',backgroundColor:'var(--dsw-alias-bg-layer-2)',display:'flex',alignItems:'center',justifyContent:'center'}},
+                    h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--dsw-alias-label-secondary)'}},Icon.music({size:28})),
+                    h('img',{src:`/api/video-manager/editing/music/${encodeURIComponent(item.id)}/spectrogram`,alt:`${title} 的频谱图`,loading:'lazy',decoding:'async',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:e=>{e.currentTarget.style.display='none';}})
+                  ),
+                  h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',padding:'9px 10px 10px',minWidth:0}},
+                    h('strong',{style:{fontSize:'12px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
+                    h('span',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},`${item.artist||item.source_name||'作者未提供'} · ${item.duration!=null&&Number.isFinite(Number(item.duration))?Number(item.duration).toFixed(1)+' 秒':'时长未知'}`),
+                    h('span',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)',overflowWrap:'anywhere'}},`BPM ${bpm??'未测'} · 置信度 ${conf!=null&&Number.isFinite(Number(conf))?Math.round(Number(conf)*100)+'%':'未提供'} · ${item.license_status==='personal_confirmed'?'用户声明个人用途':'授权未知'}`)
+                  )
+                );
+              }),
+              !loading&&visibleItems.length===0&&h('div',{style:{gridColumn:'1 / -1',padding:'24px 12px',textAlign:'center',fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},'没有符合筛选条件的音乐')
+            ),
+          ),
+          h('aside',{style:{...musicRightStyle,borderLeft:'1px solid var(--dsw-alias-border-l1)',padding:'10px',gap:'9px'},'aria-label':'音乐详情'},
+              !selected&&h('div',{style:{padding:'24px 8px',textAlign:'center',fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},'从左侧选择音乐以查看播放、测量和风格记录。'),
+              selected&&h(React.Fragment,null,
+                h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'8px'}},
+                  h('div',{style:{minWidth:0}},h('h3',{style:{margin:'0 0 4px',fontSize:'15px',overflowWrap:'anywhere'}},selected.title||selected.file_name),h('div',{style:{fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},`${selected.artist||selected.source_name||'作者未提供'} · ${selected.duration?Number(selected.duration).toFixed(1)+' 秒':'时长未知'}`)),
+                  h('button',{type:'button',style:secondary,disabled:!!busy,onClick:removeMusic},'从音乐库移除')
+                ),
+                sourceCurrent&&h('audio',{controls:true,preload:'metadata','aria-label':`试听 ${selected.title||selected.file_name}`,src:`/api/video-manager/editing/music/${encodeURIComponent(selected.id)}/stream`,style:{width:'100%',position:'sticky',top:0,zIndex:8,backgroundColor:'var(--dsw-alias-bg-layer-1)',padding:'4px 0'}}),
+                 !sourceCurrent&&h('div',{role:'alert',style:{fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},'源文件缺失或身份已变化；请从本地音乐重新导入后再试听和分析。'),
+                h('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap',fontSize:'12px'}},
+                  h('span',null,`来源状态：${sourceCurrent?'当前文件与导入时匹配':'缺失/已变化'} · 许可状态：${activeRights?'用户已声明个人用途（未独立核验）':'未知'}`),
+                  !activeRights&&h('button',{type:'button',style:secondary,disabled:!!busy||!sourceCurrent,onClick:confirmPersonal},'确认个人使用权限')
+                ),
+                h('details',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'5px',padding:'7px 8px'}},
+                  h('summary',{style:{cursor:'pointer',fontWeight:600,color:'var(--dsw-alias-label-primary)'}},'分析逻辑与拍点确认'),
+                  h('div',{style:{marginTop:'6px',lineHeight:'1.55'}},'本地测量由 FFmpeg 读取所选源音频窗口并转为单声道 PCM；内部瞬态检测只用于推导速度与拍点候选，原始瞬态列表不再展示或提供给 Agent。确认方式：先试听，再展开“选择拍点候选”并勾选听审认可的时间点，最后点击“确认所选拍点”；只有明确确认的点才会记录为人工拍点。可选的大模型功能会把本窗口生成的对数频率频谱图作为 DSH 图片附件发送给设置中的图像模型，给出节奏质感、能量走势和场景建议；频谱图模型会给出粗略速度假设、相对时间节奏提示、场景与风格标签；它们是视觉推断，不是精确拍点或DSP测量，需试听确认并可手动编辑。')
+                ),
+                h('div',{style:{display:'grid',gridTemplateColumns:isMobile?'1fr 1fr':'110px 130px auto',gap:'7px',alignItems:'end'}},
+                  h('label',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'分析起点（秒）',h('input',{type:'number','aria-label':'音乐分析起点',min:0,value:startSeconds,onChange:e=>setStartSeconds(e.target.value),style:fieldStyle})),
+                  h('label',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'窗口长度（默认整首，最多10分钟）',h('input',{type:'number','aria-label':'音乐分析窗口长度',min:0.1,max:MAX_MUSIC_ANALYSIS_SECONDS,value:durationSeconds,onChange:e=>setDurationSeconds(e.target.value),style:fieldStyle})),
+                  h('button',{type:'button',style:primary,disabled:!!busy||!sourceCurrent,onClick:analyze},'分析所选窗口')
+                ),
+                h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',marginTop:'6px'}},
+                  h('button',{type:'button',style:modelWindowMatches?secondary:{...secondary,opacity:0.58,cursor:'not-allowed'},disabled:!!busy||!analysisId||!modelWindowMatches||!sourceCurrent,onClick:interpretMusic,'aria-label':'使用大模型解读频谱图',title:'只将生成的频谱图作为 DSH 图片附件发送给已配置图像模型，不发送原始音频'},Icon.sparkles({size:13}),profile?.model_interpretation?'重新生成频谱解读':'大模型频谱解读'),
+                  h('span',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},modelWindowMatches?'只发送派生频谱图；模型结果是主观场景建议。':profile?'输入窗口与已测窗口不同；请先重新运行本地分析。':'先运行本地分析，再可使用频谱图模型解读。')
+                ),
+                selected&&Number(selected.duration)>MAX_MUSIC_ANALYSIS_SECONDS&&h('div',{role:'status',style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)',marginTop:'4px'}},'音频长于10分钟上限；当前默认使用前10分钟，可修改起点分段分析。'),
+                profile&&h('div',{style:{borderTop:'1px solid var(--dsw-alias-border-l1)',paddingTop:'8px',minWidth:0}},
+                  h('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',fontSize:'12px'}},
+                    h('strong',null,`分析状态：${statusLabel}`),
+                    h('span',null,`BPM 估计：${profile.bpm??profile.estimated_bpm??'未检测到'}`),
+                    h('span',null,`置信度：${confidenceLabel}`),
+
+                  ),
+                  tempoAlternatives.length>0&&h('div',{style:{marginTop:'5px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},`速度候选：${tempoAlternatives.slice(0,6).map(item=>typeof item==='number'?item:`${item.bpm??item.value??'?'} BPM`).join(' · ')}`),
+                  Object.keys(featureSummary).length>0&&h('div',{style:{marginTop:'6px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},`音频信号特征（非风格判断）：平均 RMS ${featureSummary.mean_rms??'—'} · 动态范围 ${featureSummary.dynamic_range_db??'—'} dB`),
+                                    profile.model_interpretation&&h('div',{style:{marginTop:'8px',padding:'9px',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'6px',backgroundColor:'var(--dsw-alias-bg-layer-1)'}},
+                    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'8px'}},
+                      h('strong',{style:{fontSize:'12px'}},'频谱图模型解读（主观推测）'),
+                      h('button',{type:'button',style:secondary,disabled:!!busy,onClick:()=>modelInterpretationDraft?setModelInterpretationDraft(null):beginModelInterpretationEdit(),'aria-label':modelInterpretationDraft?'取消编辑频谱解读':'编辑频谱解读与风格标签'},Icon.edit({size:12}),modelInterpretationDraft?'取消':'编辑')
+                    ),
+                    profile.model_interpretation_provenance&&h('div',{style:{fontSize:'10px',marginTop:'3px',color:'var(--dsw-alias-label-secondary)'}},`模型 ${profile.model_interpretation_provenance.model||'未知'} · ${profile.model_interpretation_provenance.analyzed_at||''}${profile.model_interpretation_edits_provenance?' · 用户已编辑':''}`),
+                    modelInterpretationDraft?h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'7px'}},
+                      h('label',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},'解读摘要',h('textarea',{'aria-label':'编辑模型解读摘要',value:modelInterpretationDraft.summary,onChange:e=>setModelInterpretationDraft(d=>({...d,summary:e.target.value})),style:{...fieldStyle,minHeight:'55px',resize:'vertical'}})),
+                      h('label',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},'节奏质感',h('input',{'aria-label':'编辑模型节奏质感',value:modelInterpretationDraft.rhythm_character,onChange:e=>setModelInterpretationDraft(d=>({...d,rhythm_character:e.target.value})),style:fieldStyle})),
+                      h('label',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},'能量走势',h('input',{'aria-label':'编辑模型能量走势',value:modelInterpretationDraft.energy_arc,onChange:e=>setModelInterpretationDraft(d=>({...d,energy_arc:e.target.value})),style:fieldStyle})),
+                      h('label',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},'风格标签（逗号或换行分隔）',h('textarea',{'aria-label':'编辑模型风格标签',value:modelInterpretationDraft.style_tags,onChange:e=>setModelInterpretationDraft(d=>({...d,style_tags:e.target.value})),style:{...fieldStyle,minHeight:'48px',resize:'vertical'}})),
+                      h('div',{style:{display:'flex',justifyContent:'flex-end',gap:'6px'}},h('button',{type:'button',style:secondary,disabled:!!busy,onClick:()=>setModelInterpretationDraft(null)},'取消'),h('button',{type:'button',style:primary,disabled:!!busy,onClick:saveModelInterpretationEdit},'保存编辑'))
+                    ):h(React.Fragment,null,
+                      h('div',{style:{fontSize:'11px',marginTop:'6px',lineHeight:'1.5'}},modelInterpretationView?.summary),
+                      h('div',{style:{fontSize:'11px',marginTop:'5px',color:'var(--dsw-alias-label-secondary)'}},`节奏质感：${modelInterpretationView?.rhythm_character||'—'} · 能量走势：${modelInterpretationView?.energy_arc||'—'}`),
+                      (profile.model_interpretation.tempo_hypotheses||[]).length>0&&h('div',{style:{fontSize:'11px',marginTop:'5px'}},'模型速度推测（非DSP测量）： ',profile.model_interpretation.tempo_hypotheses.map(item=>`${item.bpm} BPM · ${item.confidence}`).join('；')),
+                      h('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginTop:'6px'}},(modelInterpretationView?.style_tags||[]).length?(modelInterpretationView.style_tags.map((tag,index)=>h('span',{key:`model-tag-${index}`,style:{fontSize:'10px',padding:'2px 6px',borderRadius:'10px',border:'1px solid var(--dsw-alias-border-l1)',color:'var(--dsw-alias-label-primary)'}},tag))):h('span',{style:{fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},'暂无模型风格标签')),
+                      h('div',{style:{display:'flex',flexDirection:'column',gap:'5px',marginTop:'6px'}},(modelInterpretationView?.scene_suggestions||[]).map((item,index)=>h('div',{key:`scene-${index}`,style:{fontSize:'11px'}},h('strong',null,`${item.scene}（${item.fit||'medium'}）`),`：${item.reason}`))),
+                      modelBeatHints.length>0&&h('details',{style:{marginTop:'7px'}},h('summary',{style:{fontSize:'10px',cursor:'pointer',color:'var(--dsw-alias-label-secondary)'}},`模型节奏点推测 (${modelBeatHints.length}) · 近似视觉估计，试听确认后才记录`),
+                        h('div',{style:{display:'flex',flexDirection:'column',gap:'5px',marginTop:'6px'}},modelBeatHints.map((hint,index)=>{
+                          const time=Number(hint.source_seconds),confirmed=confirmedModelBeatTimes.some(value=>Math.abs(value-time)<=0.1),key=String(hint.source_seconds);
+                          return h('label',{key:`model-beat-${index}`,style:{display:'flex',alignItems:'flex-start',gap:'6px',fontSize:'10px',color:'var(--dsw-alias-label-primary)'}},
+                            h('input',{type:'checkbox','aria-label':`选择模型节奏提示约 ${time.toFixed(1)} 秒`,checked:confirmed||selectedModelBeatSuggestions.has(key),disabled:!!busy||confirmed,onChange:e=>setSelectedModelBeatSuggestions(current=>{const next=new Set(current);if(e.target.checked)next.add(key);else next.delete(key);return next;})}),
+                            h('span',null,`约 ${time.toFixed(1)} 秒 · ${hint.confidence||'low'} 置信度${confirmed?' · 用户已试听确认':''} · ${hint.reason||'模型视觉估计'}`)
+                          );
+                        })),
+                        selectedModelBeatSuggestions.size>0&&h('button',{type:'button',style:secondary,disabled:!!busy,onClick:confirmModelBeatHints},`确认所选模型节奏提示 (${selectedModelBeatSuggestions.size})`)
+                      ),
+                      (profile.model_interpretation.uncertainties||[]).length>0&&h('div',{style:{marginTop:'6px',fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},`不确定性：${profile.model_interpretation.uncertainties.join('；')}`)
+                    )
+                  ),windowDuration>0&&h(React.Fragment,null,
+                    h('div',{style:{display:'flex',gap:'12px',flexWrap:'wrap',fontSize:'10px',color:'var(--dsw-alias-label-secondary)',marginTop:'8px'}},
+                      h('span',null,`拍点候选 (${beatCandidates.length})`),h('span',{style:{color:'#2563eb'}},`用户确认拍点 (${confirmedBeats.length})`)
+                    ),
+                    h('div',{style:trackStyles,'aria-label':'候选拍点与用户确认拍点时间轴'},markers(beatCandidates,'candidate'),markers(confirmedBeats,'confirmed'),beatCandidates.length===0&&h('span',{style:{position:'absolute',inset:0,display:'grid',placeItems:'center',textAlign:'center',fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},'此窗口没有本地拍点候选；可参考模型近似节奏提示'))
+                  ),
+
+                  h('details',{style:{marginTop:'8px'}},h('summary',{style:{fontSize:'11px',cursor:'pointer',color:'var(--dsw-alias-label-secondary)'}},`选择拍点候选 (${beatCandidates.length}) · 试听核对后勾选`,),timeRows('拍点候选（不等于已确认拍点）',beatCandidates,true,512)),
+                  timeRows('用户确认拍点',confirmedBeats,false),
+                  h('div',{style:{marginTop:'8px',padding:'8px',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'5px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},
+                    h('div',null,beatConfirmationGuidance),
+                    h('button',{type:'button',style:confirmBeatsDisabled?{...secondary,opacity:0.6,cursor:'not-allowed'}:primary,disabled:confirmBeatsDisabled,onClick:confirmBeats,'aria-label':'确认所选候选拍点'},canConfirmBeats?`确认所选拍点 (${selectedBeatTimes.length})`:'暂无拍点候选')
+                  ),
+                  h('div',{style:{marginTop:'10px',borderTop:'1px solid var(--dsw-alias-border-l1)',paddingTop:'8px'}},
+                    h('strong',{style:{fontSize:'12px'}},'风格标签'),
+                    h('div',{style:{fontSize:'11px',marginTop:'5px',color:'var(--dsw-alias-label-secondary)'}},'DSH Agent 建议（仅记录，不在插件内生成）'),
+                    h('div',{style:{display:'flex',flexDirection:'column',gap:'5px',marginTop:'4px'}},suggestedStyles.length?suggestedStyles.map((tag,index)=>renderStyleTag(tag,index,'suggested')):h('span',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'暂无 DSH Agent 风格建议')),
+                    h('div',{style:{fontSize:'11px',marginTop:'8px',color:'var(--dsw-alias-label-secondary)'}},'用户确认的 Agent 风格建议'),
+                     styleRationale&&h('div',{style:{fontSize:'11px',marginTop:'4px',color:'var(--dsw-alias-label-secondary)',whiteSpace:'pre-wrap'}},styleRationale),
+                    h('div',{style:{display:'flex',flexDirection:'column',gap:'5px',marginTop:'4px'}},confirmedStyles.length?confirmedStyles.map((tag,index)=>renderStyleTag(tag,index,'confirmed')):h('span',{style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'暂无用户确认标签')),
+                    unclassifiedStyles.length>0&&h('div',{style:{marginTop:'8px',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},`有 ${unclassifiedStyles.length} 个风格标签未标注来源；未视为 Agent 建议或用户确认。`)
+                  ),
+                  profile.provenance&&h('details',{style:{marginTop:'8px'}},h('summary',{style:{fontSize:'11px',cursor:'pointer'}},'测量来源'),h('pre',{style:{...listPre,maxHeight:'100px',overflow:'auto'}},JSON.stringify(profile.provenance,null,2)))
+                )
+              )
+            )
+          ]}),
+          importDialog
       );
     }
 
@@ -564,10 +1122,10 @@ window.__ModuleLoader__.load({
       // UI state
       const [activeTab, setActiveTab] = useState('shots'); // 'shots' | 'audio' | 'meta'
       const [showSettingsModal, setShowSettingsModal] = useState(false);
+      const [activeLibrary,setActiveLibrary]=useState('video');
       const [showScanModal, setShowScanModal] = useState(false);
       const [showNewFolderModal, setShowNewFolderModal] = useState(false);
       const [showExportModal, setShowExportModal] = useState(false);
-      const [showEditingWorkbench, setShowEditingWorkbench] = useState(false);
 
       // Folder Action Popup state
       const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
@@ -1632,18 +2190,6 @@ window.__ModuleLoader__.load({
         overflow: 'hidden'
       };
 
-      const topbarStyle = {
-        minHeight: '48px',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 12px',
-        backgroundColor: 'var(--dsw-alias-bg-layer-1)',
-        flexWrap: 'wrap',
-        gap: '6px'
-      };
-
       const bodyStyle = {
         display: 'flex',
         flex: 1,
@@ -1902,78 +2448,32 @@ window.__ModuleLoader__.load({
       };
 
       return h('div', { ref: workbenchRef, style: workbenchStyle },
-        // Topbar
-        h('div', { style: topbarStyle },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-            Icon.clapperboard({ size: 18, color: '#3b82f6' }),
-            h('span', { style: { fontSize: '14px', fontWeight: 600 } }, '视频素材与分镜资产库'),
-            status && status.binaries && h('span', {
-              style: {
-                fontSize: '10px',
-                padding: '2px 6px',
-                borderRadius: '4px',
-                backgroundColor: 'var(--dsw-alias-bg-layer-2)',
-                color: status.binaries.available ? '#22c55e' : '#eab308',
-                border: `1px solid ${status.binaries.available ? '#22c55e' : '#eab308'}`
-              }
-            }, status.binaries.available ? 'FFmpeg 就绪' : 'FFmpeg 未配置')
-          ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
-            h('button', {
-              type: 'button', style: buttonSecondaryStyle,
-              onClick: () => setShowEditingWorkbench(true)
-            }, Icon.scissors({ size: 13 }), '剪辑项目'),
-            h('button', {
-              style: buttonSecondaryStyle,
-              onClick: () => { loadAiSettings(); loadShotAnalysisSettings(); setShowSettingsModal(true); }
-            }, Icon.settings({ size: 13 }), '设置'),
-            h('button', {
-              style: buttonPrimaryStyle,
-              onClick: () => setShowExportModal(true)
-            }, Icon.scissors({ size: 13 }), isMobile ? '导出' : '导出剪辑工程')
-          )
-        ),
+        renderMediaLibraryHeader({
+          active: activeLibrary,
+          onSelect: tab => { setActiveLibrary(tab); setShowSettingsModal(false); setShowExportModal(false); setShowScanModal(false); setShowBatchMoveModal(false); setShowNewFolderModal(false); setRenamingFolder(null); },
+          isMobile, status,
+          onSettings: () => { loadAiSettings(); loadShotAnalysisSettings(); setShowSettingsModal(true); },
+          buttonStyle: buttonSecondaryStyle
+        }),
+        activeLibrary === 'music' && h(MusicLibraryWorkbench, {
+              isMobile, mobileTab, setMobileTab, isDraggingRef,
+              layout: { bodyStyle, leftColStyle, midColStyle, rightColStyle },
+              styles: { inputStyle, buttonPrimaryStyle, buttonSecondaryStyle, modalOverlayStyle, modalCardStyle },
+              onResizeStart: e => { isDraggingRef.current = true; document.body.style.userSelect = 'none'; e.preventDefault(); }
+            }),
+        h(React.Fragment, null,
+        activeLibrary === 'video' && renderLibrarySectionHeader({
+          icon: Icon.clapperboard, title: '视频素材库', description: `${videos.length} 条素材`,
+          actions: h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => setShowExportModal(true) }, Icon.scissors({ size: 13 }), isMobile ? '导出' : '导出剪辑工程')
+        }),
 
-        // Mobile View Navigation Switcher
-        isMobile && h('div', {
-          style: {
-            display: 'flex',
-            backgroundColor: 'var(--dsw-alias-bg-layer-1)',
-            borderBottom: '1px solid var(--dsw-alias-border-l1)',
-            padding: '4px 8px',
-            gap: '6px'
-          }
-        },
-          [
-            { id: 'folders', label: '分类目录', icon: Icon.folder({ size: 13 }) },
-            { id: 'videos', label: `素材列表 (${videos.length})`, icon: Icon.grid({ size: 13 }) },
-            { id: 'detail', label: '视频详情', icon: Icon.film({ size: 13 }) }
-          ].map(tab => {
-            const isActive = mobileTab === tab.id;
-            return h('button', {
-              key: tab.id,
-              onClick: () => setMobileTab(tab.id),
-              style: {
-                flex: 1,
-                padding: '7px 4px',
-                border: 'none',
-                borderRadius: '5px',
-                backgroundColor: isActive ? '#2563eb' : 'var(--dsw-alias-bg-layer-2)',
-                color: isActive ? '#ffffff' : 'var(--dsw-alias-label-primary)',
-                fontSize: '12px',
-                fontWeight: isActive ? 600 : 400,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '4px'
-              }
-            }, tab.icon, tab.label);
-          })
-        ),
+        activeLibrary === 'video' && renderMobilePanelNavigation({isMobile,active:mobileTab,onSelect:setMobileTab,labels:[
+          {id:'folders',label:'分类目录',icon:Icon.folder({size:13})},
+          {id:'videos',label:`素材列表 (${videos.length})`,icon:Icon.grid({size:13})},
+          {id:'detail',label:'视频详情',icon:Icon.film({size:13})}
+        ]}),
 
-        // Body
-        h('div', { style: bodyStyle },
+        activeLibrary === 'video' && renderLibraryColumnLayout({bodyStyle,isMobile,isDraggingRef,onResizeStart:e=>{isDraggingRef.current=true;document.body.style.userSelect='none';e.preventDefault();},columns:[
           // Left Column: Folders
           h('div', { style: leftColStyle },
             h('div', { style: { padding: '10px', display: 'flex', gap: '6px', flexShrink: 0 } },
@@ -2016,25 +2516,6 @@ window.__ModuleLoader__.load({
               folders.map(f => renderFolderNode(f))
             )
           ),
-
-          // Resizer Handle (Between Left and Middle Column on Desktop)
-          !isMobile && h('div', {
-            style: {
-              width: '5px',
-              backgroundColor: 'transparent',
-              cursor: 'col-resize',
-              transition: 'background-color 0.15s ease',
-              flexShrink: 0,
-              zIndex: 10
-            },
-            onMouseEnter: (e) => e.currentTarget.style.backgroundColor = '#2563eb',
-            onMouseLeave: (e) => { if (!isDraggingRef.current) e.currentTarget.style.backgroundColor = 'transparent'; },
-            onMouseDown: (e) => {
-              isDraggingRef.current = true;
-              document.body.style.userSelect = 'none';
-              e.preventDefault();
-            }
-          }),
 
           // Middle Column: Video Grid with Batch Operations & Audit Tags
           h('div', { style: midColStyle },
@@ -3179,14 +3660,8 @@ window.__ModuleLoader__.load({
                   }
                 }, '请在素材列表中选择一个视频')
           )
-        ),
+          ]}),
 
-        // --- Modals ---
-        showEditingWorkbench && h(EditingWorkbench, {
-          isMobile,
-          onClose: () => setShowEditingWorkbench(false),
-          styles: { overlay: modalOverlayStyle, modal: modalCardStyle, input: inputStyle, primary: buttonPrimaryStyle, secondary: buttonSecondaryStyle }
-        }),
 
         // 1. Rename Folder Modal
         renamingFolder && h('div', { style: modalOverlayStyle },
@@ -3268,25 +3743,15 @@ window.__ModuleLoader__.load({
         ),
 
         // 3. Upgraded Import Modal with Parent Folder Display & Loading Feedback
-        showScanModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: modalCardStyle },
+        showScanModal && renderAssetImportDialog({
+          isMobile, overlayStyle: modalOverlayStyle, cardStyle: modalCardStyle, ariaLabel: '导入视频素材',
+          children: h(React.Fragment, null,
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
                 Icon.upload({ size: 18, color: '#3b82f6' }),
                 h('h3', { style: { margin: 0, fontSize: '15px', fontWeight: 600 } }, '导入视频素材')
               ),
-              h('div', { style: { display: 'flex', gap: '6px' } },
-                h('button', {
-                  style: importTab === 'browse' ? buttonPrimaryStyle : buttonSecondaryStyle,
-                  disabled: isImporting,
-                  onClick: () => setImportTab('browse')
-                }, Icon.compass({ size: 13 }), '图形化选择'),
-                h('button', {
-                  style: importTab === 'manual' ? buttonPrimaryStyle : buttonSecondaryStyle,
-                  disabled: isImporting,
-                  onClick: () => setImportTab('manual')
-                }, Icon.edit({ size: 13 }), '手动填路径')
-              )
+              renderImportMethodTabs({active:importTab,onSelect:setImportTab,disabled:isImporting,secondaryStyle:buttonSecondaryStyle,primaryStyle:buttonPrimaryStyle})
             ),
 
             // Target Parent Folder Indicator (Fixes issue #2)
@@ -3554,7 +4019,7 @@ window.__ModuleLoader__.load({
               )
             )
           )
-        ),
+        }),
 
         // 4. Settings Modal with AI Config & Prompt Template
         showSettingsModal && h('div', { style: modalOverlayStyle },
@@ -3597,7 +4062,7 @@ window.__ModuleLoader__.load({
               h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
                 h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '2. AI 视觉大模型配置'),
                 h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
-                  'DSH 模式使用所选服务商及模型的配置；自定义模式使用单独填写的兼容端点。模型未声明图片能力时，请自行确认支持图片。'
+                  '视频分析与音乐频谱解读共用当前 DSH 图像模型配置；自定义模式使用单独填写的兼容端点。模型未声明图片能力时，请自行确认支持图片。'
                 ),
                 aiMode === 'dsh' && h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadAiCatalog }, '刷新 DSH 模型列表'),
                 aiCatalogWarning && h('div', { role: 'alert', style: { color: 'var(--dsw-alias-label-primary)', fontSize: '11px' } }, aiCatalogWarning),
@@ -3794,7 +4259,8 @@ window.__ModuleLoader__.load({
               }, Icon.scissors({ size: 13 }), '立即导出')
             )
           )
-        )
+        ),
+          )
       );
     }
 
@@ -3803,7 +4269,7 @@ window.__ModuleLoader__.load({
       const size = props?.size || 20;
       const active = !!props?.active;
       const color = active ? 'var(--dsw-static-deepseek-500, #3b82f6)' : 'currentColor';
-      return Icon.clapperboard({ size, color });
+      return Icon.hardDrive({ size, color });
     }
 
     return {
@@ -3815,7 +4281,7 @@ window.__ModuleLoader__.load({
             name: 'sidebar.panellist',
             id: 'video-manager',
             order: 35,
-            label: () => '视频资产库'
+            label: () => '媒体资源库'
           }, PanelIcon);
         });
 

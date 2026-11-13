@@ -1,4 +1,4 @@
-# DSH 视频素材与分镜资产管理器 (dsh-video-manager)
+# DSH 媒体资源库 (dsh-video-manager)
 ## 系统架构与深度设计规范文档
 
 ---
@@ -266,7 +266,29 @@ CREATE TABLE IF NOT EXISTS video_audio (
 );
 ```
 
-#### 5. 全文与语义检索虚表 (`video_shots_fts`)
+#### 5. 本地音乐资产与分析档案 (`local_music_catalog`, `music_analysis_profiles`)
+
+音乐目录只引用用户本地音频；分析档案按版本保存并绑定源文件属性指纹。指纹只用于发现常见替换，不是内容哈希。DSP 拍点候选和用户确认点分开保存；模型节奏提示及用户试听后确认的模型点另存于模型解读/编辑字段，不并入DSP确认点。瞬态检测只保留为本地算法内部中间量，旧版原始 onset 列表在迁移时清空且不再输出。
+
+```sql
+local_music_catalog(
+  id, file_path UNIQUE, file_size, title, artist, duration, codec, sample_rate, channels,
+  source_identity_json, license_status, license_note, license_identity_json
+)
+music_analysis_profiles(
+  analysis_id, music_id, source_identity_json, analysis_version, method,
+  window_start_seconds, window_duration_seconds, status, bpm, confidence,
+  tempo_candidates_json, transient_onsets_json, beat_candidates_json,
+  user_confirmed_beats_json, feature_summary_json,
+  style_suggestions_json, style_rationale, style_provenance, style_confirmed_at,
+  model_interpretation_json, model_provider, model_name, model_reasoning_effort, model_interpreted_at,
+  model_interpretation_edits_json, model_interpretation_edited_at, created_at
+)
+```
+
+`beat_candidates` 只来自本地 DSP 瞬态分析，不能保证是真正拍点；`user_confirmed_beats` 仅在用户试听后逐项确认时写入。可选的 `model_interpretation_json` 保存模型对对数频率频谱图的速度假设、按相对横轴位置映射的近似节奏提示、主观情绪/场景建议、风格标签与不确定性，并记录 provider/model。模型提示不是精确 BPM/拍点或DSP证据。`model_interpretation_edits_json` 单独保存用户编辑的解读/标签及用户试听确认的模型提示；`user_confirmed_model_beats` 与 `user_confirmed_beats` 保持不同来源。
+
+#### 6. 全文与语义检索虚表 (`video_shots_fts`)
 使用 SQLite FTS5 引擎维护分镜文本的全文倒排索引：
 ```sql
 CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
@@ -339,7 +361,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 - **气口静音停顿检测**：
   执行 `silencedetect=noise=-30dB:d=0.5`，解析 stderr 输出中的 `silence_start` 与 `silence_end`，输出停顿区间数组，为解说类视频自动气口切除提供毫秒级坐标。
 - **历史全片音轨节奏状态**：旧版 `detectBpmAndBeats` 不执行真实节奏估计，其历史 `120 BPM` 和规则化节拍网格不能视为测量结果。当前该入口明确返回 unavailable/null，并在检测失败时保留已有人工数据。
-- **本地音乐工作台节奏估计**：独立模块将最多 180 秒音频解码为有界 PCM，做能量瞬态候选与自相关 BPM 估计；不生成假拍点。瞬态不一定是节拍/强拍，结果需试听校正。Jamendo 目前仅搜曲目元数据，不下载、不授予使用权。
+- **本地音乐工作台节奏估计**：独立模块将最多 600 秒音频解码为有界 PCM，做能量瞬态候选与自相关 BPM 估计；不生成假拍点。瞬态不一定是节拍/强拍，结果需试听校正。Jamendo 目前仅搜曲目元数据，不下载、不授予使用权。
 
 ### 5.3 工作台直驱 AI 多模态深度分析与审计闭环
 
@@ -394,7 +416,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 1. `video_manager_edit_preview_project` 接收 Agent 生成的 EditProject v1。插件不调用模型，只核验项目结构、素材库 ID、音乐库成员、范围/时长、剪辑轨、源文件可读性和授权状态；客户端路径不被接受或写入项目。
 2. 音乐通过本地引用目录试听和有界 PCM 测量；Jamendo 仅搜索元数据，不下载或核发许可。瞬态不等于节拍/强拍，插件会将节奏关系标注为未核验；自由文本也不能当作证据。
 3. 项目预览仅保存在服务器内存 30 分钟，不写入数据库；源文件以 realpath、dev/ino、size、mtime_ns 弱指纹及分镜字段快照检查（不是密码学内容哈希）。保存前会复核源及分镜是否变化。
-4. 用户在 DSH 会话明确确认后，Agent 调用保存工具；插件只接受服务端预览 ID 并将结构化项目写入 SQLite。随后可从插件的【剪辑项目】管理视图查看。
+4. 用户在 DSH 会话明确确认后，Agent 调用保存工具；插件只接受服务端预览 ID 并将结构化项目写入 SQLite。之后用 `video_manager_edit_projects` 在会话中查询项目。
 5. 项目保存目前不生成或打开剪映工程。现有实验性剪映导出仅有视频轨道，Windows 剪映 11.7.3 尚未验证兼容。
 
 ---
@@ -406,7 +428,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 ## 5.6 DSH 会话 Agent：资产发现到项目保存
 
 1. Agent 在 DSH 对话中理解需求，调用 `video_manager_search_videos` / `video_manager_search_shots` 找素材，用 `video_manager_get_video` 查看现有分镜与范围；必要时触发故事板或精读。
-2. Agent 调用音乐库 list/search/analyze 工具，根据用户反馈选择音乐。插件只提供本地音频 metadata、有限窗口 BPM 估算与瞬态候选，不直接请求另一个 AI 给出推荐。
+2. Agent 调用音乐库 list/analyze/detail 工具读取完整音轨（最多600秒）的BPM估计与DSP拍点候选；原始 onset 列表不保存、不返回。用户可在音乐库 UI 主动请求当前配置的图像模型解读派生频谱图；`video_manager_edit_music_analysis_detail` 返回近似速度/相对节奏提示、场景与风格标签、模型来源及用户编辑/确认。模型时间提示是粗略视觉估计，不能冒充DSP测量或精确节拍；用户确认模型点会与DSP `user_confirmed_beats` 分开。选曲和最终剪辑编排仍由 DSH 会话 Agent 负责。
 3. Agent 在会话中提出并迭代 EditProject v1；调用 `video_manager_edit_preview_project` 后向用户展示规范化项目及警告。插件只校验素材 ID、分镜边界、时长、轨道、文件属性和权利声明。
 4. 用户明确要求保存后，Agent 调用 `video_manager_edit_save_project`；保存项目可通过 `video_manager_edit_projects` 查看。保存记录仅是数据库项目，不等于已生成剪映草稿。
 

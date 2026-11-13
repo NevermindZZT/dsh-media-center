@@ -103,6 +103,65 @@ export class VideoAiAnalyzer {
     return info;
   }
 
+  async analyzeImagePrompt({ imagePath, promptText, maxTokens = 2048, temperature = 0.2 } = {}) {
+    const config=this.getAiSettings();
+    if(config.mode==='dsh')await this.validateDshRoute(config.provider,config.model,config.reasoning_effort);
+    else if(config.mode==='custom'){
+      if(!config.base_url||!config.model||!config.has_api_key)throw new Error('请在设置中完整配置自定义 API 地址、模型和 API Key');
+    }else throw new Error('无效的 AI 模型模式');
+    if(typeof promptText!=='string'||!promptText.trim()||promptText.length>16000)throw new Error('频谱分析提示词无效');
+    let imageBuffer;
+    try{imageBuffer=fs.readFileSync(imagePath);}catch{throw new Error('频谱图不可用');}
+    if(imageBuffer.length<8||imageBuffer.length>8*1024*1024||!imageBuffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw new Error('频谱图格式无效或过大');
+    const started=Date.now();let content='',promptTokens=0,completionTokens=0,totalTokens=0;
+    if(config.mode==='dsh'){
+      let image;
+      try{image=await this.attachments.saveImage({data:imageBuffer,mediaType:'image/png',name:'music-spectrogram.png'});}
+      catch{throw new Error('频谱图片附件服务不可用');}
+      let finish=null;
+      try{
+        for await(const chunk of this.llm.stream({
+          provider:config.provider,model:config.model,
+          messages:[{role:'user',content:[{type:'text',text:promptText},{type:'image',attachment:image}]}],
+          temperature,maxTokens,...(config.reasoning_effort?{reasoningEffort:config.reasoning_effort}:{})
+        })){
+          if(chunk.type==='text-delta')content+=chunk.text;
+          if(chunk.type==='usage'){
+            promptTokens=chunk.usage.inputTokens??0;completionTokens=chunk.usage.outputTokens??0;
+            totalTokens=chunk.usage.totalTokens??(promptTokens+completionTokens);
+          }
+          if(chunk.type==='finish')finish=chunk.reason;
+        }
+      }catch{throw new Error('DSH 模型请求失败，请检查所选服务商与模型');}
+      if(!finish||finish.kind!=='stop'){
+        const code=/^[A-Z][A-Z0-9_]{0,63}$/.test(finish?.failure?.code||'')?finish.failure.code:'';
+        const status=Number.isInteger(finish?.failure?.status)&&finish.failure.status>=100&&finish.failure.status<=599?finish.failure.status:null;
+        throw new Error(`DSH 模型请求未成功完成 (${finish?.kind||'无结束信号'}${code?`, ${code}`:''}${status?`, HTTP ${status}`:''})`);
+      }
+    }else{
+      const apiKey=this.db.getSetting('ai_api_key'),endpoint=`${config.base_url.replace(/\/+$/,'')}/chat/completions`;
+      let response;
+      try{
+        response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
+          body:JSON.stringify({model:config.model,messages:[{role:'user',content:[{type:'text',text:promptText},{type:'image_url',image_url:{url:`data:image/png;base64,${imageBuffer.toString('base64')}`}}]}],temperature,max_tokens:maxTokens})});
+      }catch{throw new Error('自定义 AI 服务请求失败，请检查连接');}
+      if(!response.ok)throw new Error(`自定义 AI 服务请求失败 (${response.status})`);
+      let data;try{data=await response.json();}catch{throw new Error('自定义 AI 服务返回了无效 JSON');}
+      if(data.choices?.[0]?.finish_reason&&data.choices[0].finish_reason!=='stop')throw new Error('自定义 AI 服务未完整返回频谱解读');
+      content=data.choices?.[0]?.message?.content||'';
+      const usage=data.usage||{};promptTokens=usage.prompt_tokens??0;completionTokens=usage.completion_tokens??0;totalTokens=usage.total_tokens??(promptTokens+completionTokens);
+    }
+    let interpretation;
+    try{
+      const clean=content.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/i,'').trim();
+      interpretation=JSON.parse(clean);
+    }catch{const match=content.match(/\{[\s\S]*\}/);if(match){try{interpretation=JSON.parse(match[0]);}catch{throw new Error('模型未返回标准频谱解读 JSON');}}else throw new Error('模型未返回标准频谱解读 JSON');}
+    if(!interpretation||typeof interpretation!=='object'||Array.isArray(interpretation))throw new Error('模型返回的频谱解读结构无效');
+    return {interpretation,audit:{provider:config.mode==='dsh'?config.provider:'custom',model:config.model,
+      reasoning_effort:config.mode==='dsh'?(config.reasoning_effort||null):null,prompt_tokens:promptTokens,
+      completion_tokens:completionTokens,total_tokens:totalTokens,latency_ms:Date.now()-started,analyzed_at:new Date().toISOString()}};
+  }
+
   async saveAiSettings(patch = {}) {
     const current = this.getAiSettings();
     const mode = patch.mode ?? current.mode;

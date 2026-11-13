@@ -110,7 +110,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
     }
     const stat = fs.statSync(filePath);
     res.writeHead(200, {
-      'Content-Type': 'image/jpeg',
+      'Content-Type': path.extname(filePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg',
       'Content-Length': stat.size,
       'Cache-Control': 'public, max-age=86400'
     });
@@ -160,8 +160,10 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         };
         try {
           if (pathname === `${base}/music` && method === 'GET') {
-            const result = editingWorkflow.catalog.list({ query:parsedUrl.searchParams.get('query') || '',
+            const result = editingWorkflow.listMusicCatalog({ query:parsedUrl.searchParams.get('query') || '',
               ...(parsedUrl.searchParams.has('license_status') ? {license_status:parsedUrl.searchParams.get('license_status')} : {}),
+              ...(parsedUrl.searchParams.has('analysis_status') ? {analysis_status:parsedUrl.searchParams.get('analysis_status')} : {}),
+              ...(parsedUrl.searchParams.has('style_tag') ? {style_tag:parsedUrl.searchParams.get('style_tag')} : {}),
               limit:integer(parsedUrl.searchParams.get('limit'),25,100), offset:integer(parsedUrl.searchParams.get('offset'),0,1000000) });
             return jsonResponse(res,{success:true,...result});
           }
@@ -174,15 +176,49 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
               license_note:body.license_note,license_confirmed:body.license_confirmed});
             return jsonResponse(res,{success:true,...result});
           }
+          const musicInterpretEditMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/interpret\/edits$/);
+          if(musicInterpretEditMatch&&method==='PUT'){
+            const body=await parseJsonBody(req);
+            if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户明确确认频谱解读编辑和模型节奏点'},400);
+            const profile=editingWorkflow.saveMusicInterpretationEdits(musicInterpretEditMatch[1],{analysisId:body.analysis_id,edits:body.edits});
+            return jsonResponse(res,{success:true,model_interpretation:profile.model_interpretation,model_interpretation_edits:profile.model_interpretation_edits,model_interpretation_edits_provenance:profile.model_interpretation_edits_provenance});
+          }
+          const musicInterpretMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/interpret$/);
+          if(musicInterpretMatch&&method==='POST'){
+            const body=await parseJsonBody(req);
+            const result=await editingWorkflow.interpretMusicSpectrogram(musicInterpretMatch[1],{analysisId:body.analysis_id});
+            return jsonResponse(res,{success:true,...result});
+          }
+          const musicAnalysisMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/analysis(?:\/(confirm-beats|styles))?$/);
+          if(musicAnalysisMatch&&method==='GET'&&!musicAnalysisMatch[2]){
+            const analysis=editingWorkflow.getMusicAnalysis(musicAnalysisMatch[1]);
+            return jsonResponse(res,{success:true,analysis:analysis||null});
+          }
+          if(musicAnalysisMatch&&method==='POST'&&musicAnalysisMatch[2]==='confirm-beats'){
+            const body=await parseJsonBody(req);
+            if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户试听后明确确认候选拍点'},400);
+            return jsonResponse(res,{success:true,analysis:editingWorkflow.confirmMusicBeats(musicAnalysisMatch[1],{analysisId:body.analysis_id,beats:body.beats,confirmed:true})});
+          }
+          if(musicAnalysisMatch&&method==='POST'&&musicAnalysisMatch[2]==='styles'){
+            const body=await parseJsonBody(req);
+            if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户明确确认 Agent 风格建议后保存'},400);
+            return jsonResponse(res,{success:true,analysis:editingWorkflow.saveMusicStyleSuggestions(musicAnalysisMatch[1],{analysisId:body.analysis_id,styleTags:body.style_tags,rationale:body.rationale,confirmed:true})});
+          }
+          const musicSpectrogramMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/spectrogram$/);
+          if(musicSpectrogramMatch&&method==='GET'){
+            try{return streamImageFile(res,await editingWorkflow.getMusicSpectrogramPath(musicSpectrogramMatch[1]));}
+            catch{return jsonResponse(res,{success:false,error:'无法生成或读取音乐频谱图'},404);}
+          }
           const musicStreamMatch = pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/stream$/);
           if (musicStreamMatch && method === 'GET') {
             const item=editingWorkflow.catalog.get(musicStreamMatch[1]);
             if (!item) return jsonResponse(res,{success:false,error:'音乐记录不存在'},404);
+            if(item.source_status!=='current')return jsonResponse(res,{success:false,error:'音乐源文件不可用或已变化'},409);
             return streamMusicFile(req,res,item.file_path);
           }
           const musicMatch = pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})(?:\/(confirm-personal|analyze))?$/);
           if (musicMatch && method === 'DELETE' && !musicMatch[2]) {
-            return jsonResponse(res,{success:true,removed:editingWorkflow.catalog.remove(musicMatch[1])});
+            return jsonResponse(res,{success:true,removed:editingWorkflow.removeMusic(musicMatch[1])});
           }
           if (musicMatch && method === 'POST' && musicMatch[2] === 'confirm-personal') {
             const body=await parseJsonBody(req);
@@ -232,12 +268,20 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
             '剪辑项目至少需要一个视频片段','所引用的视频素材不存在','所引用的素材库分镜不存在',
             '视频源区间超出已选择分镜范围','音乐记录不存在','音乐源文件不可用或已变化',
             '音乐时长与音乐库记录不一致','所选音乐尚未由用户声明可用于个人分享',
-            '当前仅有瞬态候选，不能将其作为已确认拍点写入项目','需由用户明确确认剪辑项目'
+            '当前仅有瞬态候选，不能将其作为已确认拍点写入项目','需由用户明确确认剪辑项目',
+            '音乐分析已过期或与当前音乐不匹配','须由用户试听后明确确认候选拍点','须由用户明确确认 Agent 风格建议后保存',
+            '音乐分析档案已过期','No beat candidates are available to confirm','Music analysis profile not found',
+            '须由用户明确确认频谱解读编辑和模型节奏点','频谱图大模型分析不可用','请先运行本地节奏分析','频谱分析提示词无效','模型未返回标准频谱解读 JSON','模型返回的频谱解读结构无效','频谱图不可用','频谱图格式无效或过大','音乐分析档案已过期或与当前音乐不匹配','音乐分析窗口长度无效','频谱图片附件服务不可用',
+            '请先分析当前音乐窗口；分析档案已过期或与当前音乐不匹配','音乐分析窗口长度无效','请先完成 AI 模型设置','请选择 DSH 服务商和模型',
+            '所选 DSH 服务商不可用','无法获取所选 DSH 服务商的模型列表','所选模型不在该 DSH 服务商的模型列表中',
+            '所选 DSH 模型不支持图片输入','无法获取所选 DSH 模型的推理能力，请刷新模型列表','请为所选 DSH 模型明确选择推理档位',
+            '所选推理档位不受当前 DSH 模型支持','所选 DSH 模型未声明推理档位，请清空推理档位'
           ]);
           const safeProjectPrefixes = ['剪辑项目无效：','视频源文件不可用：','视频源文件已变化：','音乐源文件不可用：','音乐源文件已变化：','当前项目限制为'];
+          const safeMusicPrefixes = ['无法生成音频频谱图','频谱图生成失败','DSH 模型请求未成功完成','自定义 AI 服务请求失败'];
           const message=String(error?.message||'');
-          const safe=safeMessages.has(message)||safeProjectPrefixes.some(prefix=>message.startsWith(prefix));
-          return jsonResponse(res,{success:false,error:safe?message:'剪辑项目操作失败，请检查项目引用和素材状态'},400);
+          const safe=safeMessages.has(message)||safeProjectPrefixes.some(prefix=>message.startsWith(prefix))||safeMusicPrefixes.some(prefix=>message.startsWith(prefix));
+          return jsonResponse(res,{success:false,error:safe?message:'音乐资产或剪辑项目操作失败，请检查输入、来源状态和授权'},400);
         }
       }
       // 1. Status & Binaries: GET /api/video-manager/status

@@ -18,7 +18,7 @@ export function apply(ctx, config) {
   const shotSearchService = new ShotSearchService(db);
   const videoAiAnalyzer = new VideoAiAnalyzer(db, mediaEngine, { llm: ctx.llm, attachments: ctx.attachments });
   const shotAnalysisService = new ShotAnalysisService(db, mediaEngine, videoAiAnalyzer);
-  const editingWorkflow = new EditingWorkflow(db, mediaEngine);
+  const editingWorkflow = new EditingWorkflow(db, mediaEngine, videoAiAnalyzer);
 
   ctx.effect(() => {
     // 1. Register Host Web API Route

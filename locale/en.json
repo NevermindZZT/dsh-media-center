@@ -1,10 +1,10 @@
 {
   "meta": {
-    "title": "Video & Storyboard Manager",
-    "description": "Video asset and storyboard management tailored for AI video editing workflows, featuring multi-level folders, shot parsing, audio cues, contact sheet storyboards, and NLE timeline exports."
+    "title": "Media asset library",
+    "description": "Organize local video, music, and other media assets with hierarchical folders, video-shot analysis, audio measurement, and editing-project export."
   },
   "panel": {
-    "title": "Video Assets",
+    "title": "Media library",
     "folders": "Folders",
     "videos": "Videos",
     "shots": "Shots",

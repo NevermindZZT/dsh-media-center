@@ -1,4 +1,4 @@
-# DSH 视频素材与分镜资产管理器 (dsh-video-manager)
+# DSH 媒体资源库 (dsh-video-manager)
 
 [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](package.json)
 [![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-0066FF.svg)](https://github.com/deepseek-ai)
@@ -6,9 +6,9 @@
 [![Database](https://img.shields.io/badge/database-node%3Asqlite-orange.svg)](https://nodejs.org/api/sqlite.html)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
 
-专为 **AI 视频剪辑、自动化卡点混剪、影视解说创作** 工作流打造的 DeepSeek Harness 官方风格插件。
+专为 **DSH 媒体工作流** 打造的本地媒体资源管理插件，覆盖视频、音乐及后续可扩展的其他媒体资产。
 
-建立 **“物理视频资产 ➔ 结构化特征库 ➔ 人机协同标注 ➔ AI 自动化剪辑决策”** 的核心枢纽，解决大模型在视频剪辑场景中“吞不下大体积长视频、缺乏时间轴元数据、难以直接输出可剪辑工程”的痛点。
+建立 **“本地媒体资产 ➔ 结构化特征库 ➔ 人机协同标注 ➔ DSH 会话 Agent 工作流”** 的核心枢纽，当前覆盖视频组织与分镜信息、音乐引用及只读音频测量，并可扩展至其他媒体资产。
 
 ---
 
@@ -33,8 +33,8 @@
   不再需要手动打字输入路径！内置磁盘盘符（`C:\`, `D:\`）、项目工作区、常用目录快捷直达；支持可视化展开目录层级，支持单选/多选视频文件直接导入。
 - 🖼️ **4x4 故事板大图 (Contact Sheet) 自动生成**：
   视频导入或分析时自动通过 FFmpeg 抽取 16 个代表性关键画面拼合成单张轻量雪碧图。AI Agent **仅需“看”一张图片** 即可纵览全片镜头节奏与视觉走向，**节约 90% 以上视觉 Token 开销**。
-- **音频静音与音乐节奏**：
-  视频底层分析可检测静音区间；历史 BPM/节拍来源未确认，不能直接作为实测数据。素材分析和音乐测量只提供有限证据；瞬态不一定是节拍或强拍，均需复核。
+- **本地音乐库与音乐分析**：
+  统一标题栏中央的媒体库页签切换到全屏【音乐库】页面；本地音频通过与视频导入共用弹窗框架的流程加入只读引用目录，图形浏览支持一次最多 50 个文件的多选导入，音频列表以卡片显示只读生成并缓存的频谱图缩略图，可试听并登记许可声明。PCM 本地测量默认使用整首音频（最长600秒），产生 BPM 估计和DSP拍点候选；瞬态检测只作内部计算，不再保存/返回原始 onset 列表。候选点需试听确认。按需可将对数频率频谱图作为 DSH 图片附件交给已配置图像模型（不上传原始音频），输出带不确定性的速度/相对节奏点推测、场景和风格标签；这些是模型视觉估计，不是实测 BPM/拍点。用户可手动编辑解读/标签，并单独试听确认模型节奏提示；不会覆盖DSP确认点。
 - 📝 **全流程结构化人机协同编辑**：
   保持专业生产力软件克制美感，**默认呈现舒适的正常阅读浏览模式**。点击【✏️ 编辑】即可就地调整分镜秒数、景别（大远景至大特写）、运镜（推拉摇移跟俯冲）、画面描述、语音字幕与标签，并支持一键保存。
 - **单片段 AI 精读**：
@@ -54,7 +54,7 @@
 
 ---
 
-## 面向 AI Agent 的专属工具集（25 个）
+## 面向 AI Agent 的专属工具集（28 个）
 
 插件安装后，系统运行时会自动向 AI Agent 暴露以下标准化工具：
 
@@ -80,7 +80,11 @@
 | `video_manager_edit_music_import` | 将用户指定音频加入音乐资产目录（只引用，不复制） | `{ file_path, title?, artist?, source_name? }` |
 | `video_manager_edit_music_remove` | 移除音乐目录记录，不删除磁盘文件 | `{ music_id }` |
 | `video_manager_edit_music_confirm_personal` | 用户明确确认后记录个人分享声明 | `{ music_id, confirmed: true, license_note? }` |
-| `video_manager_edit_music_analyze` | 只读测量音乐 BPM 估计与瞬态候选；不声称已试听或精确卡点 | `{ music_id, start_seconds?, duration_seconds? }` |
+| `video_manager_edit_music_analyze` | DSP 测量 BPM 估计与拍点候选；未指定窗口时默认整首（最多10分钟），不返回原始瞬态列表 | `{ music_id, start_seconds?, duration_seconds? }` |
+| `video_manager_edit_music_analysis_detail` | 读取版本化DSP档案及模型速度/近似节奏提示、场景/风格标签和用户编辑/确认 | `{ music_id, limit? }` |
+| `video_manager_edit_music_spectrogram_interpret` | 仅在用户明确要求时，调用已配置图像模型解读所选窗口的派生频谱图；不发送原始音频 | `{ music_id, analysis_id, confirmed:true }` |
+| `video_manager_edit_music_confirm_beats` | 用户试听并明确确认后，保存候选拍点子集 | `{ music_id, analysis_id, beats[], confirmed:true }` |
+| `video_manager_edit_music_set_styles` | 用户明确批准后保存 DSH Agent 的视频风格建议及理由 | `{ music_id, analysis_id, style_tags[], rationale, confirmed:true }` |
 | `video_manager_edit_jamendo_search` | 搜索 Jamendo 曲目元数据；不下载、不验证使用许可 | `{ query, limit?, offset? }` |
 | `video_manager_edit_preview_project` | 校验 DSH Agent 在会话中迭代形成的结构化时间线；不调用第二个模型或保存 | `{ project: EditProjectV1 }` |
 | `video_manager_edit_save_project` | 用户明确同意后保存当前服务端预览 ID | `{ preview_id, confirmed: true }` |
@@ -139,17 +143,17 @@
 
 当用户要求预览时，`video_manager_edit_preview_project` 只校验 project v1、素材库 ID、分镜范围、时间线帧边界、音乐库成员、源文件可用性和授权状态，不调用模型、不写数据库、不修改或复制源素材。预览会返回规范化项目与服务端 30 分钟预览 ID；素材文件以 realpath 与文件系统属性弱指纹进行前后检查（非内容哈希），分镜更新后旧预览会失效。
 
-用户查看完整预览并明确要求保存后，Agent 可调用 `video_manager_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果出现在插件的【剪辑项目】管理视图。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。插件的剪映草稿导出仍是实验性简化版本，不含音乐轨，Windows 剪映 11.7.3 尚未验证可打开。
+用户查看完整预览并明确要求保存后，Agent 可调用 `video_manager_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果可通过 DSH 会话工具 `video_manager_edit_projects` 查询；插件不提供剪辑项目浏览按钮。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。插件的剪映草稿导出仍是实验性简化版本，不含音乐轨，Windows 剪映 11.7.3 尚未验证可打开。
 
 ---
 
 ## 插件内 AI 能力边界
 
-插件继续负责素材/分镜/音频资产管理、素材深度分析、只读音乐测量、项目数据校验与持久化。创意决策、AI 选曲及反复编排仅在 DSH 会话中进行。素材分析模型配置用于素材标注，不属于旅行短片剪辑工作台。
+插件继续负责素材/分镜/音频资产管理、素材深度分析、DSP 音乐测量、可选的频谱图模型解读、项目数据校验与持久化。频谱解读通过已有图像模型配置处理派生声谱图，可返回带置信度的粗略速度/相对节奏点提示、主观情绪/场景建议和风格标签；这些不是精确 BPM、测量拍点或固定网格。用户可编辑解读/标签并试听后单独确认模型节奏提示，不会覆盖DSP候选或DSP确认点。创意决策、选曲及时间线编排仍在 DSH 会话中完成。
 
 ---
 
-## 素材分析模型与推理档位
+## 素材与频谱模型配置
 
 在工作台【设置】中选择 DSH 已配置的服务商及支持图片输入的模型。如果该模型声明了可选推理档位，还须明确选择并保存档位；切换服务商或模型后，需要重新选择。请求直接使用已保存的档位，不会因请求失败而自动更换档位重试。已有配置如果尚未设置推理档位，需先打开设置完成选择。未声明推理档位的模型无需选择；无法读取能力时需刷新或检查模型配置。自定义 OpenAI 兼容端点维持原有调用方式，不使用 DSH 档位列表。
 
@@ -175,4 +179,4 @@ plugin_manager({
 })
 ```
 
-安装完成后刷新 Web GUI，在左侧导航栏即可看到全新的 **“视频资产库”** 电影场记板图标！
+安装完成后刷新 Web GUI，在左侧导航栏即可看到全新的 **“媒体资源库”** 入口！

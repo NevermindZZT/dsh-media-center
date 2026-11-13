@@ -1,25 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none">
   <defs>
-    <linearGradient id="vm-grad" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+    <linearGradient id="media-grad" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#3b82f6"/>
       <stop offset="100%" stop-color="#1d4ed8"/>
     </linearGradient>
-    <linearGradient id="vm-accent" x1="16" y1="16" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#60a5fa"/>
-      <stop offset="100%" stop-color="#93c5fd"/>
-    </linearGradient>
   </defs>
-  <rect x="4" y="8" width="40" height="32" rx="6" fill="url(#vm-grad)"/>
-  <!-- Film strip sprocket holes -->
-  <rect x="8" y="11" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="16" y="11" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="24" y="11" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="32" y="11" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="8" y="33" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="16" y="33" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="24" y="33" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <rect x="32" y="33" width="4" height="4" rx="1" fill="#ffffff" fill-opacity="0.85"/>
-  <!-- Center Play/Cut Shape -->
-  <polygon points="21,19 31,24 21,29" fill="#ffffff"/>
-  <circle cx="34" cy="24" r="2" fill="url(#vm-accent)"/>
+  <rect x="4" y="4" width="40" height="40" rx="10" fill="url(#media-grad)"/>
+  <rect x="10" y="11" width="28" height="26" rx="4" fill="#fff" fill-opacity="0.15" stroke="#fff" stroke-opacity="0.9" stroke-width="2"/>
+  <path d="M10 18h28" stroke="#fff" stroke-opacity="0.9" stroke-width="2"/>
+  <rect x="14" y="14" width="4" height="1.5" rx=".75" fill="#fff"/>
+  <rect x="21" y="14" width="4" height="1.5" rx=".75" fill="#fff"/>
+  <path d="M14 30l5-6 4 4 4-5 7 8H14Z" fill="#fff" fill-opacity="0.92"/>
+  <circle cx="19" cy="22" r="1.7" fill="#fff"/>
+  <path d="M31 21v7.2a2.4 2.4 0 1 1-1.8-2.3V22l6-1.2v5.8a2.4 2.4 0 1 1-1.8-2.3v-3.5L31 21Z" fill="#fff"/>
 </svg>

@@ -72,7 +72,7 @@ test('source is preflighted, analyzed read-only, and result disclaims content ha
  const f=fixture(t),{music,project}=await projectFixture(f);
  const before=fs.readFileSync(f.audioPath);
  const result=await f.workflow.analyzeMusic(music.id,{startSeconds:0,durationSeconds:5});
- assert.equal(result.status,'low_confidence');assert.ok(Array.isArray(result.onsets));assert.deepEqual(result.beats,[]);
+ assert.equal(result.status,'low_confidence');assert.equal('onsets' in result,false);assert.equal('transient_onsets' in result,false);assert.deepEqual(result.beats,[]);assert.ok(result.analysis_id);
  assert.match(result.source_check.note,/非密码学内容校验/);assert.deepEqual(fs.readFileSync(f.audioPath),before);
  const preview=f.workflow.previewProject(project);
  const later=new Date(Date.now()+10000);fs.utimesSync(f.audioPath,later,later);

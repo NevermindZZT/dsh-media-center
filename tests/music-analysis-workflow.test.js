@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {VideoDatabase} from '../src/host/db/database.js';
+import {EditingWorkflow} from '../src/host/edit/editing-workflow.js';
+const exe=name=>process.platform==='win32'?path.join(os.homedir(),'.local','bin',`${name}.exe`):name;
+const hasFfmpeg=spawnSync(exe('ffmpeg'),['-version'],{stdio:'ignore'}).status===0&&spawnSync(exe('ffprobe'),['-version'],{stdio:'ignore'}).status===0;
+
+test('music analysis is versioned, source-bound, and Agent styles remain provenance-labelled',{skip:!hasFfmpeg},async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-music-profile-')),file=path.join(root,'synthetic.wav');
+ assert.equal(spawnSync(exe('ffmpeg'),['-v','error','-f','lavfi','-i','sine=frequency=440:duration=8','-c:a','pcm_s16le','-n',file],{stdio:'ignore'}).status,0);
+ const db=new VideoDatabase({workspaceRoot:root});t.after(()=>{db.db.close();fs.rmSync(root,{recursive:true,force:true});});
+ const modelCalls=[];
+  const workflow=new EditingWorkflow(db,{getBinaries:async()=>({ffmpeg:exe('ffmpeg'),ffprobe:exe('ffprobe')})},{analyzeImagePrompt:async input=>{
+    const image=fs.readFileSync(input.imagePath);modelCalls.push({promptText:input.promptText,png:image.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))});
+    return {interpretation:{summary:'渐进而平稳',rhythm_character:'中慢速脉冲',energy_arc:'后半段略增强',scene_suggestions:[{scene:'山地日出延时',reason:'渐进能量适合缓慢铺陈',fit:'medium'}],uncertainties:['频谱图无法确认精确拍点']},audit:{provider:'p1',model:'vision',reasoning_effort:null}};
+  }});
+ const music=(await workflow.catalog.importFile({file_path:file,title:'synthetic'})).music;
+ workflow.catalog.confirmPersonalUse(music.id,{confirmed:true,license_note:'test only'});
+ const result=await workflow.analyzeMusic(music.id,{startSeconds:1,durationSeconds:6});
+ assert.ok(result.analysis_id);assert.equal(result.analysis_window.start_seconds,1);assert.equal(result.source_check.status,'current');
+  const thumbnail=await workflow.getMusicSpectrogramPath(music.id);assert.ok(thumbnail.startsWith(db.cacheDir));
+  const thumbnailBytes=fs.readFileSync(thumbnail);assert.deepEqual([...thumbnailBytes.subarray(0,8)],[137,80,78,71,13,10,26,10]);
+  assert.equal(await workflow.getMusicSpectrogramPath(music.id),thumbnail);
+  const interpreted=await workflow.interpretMusicSpectrogram(music.id,{analysisId:result.analysis_id});
+  assert.equal(interpreted.spectrogram.scale,'log-frequency');assert.equal(interpreted.model_interpretation.summary,'渐进而平稳');
+  assert.equal(modelCalls.length,1);assert.equal(modelCalls[0].png,true);assert.doesNotMatch(modelCalls[0].promptText,/synthetic\.wav|C:\\\\|file_path/i);
+  assert.equal(workflow.getMusicAnalysis(music.id).model_interpretation_provenance.model,'vision');
+  assert.equal(fs.readdirSync(db.cacheDir).some(name=>name.startsWith('music-spectrogram-')),false);
+ const detail=workflow.getMusicAnalysis(music.id);assert.equal(detail.analysis_id,result.analysis_id);assert.equal(detail.music_id,music.id);assert.equal(detail.source_identity,undefined);
+ assert.deepEqual(detail.user_confirmed_beats,[]);assert.ok(Array.isArray(detail.beat_candidates));
+ assert.throws(()=>workflow.saveMusicStyleSuggestions(music.id,{analysisId:result.analysis_id,styleTags:['山地风光慢剪'],rationale:'Agent suggestion',confirmed:false}),/明确确认/);
+ const saved=workflow.saveMusicStyleSuggestions(music.id,{analysisId:result.analysis_id,styleTags:['山地风光慢剪'],rationale:'DSH Agent 建议；依据 BPM/节奏稳定性与用户需求',confirmed:true});
+ assert.deepEqual(saved.style_tags,['山地风光慢剪']);assert.equal(saved.style_provenance,'dsh-agent-user-approved');
+ const list=workflow.listMusicCatalog({query:'synthetic'});assert.equal(list.items[0].analysis_summary.analysis_id,result.analysis_id);assert.deepEqual(list.items[0].analysis_summary.style_tags,['山地风光慢剪']);
+  const fullTrack=await workflow.analyzeMusic(music.id);assert.ok(Math.abs(fullTrack.analysis_window.duration_seconds-8)<0.01);assert.equal('onsets' in fullTrack,false);
+  assert.equal('transient_onsets' in workflow.getMusicAnalysis(music.id),false);
+});
