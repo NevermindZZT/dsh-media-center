@@ -329,6 +329,15 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true });
       }
 
+      // Video import job state: GET /api/video-manager/import-jobs/:id
+      const importJobMatch=pathname.match(/^\/api\/video-manager\/import-jobs\/(imp_[a-f0-9]{32})$/);
+      if(importJobMatch&&method==='GET'){
+        if(typeof mediaEngine?.getImportJob!=='function')return jsonResponse(res,{success:false,error:'导入任务状态不可用'},503);
+        const job=mediaEngine.getImportJob(importJobMatch[1]);
+        if(!job)return jsonResponse(res,{success:false,error:'导入任务不存在或已过期'},404);
+        return jsonResponse(res,{success:true,job});
+      }
+
       // 5.1 Rename Folder: PUT /api/video-manager/folders/:id
       if (folderDelMatch && method === 'PUT') {
         const body = await parseJsonBody(req);
@@ -340,21 +349,21 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       // 6. Scan Directory: POST /api/video-manager/folders/scan
       if (pathname === '/api/video-manager/folders/scan' && method === 'POST') {
         const body = await parseJsonBody(req);
-        if (!body.directory_path) {
-          return jsonResponse(res, { success: false, error: 'directory_path is required' }, 400);
+        if (typeof body.directory_path !== 'string' || !path.isAbsolute(body.directory_path)) {
+          return jsonResponse(res, { success: false, error: 'directory_path must be an absolute path' }, 400);
         }
-        const scanResult = await mediaEngine.scanAndImportDirectory(body.directory_path, body.parent_id || null);
-        return jsonResponse(res, { success: true, ...scanResult });
+        const job=mediaEngine.startImportJob({kind:'directory',directory_path:body.directory_path,folder_id:body.parent_id||null});
+        return jsonResponse(res,{success:true,job:job.job,job_id:job.job?.id||null,merged:job.merged,imported_count:0,failed_count:0,videos:[]});
       }
 
       // Scan multiple direct child directories under the current asset folder.
       if (pathname === '/api/video-manager/folders/scan-selected' && method === 'POST') {
         const body=await parseJsonBody(req);
-        if (!Array.isArray(body.directory_paths) || body.directory_paths.length===0) {
-          return jsonResponse(res,{success:false,error:'directory_paths array is required'},400);
+        if (typeof body.parent_directory_path!=='string'||!path.isAbsolute(body.parent_directory_path)||!Array.isArray(body.directory_paths)||body.directory_paths.length<1||body.directory_paths.length>50||body.directory_paths.some(value=>typeof value!=='string'||!path.isAbsolute(value))) {
+          return jsonResponse(res,{success:false,error:'parent_directory_path and 1–50 absolute directory_paths are required'},400);
         }
-        const result=await mediaEngine.scanAndImportDirectories(body.directory_paths,body.parent_directory_path,body.parent_id||null);
-        return jsonResponse(res,{success:true,...result});
+        const job=mediaEngine.startImportJob({kind:'subfolders',directory_paths:body.directory_paths,parent_directory_path:body.parent_directory_path,parent_folder_id:body.parent_id||null});
+        return jsonResponse(res,{success:true,job:job.job,job_id:job.job?.id||null,merged:job.merged,scanned_count:0,imported_count:0,failed_count:0,folders:[]});
       }
 
       // 6.1 Browse Local Filesystem: GET /api/video-manager/fs/browse
@@ -367,11 +376,11 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       // 6.2 Import Specific Video Files: POST /api/video-manager/videos/import-files
       if (pathname === '/api/video-manager/videos/import-files' && method === 'POST') {
         const body = await parseJsonBody(req);
-        if (!Array.isArray(body.file_paths) || body.file_paths.length === 0) {
-          return jsonResponse(res, { success: false, error: 'file_paths array is required' }, 400);
+        if (!Array.isArray(body.file_paths)||body.file_paths.length<1||body.file_paths.length>5000||body.file_paths.some(value=>typeof value!=='string')) {
+          return jsonResponse(res, { success: false, error: 'file_paths must contain 1–5000 paths' }, 400);
         }
-        const result = await mediaEngine.importFiles(body.file_paths, body.folder_id || null);
-        return jsonResponse(res, { success: true, ...result });
+        const job=mediaEngine.startImportJob({kind:'files',file_paths:body.file_paths,folder_id:body.folder_id||null});
+        return jsonResponse(res,{success:true,job:job.job,job_id:job.job?.id||null,merged:job.merged,imported_count:0,duplicates_count:0,failed_count:0,videos:[]});
       }
 
       // 6.3 Batch Move Videos: POST /api/video-manager/videos/batch-move
@@ -390,6 +399,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         if (!Array.isArray(body.video_ids) || body.video_ids.length === 0) {
           return jsonResponse(res, { success: false, error: 'video_ids array is required' }, 400);
         }
+        for(const id of body.video_ids)mediaEngine.cancelImportForVideo?.(id);
         const count = db.batchDeleteVideos(body.video_ids);
         return jsonResponse(res, { success: true, deleted_count: count });
       }
@@ -444,6 +454,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
 
       // 10. Delete Video: DELETE /api/video-manager/videos/:id
       if (videoDetailMatch && method === 'DELETE') {
+        mediaEngine.cancelImportForVideo?.(videoDetailMatch[1]);
         db.deleteVideo(videoDetailMatch[1]);
         return jsonResponse(res, { success: true });
       }

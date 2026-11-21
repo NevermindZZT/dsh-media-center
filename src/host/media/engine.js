@@ -3,16 +3,48 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { extractCaptureTime } from './capture-time.js';
+import { VideoImportJobManager } from './import-job-manager.js';
+
+function identityFromStat(stat){return {dev:String(stat.dev),ino:String(stat.ino),size:String(stat.size),mtimeNs:String(stat.mtimeNs),ctimeNs:String(stat.ctimeNs)};}
+function sourceIdentity(filePath){return identityFromStat(fs.statSync(filePath,{bigint:true}));}
+function sameIdentity(a,b){return !!a&&!!b&&a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeNs===b.mtimeNs&&a.ctimeNs===b.ctimeNs;}
 
 const execFileAsync = promisify(execFile);
 
 export class MediaEngine {
   constructor(db) {
     this.db = db;
+    this.storyboardTasks = new Map();
+    this.importJobManager = new VideoImportJobManager(this);
+    setImmediate(() => { this.recoverPendingStoryboards().catch(error => console.warn('[MediaEngine] Storyboard recovery failed:', error.message)); });
   }
 
-  // Find ffmpeg/ffprobe binaries
+  async recoverPendingStoryboards(){
+    let rows;
+    try{rows=this.db.getPendingStoryboardVideos();}catch{return;}
+    rows=[...rows,...this.db.getReadyStoryboardVideos()];
+    let cursor=0;
+    const worker=async()=>{
+      while(cursor<rows.length){
+        const row=rows[cursor++];
+        try{
+          const video=this.db.getVideoById(row.id);
+          if(!video||video.file_path!==row.file_path)continue;
+          if(video.storyboard_status==='generating')this.db.updateStoryboardState(video.id,'pending',null,video.file_path);
+          if(video.storyboard_status==='ready'){
+            const exists=video.storyboard_path?await fs.promises.access(video.storyboard_path).then(()=>true,()=>false):false;
+            if(exists)continue;
+            this.db.updateStoryboardState(video.id,'pending','STORYBOARD_FILE_MISSING',video.file_path);
+          }
+          await this.generateStoryboard(video);
+        }catch{return;}
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(2,rows.length)},()=>worker()));
+  }
+
   async getBinaries() {
     let ffmpeg = this.db.getSetting('ffmpeg_path');
     let ffprobe = this.db.getSetting('ffprobe_path');
@@ -165,37 +197,64 @@ export class MediaEngine {
     };
   }
 
-  // Generate Contact Sheet / Storyboard 4x4 Grid
+  // One single-flight storyboard generation per video id; source files remain read-only.
   async generateStoryboard(video) {
-    const bins = await this.getBinaries();
-    if (!bins.ffmpeg || !video.duration || video.duration <= 0) return null;
-
-    const outPath = path.join(this.db.storyboardsDir, `${video.id}_storyboard.jpg`);
-    const duration = Math.max(1, video.duration);
-
-    // 16 frames in 4x4 grid
-    const vf = `fps=16/${duration},scale=320:180,tile=4x4`;
-    const args = [
-      '-y',
-      '-i', video.file_path,
-      '-vf', vf,
-      '-frames:v', '1',
-      '-q:v', '3',
-      outPath
-    ];
-
-    try {
-      await execFileAsync(bins.ffmpeg, args);
-      if (fs.existsSync(outPath)) {
-        this.db.upsertVideo({ id: video.id, storyboard_path: outPath });
-        return outPath;
-      }
-    } catch (e) {
-      console.warn(`[MediaEngine] Generate storyboard failed for ${video.file_name}:`, e.message);
-    }
-    return null;
+    if(!video?.id||typeof video.file_path!=='string')return null;
+    const active=this.storyboardTasks.get(video.id);if(active)return active;
+    const task=this._generateStoryboard(video);
+    this.storyboardTasks.set(video.id,task);
+    try{return await task;}finally{if(this.storyboardTasks.get(video.id)===task)this.storyboardTasks.delete(video.id);}
   }
 
+  async _generateStoryboard(video) {
+    const current=this.db.getVideoById(video.id),importRecord=this.db.getVideoImportRecord(video.id);
+    if(!current||current.file_path!==video.file_path)return null;
+    let before;
+    try{before=sourceIdentity(current.file_path);}catch{this.db.updateStoryboardState(video.id,'failed','source_unavailable',current.file_path);return null;}
+    try{
+      const savedIdentity=importRecord?.source_identity_json?JSON.parse(importRecord.source_identity_json):null;
+      if(savedIdentity&&!sameIdentity(savedIdentity,before)){this.db.updateStoryboardState(video.id,'failed','source_changed',current.file_path);return null;}
+    }catch{this.db.updateStoryboardState(video.id,'failed','source_identity_invalid',current.file_path);return null;}
+    if(current.storyboard_path&&fs.existsSync(current.storyboard_path)){
+      this.db.updateStoryboardState(video.id,'ready',null,current.file_path);
+      return current.storyboard_path;
+    }
+    let bins;try{bins=await this.getBinaries();}catch{this.db.updateStoryboardState(video.id,'failed','binary_detection_failed',current.file_path);return null;}
+    if(!bins.ffmpeg){this.db.updateStoryboardState(video.id,'failed','ffmpeg_missing',current.file_path);return null;}
+    if(!Number.isFinite(Number(current.duration))||Number(current.duration)<=0){this.db.updateStoryboardState(video.id,'failed','invalid_duration',current.file_path);return null;}
+    this.db.updateStoryboardState(video.id,'generating',null,current.file_path);
+    const fingerprint=crypto.createHash('sha256').update(JSON.stringify(before)).digest('hex').slice(0,20);
+    const storyboardRoot=fs.realpathSync(this.db.storyboardsDir),safeId=String(video.id).replace(/[^A-Za-z0-9_-]/g,'_').slice(0,80)||'video';
+    const outPath=path.join(storyboardRoot,`${safeId}_${fingerprint}_storyboard.jpg`);
+    const isUsable=target=>{
+      try{return fs.statSync(target).isFile()&&fs.statSync(target).size>32&&fs.readFileSync(target).subarray(0,2).equals(Buffer.from([0xff,0xd8]));}catch{return false;}
+    };
+    if(isUsable(outPath))return this.db.setVideoStoryboard(video.id,current.file_path,outPath)?outPath:null;
+    if(fs.existsSync(outPath)){
+      try{if(path.dirname(fs.realpathSync(outPath))!==storyboardRoot){this.db.updateStoryboardState(video.id,'failed','invalid_cache_path',current.file_path);return null;}fs.rmSync(outPath,{force:true});}
+      catch{this.db.updateStoryboardState(video.id,'failed','invalid_cache_path',current.file_path);return null;}
+    }
+    const tempDir=fs.mkdtempSync(path.join(storyboardRoot,`${safeId}_storyboard-`));
+    const tempPath=path.join(tempDir,'storyboard.jpg');
+    const duration=Math.max(1,Number(current.duration));
+    const vf=`fps=16/${duration},scale=320:180,tile=4x4`;
+    try{
+      await execFileAsync(bins.ffmpeg,['-nostdin','-i',current.file_path,'-vf',vf,'-frames:v','1','-q:v','3','-n',tempPath],{timeout:120000,maxBuffer:2*1024*1024,windowsHide:true});
+      if(!isUsable(tempPath))throw new Error('invalid_storyboard');
+      const stillExists=this.db.getVideoById(video.id);
+      if(!stillExists||stillExists.file_path!==current.file_path){return null;}
+      if(!sameIdentity(before,sourceIdentity(current.file_path))){this.db.updateStoryboardState(video.id,'failed','source_changed',current.file_path);return null;}
+      if(!fs.existsSync(outPath))fs.renameSync(tempPath,outPath);
+      else if(!isUsable(outPath))throw new Error('invalid_cached_storyboard');
+      if(this.db.setVideoStoryboard(video.id,current.file_path,outPath))return outPath;
+      // The catalog record was removed or replaced while FFmpeg was running. Remove only our cache output.
+      if(fs.existsSync(outPath)&&path.dirname(fs.realpathSync(outPath))===storyboardRoot){try{fs.rmSync(outPath,{force:true});}catch{}}
+      return null;
+    }catch{
+      if(this.db.getVideoById(video.id)?.file_path===current.file_path)this.db.updateStoryboardState(video.id,'failed','storyboard_generation_failed',current.file_path);
+      return null;
+    }finally{try{fs.rmSync(tempDir,{recursive:true,force:true});}catch{}}
+  }
   // Extract keyframe for a given timestamp
   async extractKeyframe(video, timestampSec, shotIndex) {
     const bins = await this.getBinaries();
@@ -326,116 +385,19 @@ export class MediaEngine {
     return shots;
   }
 
-  // Import several direct child directories under the currently selected asset folder.
-  // The browser supplies the directory being viewed plus explicitly checked children.
-  async scanAndImportDirectories(directoryPaths, expectedParentPath, targetParentFolderId = null) {
-    if (!Array.isArray(directoryPaths) || directoryPaths.length < 1 || directoryPaths.length > 50) {
-      throw new Error('请选中 1–50 个子文件夹');
-    }
-    let parentReal;
-    try {
-      if (typeof expectedParentPath !== 'string' || !path.isAbsolute(expectedParentPath)) throw new Error();
-      parentReal = fs.realpathSync(expectedParentPath);
-      if (!fs.statSync(parentReal).isDirectory()) throw new Error();
-      fs.accessSync(parentReal, fs.constants.R_OK);
-    } catch { throw new Error('当前浏览目录不可用'); }
-    if (targetParentFolderId && !this.db.db.prepare('SELECT id FROM folders WHERE id = ?').get(targetParentFolderId)) {
-      throw new Error('目标父分类不存在，请刷新后重试');
-    }
-    const seen = new Set();
-    const checked = directoryPaths.map(input => {
-      try {
-        if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error();
-        const real = fs.realpathSync(input), lstat = fs.lstatSync(input), stat = fs.statSync(real);
-        const relative = path.relative(parentReal, real);
-        if (lstat.isSymbolicLink() || !stat.isDirectory() || path.dirname(real) !== parentReal || !relative || relative === '..' || path.isAbsolute(relative) || relative.startsWith(`..${path.sep}`) || relative.includes(path.sep)) throw new Error();
-        const key = process.platform === 'win32' ? real.toLowerCase() : real;
-        if (seen.has(key)) throw new Error();
-        seen.add(key);
-        fs.accessSync(real, fs.constants.R_OK);
-        return {path:real,name:path.basename(real)};
-      } catch { throw new Error('所选项必须是当前浏览目录中的直接子文件夹'); }
-    });
-    const folders = [];
-    for (const directory of checked) {
-      try {
-        const result = await this.scanAndImportDirectory(directory.path, targetParentFolderId);
-        folders.push({name:directory.name,imported_count:result.imported_count,failed_count:result.failed_count});
-      } catch {
-        folders.push({name:directory.name,imported_count:0,error:'该文件夹导入失败；请刷新目录并检查权限'});
-      }
-    }
-    return {scanned_count:folders.length,imported_count:folders.reduce((n,item)=>n+item.imported_count,0),failed_count:folders.reduce((n,item)=>n+(item.failed_count||0)+(item.error?1:0),0),folders};
+  startImportJob(request){return this.importJobManager.start(request);}
+  getImportJob(jobId){return this.importJobManager.get(jobId);}
+  waitForImportJob(jobId){return this.importJobManager.wait(jobId);}
+  cancelImportForVideo(videoId){return this.importJobManager.cancelForVideo(videoId);}
+  async scanAndImportDirectories(directoryPaths,expectedParentPath,targetParentFolderId=null){
+    return this.importJobManager.runLegacy({kind:'subfolders',directory_paths:directoryPaths,parent_directory_path:expectedParentPath,parent_folder_id:targetParentFolderId});
   }
-
-  // Scan one directory recursively and import videos into mirrored asset categories.
-  async scanAndImportDirectory(dirPath, targetParentFolderId = null) {
-    let canonicalDir;
-    try {
-      if (typeof dirPath !== 'string' || !path.isAbsolute(dirPath)) throw new Error();
-      canonicalDir = fs.realpathSync(dirPath);
-      if (!fs.statSync(canonicalDir).isDirectory()) throw new Error();
-      fs.accessSync(canonicalDir, fs.constants.R_OK);
-    } catch { throw new Error('目录不可用或不是文件夹'); }
-    if (targetParentFolderId && !this.db.db.prepare('SELECT id FROM folders WHERE id = ?').get(targetParentFolderId)) {
-      throw new Error('目标父分类不存在，请刷新后重试');
-    }
-
-    const videoExts = new Set(['.mp4', '.mov', '.mkv', '.avi', '.webm', '.flv', '.m4v', '.wmv']);
-    const importedVideos = [];
-    const failedFiles = [];
-    const rootDirName = path.basename(canonicalDir);
-    this.db.ensureFolder(rootDirName, canonicalDir, targetParentFolderId);
-
-    const scanRec = async (currentDir, relativePrefix) => {
-      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name.startsWith('.') || entry.name.startsWith('$') || entry.isSymbolicLink()) continue;
-        const fullPath = path.join(currentDir, entry.name);
-        if (entry.isDirectory()) {
-          const nextPrefix = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
-          this.db.ensureFolder(`${rootDirName}/${nextPrefix}`, fullPath, targetParentFolderId);
-          await scanRec(fullPath, nextPrefix);
-        } else if (entry.isFile() && videoExts.has(path.extname(entry.name).toLowerCase())) {
-          const folderRelPath = relativePrefix ? `${rootDirName}/${relativePrefix}` : rootDirName;
-          const folder = this.db.ensureFolder(folderRelPath, currentDir, targetParentFolderId);
-          try {
-            const meta = await this.probeVideo(fullPath);
-            const savedVideo = this.db.upsertVideo({...meta,folder_id:folder ? folder.id : null,status:'imported'});
-            await this.generateStoryboard(savedVideo);
-            importedVideos.push(savedVideo);
-          } catch {
-            failedFiles.push(path.basename(fullPath));
-          }
-        }
-      }
-    };
-
-    await scanRec(canonicalDir, '');
-    return {scanned_directory:canonicalDir,imported_count:importedVideos.length,failed_count:failedFiles.length,failed_files:failedFiles,videos:importedVideos};
+  async scanAndImportDirectory(dirPath,targetParentFolderId=null){
+    return this.importJobManager.runLegacy({kind:'directory',directory_path:dirPath,folder_id:targetParentFolderId});
   }
-
-  // Import individual or multiple video files directly
-  async importFiles(filePaths, folderId = null) {
-    const importedVideos = [];
-    for (const filePath of filePaths) {
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const meta = await this.probeVideo(filePath);
-        const saved = this.db.upsertVideo({
-          ...meta,
-          folder_id: folderId || null,
-          status: 'imported'
-        });
-        await this.generateStoryboard(saved);
-        importedVideos.push(saved);
-      }
-    }
-    return {
-      imported_count: importedVideos.length,
-      videos: importedVideos
-    };
+  async importFiles(filePaths,folderId=null){
+    return this.importJobManager.runLegacy({kind:'files',file_paths:filePaths,folder_id:folderId});
   }
-
   // Browse local filesystem for folders and video files
   browseFileSystem(requestedPath) {
     const isWin = process.platform === 'win32';

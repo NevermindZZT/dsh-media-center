@@ -249,7 +249,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   // 2. video_manager_scan_directory
   addTool({
     name: 'video_manager_scan_directory',
-    description: '扫描用户明确指定的目录并导入其中视频，按物理子目录镜像分类；可归入指定素材父分类。源媒体只读引用。',
+    description: '扫描用户明确指定的目录并导入其中视频，按物理子目录镜像分类；可归入指定素材父分类。源媒体只读引用。会跳过已入库文件；imported_count 仅为本次新增行数，duplicates_count 是被跳过的已存在引用，不代表失败。此工具会等待本次导入和故事板队列完成。',
     parameters: {
       type: 'object',
       properties: {
@@ -272,7 +272,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   // Import multiple checked child folders under one asset parent.
   addTool({
     name: 'video_manager_import_subfolders',
-    description: '将用户明确选择的多个直接子文件夹作为指定素材分类的子分类导入，并递归导入其中视频；源视频只读引用，不复制、修改或删除。',
+    description: '将用户明确选择的多个直接子文件夹作为指定素材分类的子分类导入，并递归导入其中视频；源视频只读引用，不复制、修改或删除。重复引用会被跳过，不计为失败；此工具会等待导入和故事板处理完成。',
     parameters: {type:'object',properties:{
       parent_directory_path:{type:'string',description:'用户正在浏览的父文件夹绝对路径。'},
       directory_paths:{type:'array',items:{type:'string'},minItems:1,maxItems:50,description:'用户明确选择的直接子文件夹绝对路径列表。'},
@@ -287,7 +287,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   // 2.1 video_manager_import_files
   addTool({
     name: 'video_manager_import_files',
-    description: '直接导入一个或多个指定的本地视频文件到指定分类目录中。提取视频参数并生成故事板大图。',
+    description: '直接导入一个或多个指定的本地视频文件到指定分类目录中。提取视频参数并生成故事板大图；已存在引用会跳过并计入 duplicates_count（非失败）。此工具会等待导入和故事板处理完成。',
     parameters: {
       type: 'object',
       properties: {

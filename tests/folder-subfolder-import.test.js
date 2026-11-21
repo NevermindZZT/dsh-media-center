@@ -46,15 +46,16 @@ test('rejects paths outside current browser directory, duplicate selection and i
  assert.equal(f.db.queryVideos({query:'',limit:20}).length,0);
 });
 
-test('HTTP multi-folder import route delegates to the same recursive service',async t=>{
- const f=fixture(t);let received;
- f.engine.scanAndImportDirectories=async(...args)=>{received=args;return {scanned_count:args[0].length,imported_count:4,failed_count:0,folders:[]};};
+test('HTTP multi-folder import returns an immediate pollable job and completes asynchronously',async t=>{
+ const f=fixture(t);
  const handler=createVideoManagerApiHandler({db:f.db,mediaEngine:f.engine});
  const request=()=>new Promise((resolve,reject)=>{
   const req=Readable.from([JSON.stringify({parent_directory_path:f.parentDirectory,directory_paths:[f.folderA,f.folderB],parent_id:f.parent.id})]);req.method='POST';req.url='/api/video-manager/folders/scan-selected';req.headers={};
   const res={writeHead(status){this.status=status;},end(buffer){resolve({status:this.status,body:JSON.parse(buffer.toString())});}};
   Promise.resolve(handler(req,res)).catch(reject);
  });
- const result=await request();assert.equal(result.status,200);assert.equal(result.body.imported_count,4);
- assert.deepEqual(received,[[f.folderA,f.folderB],f.parentDirectory,f.parent.id]);
+ const result=await request();assert.equal(result.status,200);assert.ok(result.body.job?.id);assert.equal(result.body.job.status,'queued');assert.equal(result.body.imported_count,0);
+ const final=await f.engine.waitForImportJob(result.body.job.id);
+ assert.equal(final.kind,'subfolders');assert.equal(final.total,3);assert.equal(final.inserted,3);assert.equal(final.duplicates,0);
+ assert.equal(f.db.queryVideos({query:'',limit:20}).length,3);
 });

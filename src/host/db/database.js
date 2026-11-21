@@ -81,6 +81,7 @@ export class VideoDatabase {
         folder_id TEXT,
         file_name TEXT NOT NULL,
         file_path TEXT NOT NULL UNIQUE,
+        source_identity_json TEXT,
         file_size INTEGER DEFAULT 0,
         duration REAL DEFAULT 0,
         width INTEGER DEFAULT 0,
@@ -95,6 +96,8 @@ export class VideoDatabase {
         user_notes TEXT,
         tags TEXT DEFAULT '[]',
         storyboard_path TEXT,
+        storyboard_status TEXT NOT NULL DEFAULT 'not_started',
+        storyboard_error TEXT,
         ai_model TEXT,
         ai_prompt_tokens INTEGER DEFAULT 0,
         ai_completion_tokens INTEGER DEFAULT 0,
@@ -112,7 +115,12 @@ export class VideoDatabase {
     // Migration: ensure new AI audit columns exist on existing databases
     try {
       const videoCols = this.db.prepare("PRAGMA table_info(videos)").all().map(c => c.name);
-      if (!videoCols.includes('ai_model')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_model TEXT;");
+      if (!videoCols.includes('storyboard_status')) {
+        this.db.exec("ALTER TABLE videos ADD COLUMN storyboard_status TEXT NOT NULL DEFAULT 'not_started';");
+        this.db.exec("UPDATE videos SET storyboard_status = CASE WHEN storyboard_path IS NOT NULL AND storyboard_path != '' THEN 'ready' ELSE 'not_started' END;");
+      }
+      if (!videoCols.includes('storyboard_error')) this.db.exec('ALTER TABLE videos ADD COLUMN storyboard_error TEXT;');
+      if (!videoCols.includes('source_identity_json')) this.db.exec('ALTER TABLE videos ADD COLUMN source_identity_json TEXT;');
       if (!videoCols.includes('ai_prompt_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_prompt_tokens INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_completion_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_completion_tokens INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_total_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_total_tokens INTEGER DEFAULT 0;");
@@ -380,7 +388,7 @@ export class VideoDatabase {
   }
 
   // ================= Video Methods =================
-  upsertVideo(videoData) {
+  upsertVideo(videoData, options = {}) {
     const id = videoData.id || ('vid_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12));
     const now = new Date().toISOString();
 
@@ -392,6 +400,7 @@ export class VideoDatabase {
       existing = this.db.prepare('SELECT id FROM videos WHERE file_path = ?').get(videoData.file_path);
     }
     if (existing) {
+      if (options.insertOnly) return { created: false, video: this.getVideoById(existing.id) };
       this.db.prepare(`
         UPDATE videos SET
           folder_id = COALESCE(?, folder_id),
@@ -410,6 +419,9 @@ export class VideoDatabase {
           user_notes = COALESCE(?, user_notes),
           tags = COALESCE(?, tags),
           storyboard_path = COALESCE(?, storyboard_path),
+          storyboard_status = COALESCE(?, storyboard_status),
+          storyboard_error = CASE WHEN ? THEN ? ELSE storyboard_error END,
+          source_identity_json = COALESCE(?, source_identity_json),
           ai_model = COALESCE(?, ai_model),
           ai_prompt_tokens = COALESCE(?, ai_prompt_tokens),
           ai_completion_tokens = COALESCE(?, ai_completion_tokens),
@@ -437,6 +449,10 @@ export class VideoDatabase {
         videoData.user_notes ?? null,
         videoData.tags ? (typeof videoData.tags === 'string' ? videoData.tags : JSON.stringify(videoData.tags)) : null,
         videoData.storyboard_path ?? null,
+        videoData.storyboard_status ?? null,
+        Object.hasOwn(videoData, 'storyboard_error') ? 1 : 0,
+        videoData.storyboard_error ?? null,
+        videoData.source_identity_json ?? null,
         videoData.ai_model ?? null,
         videoData.ai_prompt_tokens ?? null,
         videoData.ai_completion_tokens ?? null,
@@ -453,17 +469,18 @@ export class VideoDatabase {
     } else {
       this.db.prepare(`
         INSERT INTO videos (
-          id, folder_id, file_name, file_path, file_size, duration,
+          id, folder_id, file_name, file_path, source_identity_json, file_size, duration,
           width, height, fps, codec, bitrate, audio_channels, sample_rate,
-          status, summary, user_notes, tags, storyboard_path,
+          status, summary, user_notes, tags, storyboard_path, storyboard_status, storyboard_error,
           ai_model, ai_prompt_tokens, ai_completion_tokens, ai_total_tokens, ai_latency_ms, ai_analyzed_at,
           captured_at, captured_at_source, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         videoData.folder_id ?? null,
         videoData.file_name,
         videoData.file_path,
+        videoData.source_identity_json ?? null,
         videoData.file_size ?? 0,
         videoData.duration ?? 0,
         videoData.width ?? 0,
@@ -478,6 +495,8 @@ export class VideoDatabase {
         videoData.user_notes ?? null,
         videoData.tags ? (typeof videoData.tags === 'string' ? videoData.tags : JSON.stringify(videoData.tags)) : '[]',
         videoData.storyboard_path ?? null,
+        videoData.storyboard_status ?? (videoData.storyboard_path ? 'ready' : 'not_started'),
+        videoData.storyboard_error ?? null,
         videoData.ai_model ?? null,
         videoData.ai_prompt_tokens ?? 0,
         videoData.ai_completion_tokens ?? 0,
@@ -489,11 +508,45 @@ export class VideoDatabase {
         now,
         now
       );
-      return this.getVideoById(id);
+      const video = this.getVideoById(id);
+      return options.insertOnly ? { created: true, video } : video;
     }
   }
 
-  // Read-only source probes update only capture fields, never import time or AI annotations.
+  insertVideoIfAbsent(videoData) {
+    try {
+      return this.upsertVideo(videoData, { insertOnly: true });
+    } catch (error) {
+      const existing = videoData?.file_path ? this.db.prepare('SELECT id FROM videos WHERE file_path = ?').get(videoData.file_path) : null;
+      if (existing) return { created: false, video: this.getVideoById(existing.id) };
+      throw error;
+    }
+  }
+
+  updateStoryboardState(videoId, status, errorCode = null, expectedFilePath = null) {
+    const allowed = new Set(['not_started','pending','generating','ready','failed']);
+    if (!allowed.has(status)) throw new Error('Invalid storyboard status');
+    const error = errorCode == null ? null : String(errorCode).replace(/[\r\n]/g,' ').slice(0,120);
+    const result = expectedFilePath == null
+      ? this.db.prepare('UPDATE videos SET storyboard_status = ?, storyboard_error = ?, updated_at = ? WHERE id = ?').run(status,error,new Date().toISOString(),videoId)
+      : this.db.prepare('UPDATE videos SET storyboard_status = ?, storyboard_error = ?, updated_at = ? WHERE id = ? AND file_path = ?').run(status,error,new Date().toISOString(),videoId,expectedFilePath);
+    return result.changes > 0;
+  }
+
+  setVideoStoryboard(videoId, expectedFilePath, storyboardPath) {
+    const result = this.db.prepare(`UPDATE videos SET storyboard_path = ?, storyboard_status = 'ready', storyboard_error = NULL, updated_at = ? WHERE id = ? AND file_path = ?`)
+      .run(storyboardPath,new Date().toISOString(),videoId,expectedFilePath);
+    return result.changes > 0;
+  }
+
+  getPendingStoryboardVideos() {
+    return this.db.prepare(`SELECT id, file_path, file_name, duration, storyboard_path, storyboard_status FROM videos WHERE storyboard_status IN ('pending','generating') ORDER BY created_at ASC`).all();
+  }
+
+  getReadyStoryboardVideos() {
+    return this.db.prepare(`SELECT id, file_path, file_name, duration, storyboard_path, storyboard_status FROM videos WHERE storyboard_status = 'ready' AND storyboard_path IS NOT NULL AND storyboard_path != ''`).all();
+  }
+
   getPendingCaptureTimes() {
     return this.db.prepare(`SELECT id, file_path FROM videos
       WHERE captured_at_source IS NULL OR captured_at_source = 'unavailable'`).all();
@@ -520,6 +573,7 @@ export class VideoDatabase {
       video.tags = [];
     }
 
+    delete video.source_identity_json;
     if (includeShots) {
       video.shots = this.getVideoShots(id);
     }
@@ -532,6 +586,14 @@ export class VideoDatabase {
   getVideoByPath(filePath) {
     const row = this.db.prepare('SELECT id FROM videos WHERE file_path = ?').get(filePath);
     return row ? this.getVideoById(row.id) : null;
+  }
+
+  getVideoImportRecord(videoId) {
+    return this.db.prepare(`SELECT id,file_path,file_name,file_size,duration,source_identity_json,storyboard_path,storyboard_status,storyboard_error FROM videos WHERE id = ?`).get(videoId) || null;
+  }
+
+  listVideoImportRecords() {
+    return this.db.prepare(`SELECT id,file_path,file_name,file_size,duration,source_identity_json,storyboard_path,storyboard_status,storyboard_error FROM videos`).all();
   }
 
   queryVideos(options = {}) {
@@ -608,6 +670,7 @@ export class VideoDatabase {
       } catch {
         r.tags = [];
       }
+      delete r.source_identity_json;
       return r;
     });
   }

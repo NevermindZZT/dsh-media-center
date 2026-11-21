@@ -1134,12 +1134,17 @@ window.__ModuleLoader__.load({
 
       // Video Card Action Popup state
       const [activeVideoMenuId, setActiveVideoMenuId] = useState(null);
+      const [summaryVideoId, setSummaryVideoId] = useState(null);
       const [singleMoveVideoId, setSingleMoveVideoId] = useState(null);
 
       // Import Loading state (Prevents repeated submission and gives immediate feedback)
       const [isImporting, setIsImporting] = useState(false);
       const importLockRef = useRef(false);
       const [importNotice, setImportNotice] = useState('');
+      const [importProgress, setImportProgress] = useState(() => {
+        try { const id = window.sessionStorage.getItem('dsh-video-manager-active-import'); return id ? { id, status: 'running' } : null; }
+        catch { return null; }
+      });
 
       // AI Analysis Running States
       const [aiAnalyzingId, setAiAnalyzingId] = useState(null);
@@ -1386,6 +1391,42 @@ window.__ModuleLoader__.load({
       };
       const refreshCurrentViewRef = useRef(refreshCurrentView);
       refreshCurrentViewRef.current = refreshCurrentView;
+
+      useEffect(() => {
+        if (!importProgress?.id || !['queued', 'running', 'initializing', 'scanning', 'importing', 'storyboarding'].includes(importProgress.status)) return;
+        let cancelled = false, timer;
+        importLockRef.current = true;
+        setIsImporting(true);
+        const poll = async () => {
+          try {
+            const response = await fetch(`/api/video-manager/import-jobs/${encodeURIComponent(importProgress.id)}`);
+            if (response.status === 404) {
+              if (!cancelled) {
+                setImportProgress({ status: 'failed', error: '后台导入任务已不可查询（服务可能已重启）；请刷新列表并按需重新导入。' });
+                importLockRef.current = false; setIsImporting(false);
+                try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+                await refreshCurrentViewRef.current();
+              }
+              return;
+            }
+            const data = await response.json();
+            if (!response.ok || !data.success || !data.job) throw new Error(data.error || '无法读取导入进度');
+            if (cancelled) return;
+            setImportProgress(data.job);
+            const active = ['queued', 'running', 'initializing', 'scanning', 'importing', 'storyboarding'].includes(data.job.status);
+            if (!active) {
+              importLockRef.current = false; setIsImporting(false);
+              try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+            }
+            await refreshCurrentViewRef.current();
+            if (!cancelled && active) timer = setTimeout(poll, 1200);
+          } catch (error) {
+            if (!cancelled) { setImportProgress(current => ({ ...current, status: 'connection_error', error: error.message || '无法读取导入进度；任务可能仍在后台运行。' })); }
+          }
+        };
+        timer = setTimeout(poll, 500);
+        return () => { cancelled = true; clearTimeout(timer); };
+      }, [importProgress?.id, importProgress?.status]);
 
       // 5. Load AI Settings
       const loadAiCatalog = async () => {
@@ -1969,41 +2010,39 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const startVideoImport = async (url, body) => {
+        if (importLockRef.current) return;
+        importLockRef.current = true;
+        setIsImporting(true);
+        setShowScanModal(false);
+        setImportNotice('');
+        setImportProgress({ status: 'starting', total: null, completed: 0 });
+        try {
+          const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const data = await response.json();
+          if (!response.ok || !data.success || !data.job?.id) throw new Error(data.error || '无法启动导入任务');
+          try { window.sessionStorage.setItem('dsh-video-manager-active-import', data.job.id); } catch {}
+          setImportProgress(data.job);
+          await refreshCurrentViewRef.current();
+          if (!['queued', 'running', 'initializing', 'scanning', 'importing', 'storyboarding'].includes(data.job.status)) {
+            importLockRef.current = false; setIsImporting(false);
+            try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+          }
+        } catch (error) {
+          setImportProgress({ status: 'failed', error: error.message || '导入启动失败' });
+          importLockRef.current = false;
+          setIsImporting(false);
+          await refreshCurrentViewRef.current();
+        }
+      };
+
       // Scan directory with feedback & parent_id propagation
       const handleScanDirectory = async (customPath) => {
         if (importLockRef.current) return;
         const targetPath = (customPath || scanDirPath || '').trim();
         if (!targetPath) return;
 
-        importLockRef.current = true;
-        setIsImporting(true);
-        setImportNotice('正在抽取视频参数并生成 4x4 故事板大图，请稍候...');
-
-        try {
-          const res = await fetch('/api/video-manager/folders/scan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              directory_path: targetPath,
-              parent_id: selectedFolderId || null
-            })
-          });
-          const data = await res.json();
-          if (data.success) {
-            setShowScanModal(false);
-            await refreshCurrentViewRef.current();
-            alert(`成功导入 ${data.imported_count} 个视频！`);
-          } else {
-            alert('扫描导入失败，部分素材可能已导入，列表将刷新：' + (data.error || '未知错误'));
-          }
-        } catch (e) {
-          alert('扫描异常: ' + e.message);
-        } finally {
-          importLockRef.current = false;
-          setIsImporting(false);
-          setImportNotice('');
-          await refreshCurrentViewRef.current();
-        }
+        await startVideoImport('/api/video-manager/folders/scan', { directory_path: targetPath, parent_id: selectedFolderId || null });
       };
 
       const handleScanSelectedFolders = async () => {
@@ -2011,19 +2050,10 @@ window.__ModuleLoader__.load({
         if(importLockRef.current||!directoryPaths.length||!browserData?.current_path)return;
         if(directoryPaths.length>50){alert('一次最多选择 50 个子文件夹。');return;}
         if(!window.confirm(`将递归导入 ${directoryPaths.length} 个所选文件夹中的所有视频，并把它们作为当前素材分类的子分类。源视频不会复制或修改。继续？`))return;
-        importLockRef.current=true;setIsImporting(true);setImportNotice(`正在扫描 ${directoryPaths.length} 个子文件夹并生成故事板，请稍候...`);
-        try{
-          const response=await fetch('/api/video-manager/folders/scan-selected',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            parent_directory_path:browserData.current_path,directory_paths:directoryPaths,parent_id:selectedFolderId||null
-          })});
-          const data=await response.json();
-          if(!response.ok||!data.success)throw new Error(data.error||'多文件夹导入失败');
-          const failures=(data.folders||[]).filter(folder=>folder.error||folder.failed_count>0);
-          setShowScanModal(false);await refreshCurrentViewRef.current();
-          if(failures.length)alert(`已扫描 ${data.scanned_count} 个文件夹，成功导入 ${data.imported_count} 个视频；${data.failed_count||failures.length} 个视频导入失败，涉及：${failures.map(item=>item.name).join('、')}。请检查权限或文件后重试。`);
-          else alert(`已将 ${data.scanned_count} 个子文件夹加入当前分类，共导入 ${data.imported_count} 个视频。`);
-        }catch(error){alert('多文件夹导入失败：'+(error?.message||'请检查目录和权限'));}
-        finally{importLockRef.current=false;setIsImporting(false);setImportNotice('');setSelectedBrowserFolders(new Set());await refreshCurrentViewRef.current();}
+        setSelectedBrowserFolders(new Set());
+        await startVideoImport('/api/video-manager/folders/scan-selected', {
+          parent_directory_path: browserData.current_path, directory_paths: directoryPaths, parent_id: selectedFolderId || null
+        });
       };
 
       // Import selected video files directly (supports multiple / select all)
@@ -2031,35 +2061,8 @@ window.__ModuleLoader__.load({
         const targetPaths = filePathsOverride || Array.from(selectedBrowserFiles);
         if (importLockRef.current || !targetPaths || targetPaths.length === 0) return;
 
-        importLockRef.current = true;
-        setIsImporting(true);
-        setImportNotice(`正在导入 ${targetPaths.length} 个视频并抽取故事板，请稍候...`);
-
-        try {
-          const res = await fetch('/api/video-manager/videos/import-files', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              file_paths: targetPaths,
-              folder_id: selectedFolderId || null
-            })
-          });
-          const data = await res.json();
-          if (data.success) {
-            setShowScanModal(false);
-            await refreshCurrentViewRef.current();
-            alert(`成功导入 ${data.imported_count} 个视频！`);
-          } else {
-            alert('导入失败，部分素材可能已导入，列表将刷新：' + data.error);
-          }
-        } catch (e) {
-          alert('导入异常: ' + e.message);
-        } finally {
-          importLockRef.current = false;
-          setIsImporting(false);
-          setImportNotice('');
-          await refreshCurrentViewRef.current();
-        }
+        setSelectedBrowserFiles(new Set());
+        await startVideoImport('/api/video-manager/videos/import-files', { file_paths: targetPaths, folder_id: selectedFolderId || null });
       };
 
       const handleCreateFolder = async () => {
@@ -2455,6 +2458,45 @@ window.__ModuleLoader__.load({
           onSettings: () => { loadAiSettings(); loadShotAnalysisSettings(); setShowSettingsModal(true); },
           buttonStyle: buttonSecondaryStyle
         }),
+        importProgress && h('div', {
+          role: 'status', 'aria-live': 'polite', 'aria-label': '视频导入进度',
+          style: { position: 'absolute', right: '16px', bottom: '16px', zIndex: 80, width: 'min(360px, calc(100% - 32px))',
+            padding: '12px', borderRadius: '8px', backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+            border: '1px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-primary)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: '12px' }
+        },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' } },
+            h('strong', null, ['starting', 'initializing', 'scanning'].includes(importProgress.status) ? '正在统计待导入视频…' :
+              importProgress.status === 'connection_error' ? '进度连接中断' : importProgress.status === 'failed' ? '导入失败' :
+              ['queued', 'running', 'importing', 'storyboarding'].includes(importProgress.status) ? '视频导入中' :
+              importProgress.status === 'completed_with_errors' ? '导入完成（部分失败）' : '视频导入完成'),
+            !['starting', 'initializing', 'scanning', 'queued', 'running', 'importing', 'storyboarding'].includes(importProgress.status) && h('button', {
+              type: 'button', style: buttonSecondaryStyle, onClick: () => {
+                importLockRef.current = false; setIsImporting(false);
+                try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+                setImportProgress(null);
+              }, 'aria-label': '关闭导入进度'
+            }, '关闭')
+          ),
+          importProgress.total_known === false && h('div', { style: { marginTop: '7px' } }, `正在扫描，已发现 ${importProgress.discovered || 0} 个视频${importProgress.requested_count ? `（已选择 ${importProgress.requested_count} 项）` : ''}…`),
+          importProgress.total != null && importProgress.total_known !== false && h('div', { style: { marginTop: '7px', lineHeight: '1.6' } },
+            `发现 ${importProgress.total} 个视频 · 需导入 ${importProgress.importable ?? '计算中'} 个`,
+            h('br'), `已判定 ${importProgress.processed || 0} · 全流程完成 ${importProgress.completed || 0}`,
+            h('br'), `新增 ${importProgress.inserted || 0} · 已存在 ${importProgress.duplicates || 0}${importProgress.input_duplicates ? ` · 重复选择 ${importProgress.input_duplicates}` : ''} · 失败 ${importProgress.failed || 0}`,
+            h('br'), `故事板 ${importProgress.storyboard_done || 0}/${importProgress.storyboard_total || 0}${importProgress.storyboard_failed ? ` · 失败 ${importProgress.storyboard_failed}` : ''}`
+          ),
+          importProgress.total_known !== false && Number.isFinite(importProgress.percent) && h('progress', { max: 100, value: Math.max(0, Math.min(100, importProgress.percent)),
+            'aria-label': '导入及故事板进度', style: { display: 'block', width: '100%', marginTop: '8px' } }),
+          importProgress.error && h('div', { style: { color: 'var(--dsw-alias-state-error-primary)', marginTop: '6px', overflowWrap: 'anywhere' } }, importProgress.error),
+          Array.isArray(importProgress.items) && importProgress.items.some(item => item.error_code) && h('details', { style: { marginTop: '6px' } },
+            h('summary', { style: { cursor: 'pointer' } }, '查看失败项'),
+            h('div', { style: { maxHeight: '120px', overflowY: 'auto', overflowWrap: 'anywhere' } },
+              importProgress.items.filter(item => item.error_code).map((item, index) => h('div', { key: `${item.video_id || item.file_name || 'item'}-${index}` }, `${item.file_name || '视频'}：${item.error_code}`)))
+          ),
+          importProgress.items_omitted > 0 && h('div', { style: { marginTop: '4px', color: 'var(--dsw-alias-label-secondary)' } }, `进度明细已截断，另有 ${importProgress.items_omitted} 项未显示。`),
+          importProgress.status === 'connection_error' && importProgress.id && h('button', { type: 'button', style: buttonSecondaryStyle,
+            onClick: () => { importLockRef.current = true; setIsImporting(true); setImportProgress(current => ({ ...current, status: 'running', error: null })); } }, '重试读取进度')
+        ),
         activeLibrary === 'music' && h(MusicLibraryWorkbench, {
               isMobile, mobileTab, setMobileTab, isDraggingRef,
               layout: { bodyStyle, leftColStyle, midColStyle, rightColStyle },
@@ -2656,6 +2698,14 @@ window.__ModuleLoader__.load({
 
                 return h('div', {
                   key: v.id,
+                  onMouseEnter: () => setSummaryVideoId(v.id),
+                  onMouseLeave: () => setSummaryVideoId(current => current === v.id ? null : current),
+                  onFocus: () => setSummaryVideoId(v.id),
+                  onBlur: e => { if (!e.currentTarget.contains(e.relatedTarget)) setSummaryVideoId(null); },
+                  tabIndex: 0,
+                  title: v.summary || undefined,
+                  'aria-describedby': summaryVideoId === v.id && v.summary ? `video-summary-${v.id}` : undefined,
+                  onKeyDown: e => { if (e.key === 'Escape') setSummaryVideoId(null); else if (e.key === 'Enter' && e.target === e.currentTarget) loadVideoDetail(v.id); },
                   onClick: () => loadVideoDetail(v.id),
                   style: {
                     backgroundColor: 'var(--dsw-alias-bg-layer-1)',
@@ -2706,7 +2756,13 @@ window.__ModuleLoader__.load({
                           style: { width: '100%', height: '100%', objectFit: 'cover' },
                           alt: v.file_name
                         })
-                      : h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px' } }, '无故事板大图'),
+                      : h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '11px' } },
+                          v.storyboard_status === 'pending' ? '故事板等待处理' : v.storyboard_status === 'generating' ? '正在生成故事板…' :
+                          v.storyboard_status === 'failed' ? '故事板生成失败' : v.storyboard_status === 'not_started' ? '故事板未生成' : '无故事板大图'),
+                    v.storyboard_status && v.storyboard_status !== 'ready' && h('span', {
+                      style: { position: 'absolute', top: '6px', right: '6px', padding: '2px 5px', borderRadius: '3px',
+                        backgroundColor: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', fontSize: '10px', zIndex: 5 }
+                    }, v.storyboard_status === 'pending' ? '故事板排队' : v.storyboard_status === 'generating' ? '故事板生成中' : v.storyboard_status === 'not_started' ? '故事板未生成' : '故事板失败'),
                     // Duration badge
                     h('span', {
                       style: {
@@ -2741,6 +2797,15 @@ window.__ModuleLoader__.load({
                       }
                     }, isQueued ? '排队中' : isCurrentAnalyzing ? '分析中...' : (v.status === 'analyzed' ? '已分析' : v.status === 'error' ? '分析失败' : '待分析'))
                   ),
+
+                  summaryVideoId === v.id && !isMenuOpen && v.summary && h('div', {
+                    role: 'tooltip', id: `video-summary-${v.id}`,
+                    style: { position: 'absolute', left: '6px', right: '6px', top: isMobile ? '100%' : '120px', zIndex: 15,
+                      padding: '10px', borderRadius: '6px', border: '1px solid var(--dsw-alias-border-l2)',
+                      backgroundColor: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: '12px', lineHeight: '1.5',
+                      maxHeight: '240px', overflow: 'hidden', overflowWrap: 'anywhere', pointerEvents: 'none' }
+                  }, h('strong', { style: { display: 'block', marginBottom: '4px' } }, '视频摘要'), v.summary),
 
                   // Popup Menu
                   isMenuOpen && h('div', {

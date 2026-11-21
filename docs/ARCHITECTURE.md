@@ -312,26 +312,29 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 [用户在图形化浏览器中操作]
    │
    ├─► 场景 A: 选中具体视频文件 (单选/多选/全选)
-   │     └─► 触发 /api/video-manager/videos/import-files
+   │     └─► 触发 POST /api/video-manager/videos/import-files
    │
-   └─► 场景 B: 点击 "扫描导入当前文件夹"
-         └─► 触发 /api/video-manager/videos/scan-dir
+   └─► 场景 B: 点击 "扫描导入当前文件夹" 或多选子文件夹
+         └─► 触发 POST /api/video-manager/folders/scan 或 /folders/scan-selected
                │
                ▼
-   [Host 端 MediaEngine 递归处理]
-   1. 获取当前目标挂载 parent_id（若选中了目录则以此为父节点，否则为根）
-   2. 递归遍历磁盘物理子目录结构：
-      保持 "甘南环线旅游 ➔ 扎尕那" 层级，调用 ensureFolder 逐级落库
-   3. 对遍历到的每个视频文件执行并发扫描：
-      ├─ 检查视频是否已在库中 (基于 file_path 幂等防重)
-      ├─ 调用 ffprobe 提取精准宽高、帧率、编码、码率与时长
-      ├─ 调用 ffmpeg 自动抽取合成 4x4 故事板雪碧图
-      └─ 写入 videos 表，状态设为 'imported'
-   4. 前端收到成功响应，自动关闭弹窗并刷新左侧目录树与中栏视频流
+   [POST 立即创建导入任务并返回 job，不等待扫描/入库/故事板]
+   └─► 客户端关闭导入弹窗，显示悬浮进度并轮询 GET /import-jobs/:id
+         │
+         ▼
+   [后台 VideoImportJobManager]
+   1. 流式递归枚举目录，让出事件循环；路径规范化、realpath 与请求内去重
+   2. 扫描完成后固定 total 与 importable，避免把进行中的数量当成最终值
+   3. 逐视频确认源文件未变化 → ffprobe → 立即写入 videos 表（列表可见）
+      已存在记录跳过并计数 duplicates，不重复探测或覆盖已有元数据
+   4. 独立故事板队列以有限并发生成；只更新仍存在且 file_path 匹配的行
+      storyboard_status 为 pending/generating/ready/failed/not_started
+   5. 任务进入 completed / completed_with_errors / failed，前端刷新列表
 ```
 
-- **防重复并发锁 (`isImporting`)**：
-  点击导入按钮瞬间激活前端全局锁，按钮变为 `disabled` 并展示转圈动画与友好黄色通知条，彻底杜绝多次狂点引发的重复探测与并发请求。
+- **重复不是失败**：同一请求内重复路径、不同路径指向同一文件和库内已有记录都会跳过；`inserted` 只统计本次新增行，`duplicates` 与 `failed` 分开。POST 旧入口兼容返回 `imported_count:0`，调用方应以 `job`/`job_id` 跟踪结果。Agent 的旧导入工具仍同步等待任务与故事板完成并返回旧汇总结构。
+- **导入中断恢复**：服务重启后重试 `pending/generating` 故事板；`not_started` 表示迁移前的旧记录，不会全库重算。`ready` 但缓存文件已丢失的记录会重新生成。
+- **前端防止重复提交**：导入期间全局锁阻止再次发起；进度面板支持从会话内恢复未完成任务，任务过期或服务重启后会清除恢复令牌。
 - **自底向上目录计数累加 (Rollup Counts)**：
   父目录的视频数量和已分析数量不再局限于直属视频，而是通过 `getAllDescendantFolderIds` 自底向上递归累加整个子树的统计（如父目录正确呈现 `1/9`）。
 
@@ -508,7 +511,8 @@ Host 端在 `/api/video-manager` 前缀下注册以下 HTTP 接口：
 | `POST` | `/videos/:id/ai-analyze` | 直驱触发单片 AI 深度分析 | - |
 | `POST` | `/videos/batch-ai-analyze`| 批量排队触发 AI 分析 | `{ video_ids: string[] }` |
 | `POST` | `/videos/scan-dir` | 扫描本地物理文件夹镜像导入 | `{ directory_path, parent_id? }` |
-| `POST` | `/videos/import-files` | 导入指定单个/多个视频文件 | `{ file_paths: string[], folder_id? }` |
+| `POST` | `/videos/import-files` | 创建异步导入任务（文件） | `{ file_paths: string[], folder_id? }` → `{ job, job_id }` |
+| `GET` | `/import-jobs/:id` | 轮询导入、去重与故事板进度 | - |
 | `GET` | `/fs/browse` | 跨磁盘驱动器浏览本地目录/文件 | `dir_path` |
 | `GET` | `/stream/:id` | HTTP 206 视频分片流式播放 | 支持 `Range: bytes=start-end` |
 | `GET` | `/storyboard/:id` | 获取 4x4 故事板大图 JPEG | - |
