@@ -333,6 +333,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 ```
 
 - **重复不是失败**：同一请求内重复路径、不同路径指向同一文件和库内已有记录都会跳过；`inserted` 只统计本次新增行，`duplicates` 与 `failed` 分开。POST 旧入口兼容返回 `imported_count:0`，调用方应以 `job`/`job_id` 跟踪结果。Agent 的旧导入工具仍同步等待任务与故事板完成并返回旧汇总结构。
+- **中断与继续**：`POST /import-jobs/:id` 请求中断，后台在扫描、入库和故事板队列间检查取消标记并转为 `cancelled`。客户端保留原始导入请求，可在悬浮进度中一键重发；去重使已入库项跳过，因此继续是安全的。任务过期或服务重启后也可从本地保留的请求重新开始。
+- **兼容预览**：HEVC 等浏览器不支持的编码通过按需 FFmpeg 转码为 720p H.264/AAC 缓存（`cache/previews/`），源文件只读；界面显示生成状态并在完成后切换播放地址。也可通过 `POST /videos/:id/open` 调用操作系统默认播放器打开原始文件，不转码、不复制。
+- **缓存管理**：`GET /cache` 统计故事板、兼容预览、关键帧和音乐频谱图占用；`POST /cache/clear` 支持只清理预览或一键清理全部衍生缓存。清理故事板目录时同步清空数据库中的故事板路径并重置状态，源视频不受影响。
+- **故事板超时与重试**：生成超时随视频时长放宽（最多 15 分钟），超时与 FFmpeg 失败分开记录；视频卡片菜单可强制重新生成。
 - **导入中断恢复**：服务重启后重试 `pending/generating` 故事板；`not_started` 表示迁移前的旧记录，不会全库重算。`ready` 但缓存文件已丢失的记录会重新生成。
 - **前端防止重复提交**：导入期间全局锁阻止再次发起；进度面板支持从会话内恢复未完成任务，任务过期或服务重启后会清除恢复令牌。
 - **自底向上目录计数累加 (Rollup Counts)**：
@@ -513,8 +517,15 @@ Host 端在 `/api/video-manager` 前缀下注册以下 HTTP 接口：
 | `POST` | `/videos/scan-dir` | 扫描本地物理文件夹镜像导入 | `{ directory_path, parent_id? }` |
 | `POST` | `/videos/import-files` | 创建异步导入任务（文件） | `{ file_paths: string[], folder_id? }` → `{ job, job_id }` |
 | `GET` | `/import-jobs/:id` | 轮询导入、去重与故事板进度 | - |
+| `POST` | `/import-jobs/:id` | 中断正在运行的导入任务 | - |
+| `POST` | `/videos/:id/open` | 用操作系统默认播放器打开原视频（不转码） | - |
+| `GET/POST` | `/videos/:id/preview` | 查询或启动 HEVC 等编码的 H.264 兼容预览转码 | - |
+| `DELETE` | `/videos/:id/preview` | 删除该视频的兼容预览缓存 | - |
+| `GET` | `/cache` | 统计故事板、预览、关键帧、音乐频谱缓存占用 | - |
+| `POST` | `/cache/clear` | 清理衍生缓存（`scope: previews|all`） | `{ scope? }` |
 | `GET` | `/fs/browse` | 跨磁盘驱动器浏览本地目录/文件 | `dir_path` |
-| `GET` | `/stream/:id` | HTTP 206 视频分片流式播放 | 支持 `Range: bytes=start-end` |
+| `GET` | `/stream/:id` | HTTP 206 视频分片流式播放；`?preview=1` 使用兼容转码缓存 | 支持 `Range: bytes=start-end` |
+| `POST` | `/storyboard/:id` | 强制重新生成当前视频故事板 | - |
 | `GET` | `/storyboard/:id` | 获取 4x4 故事板大图 JPEG | - |
 | `GET` | `/keyframe/:id/:idx` | 获取分镜关键帧 JPEG | - |
 | `POST` | `/export` | 导出剪辑工程 (剪映/FCPXML/EDL) | `{ format, sequence_name, clips }` |

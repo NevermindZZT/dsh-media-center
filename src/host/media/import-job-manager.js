@@ -7,7 +7,7 @@ const JOB_RETENTION_MS=24*60*60*1000;
 const MAX_RETAINED_JOBS=200;
 const MAX_JOB_ITEMS=100;
 const MAX_ERRORS=100;
-const TERMINAL=new Set(['completed','completed_with_errors','failed']);
+const TERMINAL=new Set(['completed','completed_with_errors','failed','cancelled']);
 
 function pathKey(value){
   const normalized=path.normalize(path.resolve(value));
@@ -90,6 +90,11 @@ export class VideoImportJobManager {
     return {imported_count:internal.inserted,duplicates_count:internal.duplicates,failed_count:internal.import_failed,videos};
   }
 
+  cancelJob(jobId){
+    const job=this.jobs.get(jobId);if(!job||TERMINAL.has(job.status))return this.get(jobId);
+    job.cancel_requested=true;this.#touch(job);return this.#snapshot(job);
+  }
+
   cancelForVideo(videoId){
     const record=this.db.getVideoImportRecord(videoId);if(!record)return false;
     const key=pathKey(record.file_path);this.pathDeletionTimes.set(key,Date.now());
@@ -143,7 +148,7 @@ export class VideoImportJobManager {
       items:visible.map(item=>({video_id:item.video_id||null,file_name:item.file_name,group_name:item.group_name||null,stage:item.stage,status:item.status,
         storyboard_status:item.storyboard_status||null,error_code:item.error_code||null,warning_code:item.warning_code||null,newly_inserted:!!item.newly_inserted})),
       items_omitted:Math.max(0,items.length-visible.length),errors:(job.errors||[]).slice(0,MAX_ERRORS),errors_omitted:Math.max(0,(job.errors||[]).length-MAX_ERRORS),
-      error_code:job.error_code||null,error_message:job.error_message||null};
+      error_code:job.error_code||null,error_message:job.error_message||null,cancel_requested:!!job.cancel_requested};
   }
 
   #touch(job){
@@ -181,6 +186,7 @@ export class VideoImportJobManager {
   }
 
   async #addCandidate(inputPath,folderId,groupName,job,plan,seen,index){
+    if(job.cancel_requested)throw Object.assign(new Error('Import cancelled'),{code:'IMPORT_CANCELLED'});
     const fileName=safeFileName(inputPath);
     const rawKey=typeof inputPath==='string'&&path.isAbsolute(inputPath)?pathKey(inputPath):null;
     if(rawKey&&seen.has(rawKey)){job.input_duplicates++;this.#touch(job);return;}
@@ -232,6 +238,7 @@ export class VideoImportJobManager {
       catch{job.failed++;job.scan_errors=(job.scan_errors||0)+1;job.errors.push({file_name:safeFileName(currentDir),error_code:'DIRECTORY_READ_FAILED'});this.#touch(job);return;}
       entries.sort((a,b)=>a.name.localeCompare(b.name));
       for(const entry of entries){
+        if(job.cancel_requested)throw Object.assign(new Error('Import cancelled'),{code:'IMPORT_CANCELLED'});
         if(entry.name.startsWith('.')||entry.name.startsWith('$')||entry.isSymbolicLink())continue;
         const fullPath=path.join(currentDir,entry.name);
         if(entry.isDirectory()){
@@ -317,9 +324,11 @@ export class VideoImportJobManager {
       this.pathIndex=await this.#buildPathIndex();
       job.status='scanning';job.phase='scanning';this.#touch(job);
       const plan=await this.#buildPlan(job.request,job,this.pathIndex);
+      if(job.cancel_requested){this.#finishCancelled(job);return;}
       job.candidates=plan;job.status='importing';job.phase='importing';this.#touch(job);
       const storyboardQueue=[];
       for(const candidate of plan){
+        if(job.cancel_requested){this.#finishCancelled(job);return;}
         const item=candidate.item;
         if(item.cancel_requested){this.#markCancelled(job,item,'VIDEO_REMOVED_DURING_IMPORT');continue;}
         if(candidate.preflight_error){this.#markImportFailure(job,item,candidate.preflight_error);continue;}
@@ -354,6 +363,7 @@ export class VideoImportJobManager {
       let cursor=0;
       const worker=async()=>{
         while(cursor<storyboardQueue.length){
+          if(job.cancel_requested)return;
           const {candidate,record}=storyboardQueue[cursor++],item=candidate.item;
           if(item.cancel_requested){this.#markStoryboardCancelled(job,item,'VIDEO_REMOVED_DURING_IMPORT');continue;}
           const current=this.db.getVideoImportRecord(record.id);
@@ -373,9 +383,11 @@ export class VideoImportJobManager {
         }
       };
       await Promise.all(Array.from({length:Math.min(2,storyboardQueue.length)},()=>worker()));
-      this.#completeJob(job);
-    }catch(error){this.#failJob(jobId,this.#safeJobError(error));}
-    finally{
+      if(job.cancel_requested)this.#finishCancelled(job);else this.#completeJob(job);
+    }catch(error){
+      if(job.cancel_requested||error?.code==='IMPORT_CANCELLED')this.#finishCancelled(job);
+      else this.#failJob(jobId,this.#safeJobError(error));
+    }finally{
       const latest=this.jobs.get(jobId);
       if(latest&&TERMINAL.has(latest.status)&&this.requests.get(latest.request_signature)===jobId)this.requests.delete(latest.request_signature);
     }
@@ -384,7 +396,8 @@ export class VideoImportJobManager {
   #markImportFailure(job,item,errorCode,status='failed'){item.stage='completed';item.status=status;item.error_code=errorCode;job.import_failed++;job.failed++;job.processed++;job.completed++;job.errors.push({file_name:item.file_name,error_code:errorCode});this.#touch(job);}
   #markCancelled(job,item,errorCode){item.stage='completed';item.status='cancelled';item.error_code=errorCode;job.cancelled++;job.processed++;job.completed++;this.#touch(job);}
   #markStoryboardCancelled(job,item,errorCode){item.stage='completed';item.status='cancelled';item.storyboard_status='not_started';item.error_code=errorCode;job.cancelled++;job.storyboard_cancelled++;job.completed++;this.#touch(job);}
-  #completeJob(job){job.status=job.failed?'completed_with_errors':'completed';job.phase='completed';job.storyboard_pending=Math.max(0,job.storyboard_total-job.storyboard_done-job.storyboard_failed-job.storyboard_cancelled);this.#touch(job);}
+  #completeJob(job){if(job.cancel_requested){this.#finishCancelled(job);return;}job.status=job.failed?'completed_with_errors':'completed';job.phase='completed';job.storyboard_pending=Math.max(0,job.storyboard_total-job.storyboard_done-job.storyboard_failed-job.storyboard_cancelled);this.#touch(job);}
+  #finishCancelled(job){job.status='cancelled';job.phase='cancelled';job.percent=100;job.storyboard_pending=Math.max(0,job.storyboard_total-job.storyboard_done-job.storyboard_failed-job.storyboard_cancelled);this.#touch(job);}
   #failJob(jobId,errorCode){const job=this.jobs.get(jobId);if(!job)return;job.status='failed';job.phase='failed';job.error_code=errorCode;job.error_message=this.#jobErrorMessage(errorCode);job.total_known=true;job.total=job.discovered;job.failed++;job.errors.push({file_name:null,error_code:errorCode});this.#touch(job);}
   #safeJobError(error){const code=error?.code;if(['INVALID_PARENT_FOLDER','DIRECTORY_UNAVAILABLE','DIRECTORY_READ_FAILED','BROWSE_DIRECTORY_UNAVAILABLE','INVALID_CHILD_DIRECTORY','IMPORT_JOB_INVALID'].includes(code))return code;return 'IMPORT_JOB_FAILED';}
   #jobErrorMessage(code){return ({INVALID_PARENT_FOLDER:'目标父分类不存在，请刷新后重试',DIRECTORY_UNAVAILABLE:'目录不可用或不是文件夹',DIRECTORY_READ_FAILED:'读取目录失败',BROWSE_DIRECTORY_UNAVAILABLE:'当前浏览目录不可用',INVALID_CHILD_DIRECTORY:'所选项必须是当前浏览目录中的直接子文件夹',IMPORT_JOB_INVALID:'导入请求无效',IMPORT_JOB_FAILED:'导入任务失败，请检查目录权限和媒体状态'})[code]||'导入任务失败，请检查目录权限和媒体状态';}

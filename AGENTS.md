@@ -12,7 +12,7 @@
 2. **只读资产原则**：
    用户的视频、音乐及其他媒体资产可能是耗费巨大成本创作或取得的珍贵源文件。系统中的 `file_path` 字段仅作为引用指针。
 3. **允许清理的范围**：
-   删除操作**仅允许清除 SQLite 数据库中的相关记录**，以及 `.dsh-video-manager/cache/` 下由本插件生成的临时衍生缓存（故事板大图 `storyboards/`、分镜关键帧 `keyframes/`、音乐频谱图 `music-spectrograms/`、导出的草稿 `exports/`）。
+   删除操作**仅允许清除 SQLite 数据库中的相关记录**，以及 `.dsh-video-manager/cache/` 下由本插件生成的临时衍生缓存（故事板大图 `storyboards/`、分镜关键帧 `keyframes/`、兼容预览 `previews/`、音乐频谱图 `music-spectrograms/`、导出的草稿 `exports/`）。
 
 ### 🛑 Git 提交与版本管理纪律规范 (Strict Commit & Versioning Rules)
 1. **必须验证后方可提交**：

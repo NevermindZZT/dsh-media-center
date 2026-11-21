@@ -1090,6 +1090,7 @@ window.__ModuleLoader__.load({
       const [videos, setVideos] = useState([]);
       const [selectedFolderId, setSelectedFolderId] = useState(null);
       const [selectedVideo, setSelectedVideo] = useState(null);
+      const [previewInfo, setPreviewInfo] = useState(null);
       const [loading, setLoading] = useState(false);
       const [searchQuery, setSearchQuery] = useState('');
       const [statusFilter, setStatusFilter] = useState('');
@@ -1122,6 +1123,8 @@ window.__ModuleLoader__.load({
       // UI state
       const [activeTab, setActiveTab] = useState('shots'); // 'shots' | 'audio' | 'meta'
       const [showSettingsModal, setShowSettingsModal] = useState(false);
+      const [cacheUsage, setCacheUsage] = useState(null);
+      const [cacheBusy, setCacheBusy] = useState(false);
       const [activeLibrary,setActiveLibrary]=useState('video');
       const [showScanModal, setShowScanModal] = useState(false);
       const [showNewFolderModal, setShowNewFolderModal] = useState(false);
@@ -1142,8 +1145,16 @@ window.__ModuleLoader__.load({
       const importLockRef = useRef(false);
       const [importNotice, setImportNotice] = useState('');
       const [importProgress, setImportProgress] = useState(() => {
-        try { const id = window.sessionStorage.getItem('dsh-video-manager-active-import'); return id ? { id, status: 'running' } : null; }
-        catch { return null; }
+        try {
+          const id = window.sessionStorage.getItem('dsh-video-manager-active-import');
+          if (id) return { id, status: 'running' };
+          const pending = JSON.parse(window.localStorage.getItem('dsh-video-manager-pending-import') || 'null');
+          if (pending?.url) return { status: 'interrupted', total: null };
+          return null;
+        } catch { return null; }
+      });
+      const [pendingImport, setPendingImport] = useState(() => {
+        try { return JSON.parse(window.localStorage.getItem('dsh-video-manager-pending-import') || 'null'); } catch { return null; }
       });
 
       // AI Analysis Running States
@@ -1402,7 +1413,7 @@ window.__ModuleLoader__.load({
             const response = await fetch(`/api/video-manager/import-jobs/${encodeURIComponent(importProgress.id)}`);
             if (response.status === 404) {
               if (!cancelled) {
-                setImportProgress({ status: 'failed', error: '后台导入任务已不可查询（服务可能已重启）；请刷新列表并按需重新导入。' });
+                setImportProgress({ status: 'interrupted', error: '后台任务已不可查询；可从此处继续本次导入。' });
                 importLockRef.current = false; setIsImporting(false);
                 try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
                 await refreshCurrentViewRef.current();
@@ -1417,6 +1428,7 @@ window.__ModuleLoader__.load({
             if (!active) {
               importLockRef.current = false; setIsImporting(false);
               try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+              if (['completed', 'completed_with_errors'].includes(data.job.status)) clearPendingImport();
             }
             await refreshCurrentViewRef.current();
             if (!cancelled && active) timer = setTimeout(poll, 1200);
@@ -1427,6 +1439,45 @@ window.__ModuleLoader__.load({
         timer = setTimeout(poll, 500);
         return () => { cancelled = true; clearTimeout(timer); };
       }, [importProgress?.id, importProgress?.status]);
+
+      useEffect(() => {
+        if (!videos.some(v => ['pending', 'generating'].includes(v.storyboard_status))) return;
+        const timer = setInterval(() => { refreshCurrentViewRef.current(); }, 3000);
+        return () => clearInterval(timer);
+      }, [videos]);
+
+      useEffect(() => {
+        const id = selectedVideo?.id;
+        setPreviewInfo(null);
+        if (!id) return;
+        let cancelled = false;
+        fetch(`/api/video-manager/videos/${encodeURIComponent(id)}/preview`)
+          .then(response => response.json())
+          .then(data => { if (!cancelled && data.success) setPreviewInfo(data.preview); })
+          .catch(() => { if (!cancelled) setPreviewInfo({ required: false, status: 'unknown' }); });
+        return () => { cancelled = true; };
+      }, [selectedVideo?.id]);
+
+      const loadCacheUsage = async () => {
+        try {
+          const response = await fetch('/api/video-manager/cache');
+          const data = await response.json();
+          if (data.success) setCacheUsage(data.usage || null);
+        } catch {}
+      };
+      const clearPluginCache = async (scope) => {
+        if (cacheBusy) return;
+        if (!window.confirm(scope === 'previews' ? '仅清理兼容预览缓存？源视频与故事板不受影响。' : '清理故事板、预览、关键帧和音乐频谱图缓存？源视频不受影响，故事板需要重新生成。')) return;
+        setCacheBusy(true);
+        try {
+          const response = await fetch('/api/video-manager/cache/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || '清理缓存失败');
+          setCacheUsage(data.usage || null);
+          await refreshCurrentViewRef.current();
+        } catch (error) { alert('清理缓存失败：' + (error.message || '未知错误')); }
+        finally { setCacheBusy(false); }
+      };
 
       // 5. Load AI Settings
       const loadAiCatalog = async () => {
@@ -2010,12 +2061,22 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const rememberPendingImport = (url, body) => {
+        const pending = { url, body, saved_at: new Date().toISOString() };
+        setPendingImport(pending);
+        try { window.localStorage.setItem('dsh-video-manager-pending-import', JSON.stringify(pending)); } catch {}
+      };
+      const clearPendingImport = () => {
+        setPendingImport(null);
+        try { window.localStorage.removeItem('dsh-video-manager-pending-import'); } catch {}
+      };
       const startVideoImport = async (url, body) => {
         if (importLockRef.current) return;
         importLockRef.current = true;
         setIsImporting(true);
         setShowScanModal(false);
         setImportNotice('');
+        rememberPendingImport(url, body);
         setImportProgress({ status: 'starting', total: null, completed: 0 });
         try {
           const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -2024,7 +2085,8 @@ window.__ModuleLoader__.load({
           try { window.sessionStorage.setItem('dsh-video-manager-active-import', data.job.id); } catch {}
           setImportProgress(data.job);
           await refreshCurrentViewRef.current();
-          if (!['queued', 'running', 'initializing', 'scanning', 'importing', 'storyboarding'].includes(data.job.status)) {
+          if (['completed', 'completed_with_errors'].includes(data.job.status)) {
+            clearPendingImport();
             importLockRef.current = false; setIsImporting(false);
             try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
           }
@@ -2033,6 +2095,60 @@ window.__ModuleLoader__.load({
           importLockRef.current = false;
           setIsImporting(false);
           await refreshCurrentViewRef.current();
+        }
+      };
+      const cancelVideoImport = async () => {
+        if (!importProgress?.id) return;
+        try {
+          const response = await fetch(`/api/video-manager/import-jobs/${encodeURIComponent(importProgress.id)}`, { method: 'POST' });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || '无法中断导入');
+          setImportProgress(data.job);
+        } catch (error) { setImportProgress(current => ({ ...current, error: error.message || '无法中断导入' })); }
+      };
+      const resumeVideoImport = async () => {
+        if (!pendingImport?.url) return;
+        await startVideoImport(pendingImport.url, pendingImport.body);
+      };
+      const regenerateStoryboard = async (videoId) => {
+        try {
+          const response = await fetch(`/api/video-manager/videos/${encodeURIComponent(videoId)}/storyboard`, { method: 'POST' });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || '无法重新生成故事板');
+          setVideos(current => current.map(video => video.id === videoId ? { ...video, storyboard_status: 'generating', storyboard_error: null } : video));
+        } catch (error) { alert('重新生成故事板失败：' + (error.message || '未知错误')); }
+      };
+      const clearCompatiblePreview = async (videoId) => {
+        try {
+          await fetch(`/api/video-manager/videos/${encodeURIComponent(videoId)}/preview`, { method: 'DELETE' });
+          if (selectedVideo?.id === videoId) setPreviewInfo(current => current?.required ? { ...current, status: 'missing' } : current);
+        } catch {}
+      };
+      const openInSystemPlayer = async (videoId) => {
+        try {
+          const response = await fetch(`/api/video-manager/videos/${encodeURIComponent(videoId)}/open`, { method: 'POST' });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || '无法打开系统播放器');
+        } catch (error) { alert('打开原视频失败：' + (error.message || '请检查源文件是否可用')); }
+      };
+      const startCompatiblePreview = async () => {
+        if (!selectedVideo?.id) return;
+        setPreviewInfo(current => ({ ...current, status: 'generating' }));
+        try {
+          const response = await fetch(`/api/video-manager/videos/${encodeURIComponent(selectedVideo.id)}/preview`, { method: 'POST' });
+          const data = await response.json();
+          if (!response.ok || !data.success) throw new Error(data.error || '无法生成兼容预览');
+          setPreviewInfo(data.preview);
+          const poll = async () => {
+            const statusResponse = await fetch(`/api/video-manager/videos/${encodeURIComponent(selectedVideo.id)}/preview`);
+            const statusData = await statusResponse.json();
+            if (!statusData.success) return;
+            setPreviewInfo(statusData.preview);
+            if (['missing', 'generating'].includes(statusData.preview?.status)) setTimeout(poll, 2000);
+          };
+          setTimeout(poll, 1500);
+        } catch (error) {
+          setPreviewInfo(current => ({ ...current, status: 'failed', error: error.message || '兼容预览生成失败' }));
         }
       };
 
@@ -2455,11 +2571,10 @@ window.__ModuleLoader__.load({
           active: activeLibrary,
           onSelect: tab => { setActiveLibrary(tab); setShowSettingsModal(false); setShowExportModal(false); setShowScanModal(false); setShowBatchMoveModal(false); setShowNewFolderModal(false); setRenamingFolder(null); },
           isMobile, status,
-          onSettings: () => { loadAiSettings(); loadShotAnalysisSettings(); setShowSettingsModal(true); },
+          onSettings: () => { loadAiSettings(); loadShotAnalysisSettings(); loadCacheUsage(); setShowSettingsModal(true); },
           buttonStyle: buttonSecondaryStyle
         }),
-        importProgress && h('div', {
-          role: 'status', 'aria-live': 'polite', 'aria-label': '视频导入进度',
+        importProgress && h('div', {          role: 'status', 'aria-live': 'polite', 'aria-label': '视频导入进度',
           style: { position: 'absolute', right: '16px', bottom: '16px', zIndex: 80, width: 'min(360px, calc(100% - 32px))',
             padding: '12px', borderRadius: '8px', backgroundColor: 'var(--dsw-alias-bg-layer-1)',
             border: '1px solid var(--dsw-alias-border-l2)', color: 'var(--dsw-alias-label-primary)',
@@ -2468,15 +2583,29 @@ window.__ModuleLoader__.load({
           h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' } },
             h('strong', null, ['starting', 'initializing', 'scanning'].includes(importProgress.status) ? '正在统计待导入视频…' :
               importProgress.status === 'connection_error' ? '进度连接中断' : importProgress.status === 'failed' ? '导入失败' :
+              importProgress.status === 'cancelled' || importProgress.status === 'interrupted' ? '导入已中断' :
+              importProgress.status === 'cancelling' ? '正在中断导入…' :
               ['queued', 'running', 'importing', 'storyboarding'].includes(importProgress.status) ? '视频导入中' :
               importProgress.status === 'completed_with_errors' ? '导入完成（部分失败）' : '视频导入完成'),
-            !['starting', 'initializing', 'scanning', 'queued', 'running', 'importing', 'storyboarding'].includes(importProgress.status) && h('button', {
+            !['starting', 'initializing', 'scanning', 'queued', 'running', 'importing', 'storyboarding', 'cancelling'].includes(importProgress.status) && h('button', {
               type: 'button', style: buttonSecondaryStyle, onClick: () => {
                 importLockRef.current = false; setIsImporting(false);
                 try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
                 setImportProgress(null);
               }, 'aria-label': '关闭导入进度'
             }, '关闭')
+          ),
+          h('div', { style: { display: 'flex', gap: '6px', marginTop: '8px' } },
+            ['queued', 'running', 'initializing', 'scanning', 'importing', 'storyboarding'].includes(importProgress.status) && !importProgress.cancel_requested && h('button', {
+              type: 'button', style: buttonSecondaryStyle, onClick: cancelVideoImport, 'aria-label': '中断视频导入'
+            }, '中断导入'),
+            importProgress.cancel_requested && h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '正在停止当前处理…'),
+            ['cancelled', 'interrupted', 'failed', 'connection_error'].includes(importProgress.status) && pendingImport && h('button', {
+              type: 'button', style: buttonPrimaryStyle, onClick: resumeVideoImport, 'aria-label': '继续上次视频导入'
+            }, '继续导入'),
+            (importProgress.status === 'cancelled' || importProgress.status === 'interrupted') && pendingImport && h('button', {
+              type: 'button', style: buttonSecondaryStyle, onClick: () => { clearPendingImport(); setImportProgress(null); }
+            }, '放弃本次导入')
           ),
           importProgress.total_known === false && h('div', { style: { marginTop: '7px' } }, `正在扫描，已发现 ${importProgress.discovered || 0} 个视频${importProgress.requested_count ? `（已选择 ${importProgress.requested_count} 项）` : ''}…`),
           importProgress.total != null && importProgress.total_known !== false && h('div', { style: { marginTop: '7px', lineHeight: '1.6' } },
@@ -2496,6 +2625,11 @@ window.__ModuleLoader__.load({
           importProgress.items_omitted > 0 && h('div', { style: { marginTop: '4px', color: 'var(--dsw-alias-label-secondary)' } }, `进度明细已截断，另有 ${importProgress.items_omitted} 项未显示。`),
           importProgress.status === 'connection_error' && importProgress.id && h('button', { type: 'button', style: buttonSecondaryStyle,
             onClick: () => { importLockRef.current = true; setIsImporting(true); setImportProgress(current => ({ ...current, status: 'running', error: null })); } }, '重试读取进度')
+        ),
+        !importProgress && pendingImport && h('div', { role: 'status', 'aria-label': '未完成的视频导入', style: { position: 'absolute', right: '16px', bottom: '16px', zIndex: 79, display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderRadius: '8px', backgroundColor: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-l2)', boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: '12px', color: 'var(--dsw-alias-label-primary)' } },
+          '有未完成的视频导入',
+          h('button', { type: 'button', style: buttonPrimaryStyle, onClick: resumeVideoImport, 'aria-label': '继续上次视频导入' }, '继续导入'),
+          h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => clearPendingImport() }, '忽略')
         ),
         activeLibrary === 'music' && h(MusicLibraryWorkbench, {
               isMobile, mobileTab, setMobileTab, isDraggingRef,
@@ -2824,6 +2958,34 @@ window.__ModuleLoader__.load({
                       }
                     }, Icon.sparkles({ size: 12, color: '#3b82f6' }), isQueued ? '排队中' : isCurrentAnalyzing ? '分析中...' : '直接 AI 深度分析'),
                     h('div', {
+                      style: { ...contextMenuItemStyle, opacity: v.storyboard_status === 'generating' ? 0.5 : 1, cursor: v.storyboard_status === 'generating' ? 'not-allowed' : 'pointer' },
+                      onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
+                      onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
+                      onClick: () => {
+                        if (v.storyboard_status === 'generating') return;
+                        setActiveVideoMenuId(null);
+                        regenerateStoryboard(v.id);
+                      }
+                    }, Icon.clapperboard({ size: 12 }), '重新生成故事板'),
+                    h('div', {
+                      style: contextMenuItemStyle,
+                      onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
+                      onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
+                      onClick: () => {
+                        setActiveVideoMenuId(null);
+                        clearCompatiblePreview(v.id);
+                      }
+                    }, Icon.film({ size: 12 }), '清除兼容预览缓存'),
+                    h('div', {
+                      style: contextMenuItemStyle,
+                      onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
+                      onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
+                      onClick: () => {
+                        setActiveVideoMenuId(null);
+                        openInSystemPlayer(v.id);
+                      }
+                    }, Icon.play({ size: 12 }), '用系统播放器打开'),
+                    h('div', {
                       style: contextMenuItemStyle,
                       onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
                       onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
@@ -2970,12 +3132,23 @@ window.__ModuleLoader__.load({
                       position: 'relative'
                     }
                   },
-                    h('video', {
-                      ref: videoRef,
-                      src: `/api/video-manager/videos/${selectedVideo.id}/stream`,
-                      controls: true,
-                      style: { width: '100%', height: '100%' }
-                    })
+                    previewInfo?.required && previewInfo.status !== 'ready'
+                      ? h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '12px', color: '#fff', fontSize: '12px', textAlign: 'center' } },
+                          previewInfo.status === 'generating'
+                            ? h(React.Fragment, null, Icon.loader({ size: 18, color: '#fff' }), '正在生成浏览器兼容预览（H.264），完成后自动播放…')
+                            : previewInfo.status === 'failed'
+                              ? h(React.Fragment, null, '兼容预览生成失败，可重试。',
+                                  h('button', { type: 'button', style: buttonSecondaryStyle, onClick: startCompatiblePreview }, '重试生成'))
+                              : h(React.Fragment, null, `此视频编码为 ${previewInfo.codec || 'HEVC'}，当前浏览器无法直接播放。`,
+                                  h('button', { type: 'button', style: buttonPrimaryStyle, onClick: startCompatiblePreview }, '生成兼容预览')))
+                      : h('video', {
+                          ref: videoRef,
+                          src: previewInfo?.required
+                            ? `/api/video-manager/videos/${selectedVideo.id}/stream?preview=1&v=${encodeURIComponent(selectedVideo.updated_at || '')}`
+                            : `/api/video-manager/videos/${selectedVideo.id}/stream`,
+                          controls: true,
+                          style: { width: '100%', height: '100%' }
+                        })
                   ),
                   // Detail Header & More Menu
                   h('div', {
@@ -3005,6 +3178,15 @@ window.__ModuleLoader__.load({
                       style: { ...contextMenuStyle, top: '34px', right: '12px' },
                       onClick: (e) => e.stopPropagation()
                     },
+                      h('div', {
+                        style: contextMenuItemStyle,
+                        onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
+                        onMouseLeave: (e) => e.currentTarget.style.backgroundColor = 'transparent',
+                        onClick: () => {
+                          setActiveVideoMenuId(null);
+                          openInSystemPlayer(selectedVideo.id);
+                        }
+                      }, Icon.play({ size: 12 }), '用系统播放器打开原视频'),
                       h('div', {
                         style: contextMenuItemStyle,
                         onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
@@ -4232,6 +4414,15 @@ window.__ModuleLoader__.load({
                 h('textarea', { 'aria-label': '镜头深度分析提示词', rows: 8, value: shotPrompt, disabled: !shotPromptLoaded,
                   onChange: e => setShotPrompt(e.target.value),
                   style: { ...inputStyle, resize: 'vertical', lineHeight: '1.4', fontFamily: 'monospace', fontSize: '11px' } })
+              ),
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: '8px' } },
+                h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '5. 衍生缓存管理'),
+                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
+                  cacheUsage ? `故事板 ${formatFileSize(cacheUsage.storyboards)} · 兼容预览 ${formatFileSize(cacheUsage.previews)} · 关键帧 ${formatFileSize(cacheUsage.keyframes)} · 音乐频谱 ${formatFileSize(cacheUsage.music_spectrograms)} · 合计 ${formatFileSize(cacheUsage.total)}` : '点击设置时统计缓存占用。'),
+                h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: () => clearPluginCache('previews') }, '仅清理兼容预览'),
+                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: () => clearPluginCache('all') }, '清理全部缓存'),
+                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: loadCacheUsage }, '刷新占用'))
               )
             ),
 

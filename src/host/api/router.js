@@ -308,6 +308,19 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, binaries: bins });
       }
 
+      // Cache usage and cleanup: GET/POST /api/video-manager/cache, /cache/clear
+      if (pathname === '/api/video-manager/cache' && method === 'GET') {
+        if (typeof mediaEngine?.getCacheUsage !== 'function') return jsonResponse(res,{success:false,error:'缓存统计不可用'},503);
+        return jsonResponse(res,{success:true,usage:await mediaEngine.getCacheUsage()});
+      }
+      if (pathname === '/api/video-manager/cache/clear' && method === 'POST') {
+        if (typeof mediaEngine?.clearCache !== 'function') return jsonResponse(res,{success:false,error:'缓存清理不可用'},503);
+        const body=await parseJsonBody(req);
+        const scope=body.scope==='previews'?'previews':'all';
+        mediaEngine.clearCache(scope);
+        return jsonResponse(res,{success:true,scope,usage:await mediaEngine.getCacheUsage()});
+      }
+
       // 3. Folders Tree: GET /api/video-manager/folders
       if (pathname === '/api/video-manager/folders' && method === 'GET') {
         const tree = db.getFolderTree();
@@ -334,6 +347,12 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       if(importJobMatch&&method==='GET'){
         if(typeof mediaEngine?.getImportJob!=='function')return jsonResponse(res,{success:false,error:'导入任务状态不可用'},503);
         const job=mediaEngine.getImportJob(importJobMatch[1]);
+        if(!job)return jsonResponse(res,{success:false,error:'导入任务不存在或已过期'},404);
+        return jsonResponse(res,{success:true,job});
+      }
+      if(importJobMatch&&method==='POST'){
+        if(typeof mediaEngine?.cancelImportJob!=='function')return jsonResponse(res,{success:false,error:'中断导入不可用'},503);
+        const job=mediaEngine.cancelImportJob(importJobMatch[1]);
         if(!job)return jsonResponse(res,{success:false,error:'导入任务不存在或已过期'},404);
         return jsonResponse(res,{success:true,job});
       }
@@ -609,6 +628,13 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
 
       // 12. Video Storyboard Image: GET /api/video-manager/videos/:id/storyboard
       const storyboardMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/storyboard$/);
+      if (storyboardMatch && method === 'POST') {
+        const video = db.getVideoById(storyboardMatch[1]);
+        if (!video) return jsonResponse(res, { success: false, error: 'Video not found' }, 404);
+        const result = mediaEngine.regenerateStoryboard(video.id);
+        if (!result) return jsonResponse(res, { success: false, error: '故事板重新生成不可用' }, 500);
+        return jsonResponse(res, { success: true, storyboard_status: 'generating' });
+      }
       if (storyboardMatch && method === 'GET') {
         const video = db.getVideoById(storyboardMatch[1]);
         if (!video || !video.storyboard_path || !fs.existsSync(video.storyboard_path)) {
@@ -619,6 +645,29 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return streamImageFile(res, video.storyboard_path);
       }
 
+      // 12.2 Open the original media with the operating system's default player
+      const openVideoMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/open$/);
+      if (openVideoMatch && method === 'POST') {
+        if (typeof mediaEngine?.openInSystemPlayer !== 'function') return jsonResponse(res, { success:false, error:'系统播放器不可用' }, 503);
+        const opened = mediaEngine.openInSystemPlayer(openVideoMatch[1]);
+        return jsonResponse(res, opened ? { success:true } : { success:false, error:'源视频不可用或文件不存在' }, opened ? 200 : 404);
+      }
+
+      // 12.1 Browser-compatible preview (H.264) for codecs such as HEVC
+      const previewMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/preview$/);
+      if (previewMatch && method === 'DELETE') {
+        if (typeof mediaEngine?.clearPreviewCache !== 'function') return jsonResponse(res, { success:false, error:'预览缓存清理不可用' }, 503);
+        const removed = mediaEngine.clearPreviewCache(previewMatch[1]);
+        return jsonResponse(res, removed ? { success:true } : { success:false, error:'预览缓存不存在' }, removed ? 200 : 404);
+      }
+      if (previewMatch && (method === 'GET' || method === 'POST')) {
+        if (typeof mediaEngine?.getPreviewInfo !== 'function') return jsonResponse(res, { success:false, error:'预览转码不可用' }, 503);
+        const video = db.getVideoById(previewMatch[1]);
+        if (!video) return jsonResponse(res, { success:false, error:'Video not found' }, 404);
+        const info = method === 'POST' ? mediaEngine.startPreview(video.id) : mediaEngine.getPreviewInfo(video.id);
+        return jsonResponse(res, { success:true, preview: info ? { required:info.required, status:info.status, codec:info.codec } : null });
+      }
+
       // 13. Video Media Stream: GET /api/video-manager/videos/:id/stream
       const streamMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/stream$/);
       if (streamMatch && method === 'GET') {
@@ -627,7 +676,13 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           return res.end('Video file not found');
         }
-        return streamVideoFile(req, res, video.file_path);
+        const wantsPreview = parsedUrl.searchParams.get('preview') === '1';
+        const previewPath = wantsPreview ? mediaEngine.getPreviewPath(video.id) : null;
+        if (wantsPreview && !previewPath) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          return res.end('Compatible preview is not ready');
+        }
+        return streamVideoFile(req, res, previewPath || video.file_path);
       }
 
       // 14. Keyframe image: GET /api/video-manager/keyframes/:file

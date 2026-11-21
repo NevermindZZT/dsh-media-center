@@ -9,6 +9,17 @@ import { VideoImportJobManager } from './import-job-manager.js';
 
 function identityFromStat(stat){return {dev:String(stat.dev),ino:String(stat.ino),size:String(stat.size),mtimeNs:String(stat.mtimeNs),ctimeNs:String(stat.ctimeNs)};}
 function sourceIdentity(filePath){return identityFromStat(fs.statSync(filePath,{bigint:true}));}
+async function directoryUsage(dir){
+  let total=0;
+  let entries;try{entries=await fs.promises.readdir(dir,{withFileTypes:true});}catch{return 0;}
+  for(const entry of entries){
+    const target=path.join(dir,entry.name);
+    if(entry.isSymbolicLink())continue;
+    if(entry.isDirectory())total+=await directoryUsage(target);
+    else if(entry.isFile()){try{total+=(await fs.promises.stat(target)).size;}catch{}}
+  }
+  return total;
+}
 function sameIdentity(a,b){return !!a&&!!b&&a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeNs===b.mtimeNs&&a.ctimeNs===b.ctimeNs;}
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +28,8 @@ export class MediaEngine {
   constructor(db) {
     this.db = db;
     this.storyboardTasks = new Map();
+    this.previewTasks = new Map();
+    this.previewStates = new Map();
     this.importJobManager = new VideoImportJobManager(this);
     setImmediate(() => { this.recoverPendingStoryboards().catch(error => console.warn('[MediaEngine] Storyboard recovery failed:', error.message)); });
   }
@@ -198,15 +211,22 @@ export class MediaEngine {
   }
 
   // One single-flight storyboard generation per video id; source files remain read-only.
-  async generateStoryboard(video) {
+  async generateStoryboard(video, options={}) {
     if(!video?.id||typeof video.file_path!=='string')return null;
     const active=this.storyboardTasks.get(video.id);if(active)return active;
-    const task=this._generateStoryboard(video);
+    const task=this._generateStoryboard(video,options);
     this.storyboardTasks.set(video.id,task);
     try{return await task;}finally{if(this.storyboardTasks.get(video.id)===task)this.storyboardTasks.delete(video.id);}
   }
 
-  async _generateStoryboard(video) {
+  regenerateStoryboard(videoId){
+    const current=this.db.getVideoById(videoId);if(!current)return null;
+    this.db.updateStoryboardState(videoId,'pending',null,current.file_path);
+    this.generateStoryboard(current,{force:true}).catch(()=>null);
+    return {status:'generating'};
+  }
+
+  async _generateStoryboard(video,{force=false}={}) {
     const current=this.db.getVideoById(video.id),importRecord=this.db.getVideoImportRecord(video.id);
     if(!current||current.file_path!==video.file_path)return null;
     let before;
@@ -215,7 +235,7 @@ export class MediaEngine {
       const savedIdentity=importRecord?.source_identity_json?JSON.parse(importRecord.source_identity_json):null;
       if(savedIdentity&&!sameIdentity(savedIdentity,before)){this.db.updateStoryboardState(video.id,'failed','source_changed',current.file_path);return null;}
     }catch{this.db.updateStoryboardState(video.id,'failed','source_identity_invalid',current.file_path);return null;}
-    if(current.storyboard_path&&fs.existsSync(current.storyboard_path)){
+    if(!force&&current.storyboard_path&&fs.existsSync(current.storyboard_path)){
       this.db.updateStoryboardState(video.id,'ready',null,current.file_path);
       return current.storyboard_path;
     }
@@ -229,6 +249,10 @@ export class MediaEngine {
     const isUsable=target=>{
       try{return fs.statSync(target).isFile()&&fs.statSync(target).size>32&&fs.readFileSync(target).subarray(0,2).equals(Buffer.from([0xff,0xd8]));}catch{return false;}
     };
+    if(force&&fs.existsSync(outPath)){
+      try{if(path.dirname(fs.realpathSync(outPath))===storyboardRoot)fs.rmSync(outPath,{force:true});}
+      catch{this.db.updateStoryboardState(video.id,'failed','invalid_cache_path',current.file_path);return null;}
+    }
     if(isUsable(outPath))return this.db.setVideoStoryboard(video.id,current.file_path,outPath)?outPath:null;
     if(fs.existsSync(outPath)){
       try{if(path.dirname(fs.realpathSync(outPath))!==storyboardRoot){this.db.updateStoryboardState(video.id,'failed','invalid_cache_path',current.file_path);return null;}fs.rmSync(outPath,{force:true});}
@@ -239,7 +263,8 @@ export class MediaEngine {
     const duration=Math.max(1,Number(current.duration));
     const vf=`fps=16/${duration},scale=320:180,tile=4x4`;
     try{
-      await execFileAsync(bins.ffmpeg,['-nostdin','-i',current.file_path,'-vf',vf,'-frames:v','1','-q:v','3','-n',tempPath],{timeout:120000,maxBuffer:2*1024*1024,windowsHide:true});
+      const timeout=Math.max(180000,Math.min(900000,Math.round(duration*4000)+60000));
+      await execFileAsync(bins.ffmpeg,['-nostdin','-i',current.file_path,'-map','0:v:0','-an','-sn','-dn','-vf',vf,'-frames:v','1','-q:v','3','-n',tempPath],{timeout,maxBuffer:2*1024*1024,windowsHide:true});
       if(!isUsable(tempPath))throw new Error('invalid_storyboard');
       const stillExists=this.db.getVideoById(video.id);
       if(!stillExists||stillExists.file_path!==current.file_path){return null;}
@@ -250,11 +275,121 @@ export class MediaEngine {
       // The catalog record was removed or replaced while FFmpeg was running. Remove only our cache output.
       if(fs.existsSync(outPath)&&path.dirname(fs.realpathSync(outPath))===storyboardRoot){try{fs.rmSync(outPath,{force:true});}catch{}}
       return null;
-    }catch{
-      if(this.db.getVideoById(video.id)?.file_path===current.file_path)this.db.updateStoryboardState(video.id,'failed','storyboard_generation_failed',current.file_path);
+    }catch(error){
+      const code=error?.killed?'storyboard_timeout':'storyboard_generation_failed';
+      if(this.db.getVideoById(video.id)?.file_path===current.file_path)this.db.updateStoryboardState(video.id,'failed',code,current.file_path);
       return null;
     }finally{try{fs.rmSync(tempDir,{recursive:true,force:true});}catch{}}
   }
+  #previewCache(video, identity){
+    const root=fs.realpathSync(this.db.previewsDir),safeId=String(video.id).replace(/[^A-Za-z0-9_-]/g,'_').slice(0,80)||'video';
+    const fingerprint=crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0,20);
+    return {root,path:path.join(root,`${safeId}_${fingerprint}_h264.mp4`)};
+  }
+
+  openInSystemPlayer(videoId){
+    const video=this.db.getVideoById(videoId);
+    if(!video||typeof video.file_path!=='string')return false;
+    let stat;try{stat=fs.statSync(video.file_path);}catch{return false;}
+    if(!stat.isFile())return false;
+    const command=process.platform==='win32'?'explorer.exe':process.platform==='darwin'?'open':'xdg-open';
+    const child=spawn(command,[video.file_path],{detached:true,stdio:'ignore',windowsHide:true});
+    child.unref();
+    return true;
+  }
+
+  #cacheDirs(){
+    return {
+      storyboards:this.db.storyboardsDir,
+      previews:this.db.previewsDir,
+      keyframes:this.db.keyframesDir,
+      music_spectrograms:path.join(this.db.cacheDir,'music-spectrograms')
+    };
+  }
+
+  async getCacheUsage(){
+    const dirs=this.#cacheDirs(),usage={};
+    for(const [key,dir] of Object.entries(dirs))usage[key]=await directoryUsage(dir);
+    usage.total=Object.values(usage).reduce((sum,value)=>sum+value,0);
+    return usage;
+  }
+
+  clearCache(scope='all'){
+    const dirs=this.#cacheDirs(),selected=scope==='previews'?{previews:dirs.previews}:dirs;
+    for(const [key,dir] of Object.entries(selected)){
+      let entries;try{entries=fs.readdirSync(dir,{withFileTypes:true});}catch{continue;}
+      for(const entry of entries){
+        try{fs.rmSync(path.join(dir,entry.name),{recursive:true,force:true});}catch{}
+      }
+    }
+    if(scope!=='previews'){
+      this.db.resetStoryboardCache();
+      this.previewStates.clear();
+    }else{
+      this.previewStates.clear();
+    }
+    return true;
+  }
+
+  clearPreviewCache(videoId){
+    const video=this.db.getVideoById(videoId);if(!video)return false;
+    const safeId=String(video.id).replace(/[^A-Za-z0-9_-]/g,'_').slice(0,80)||'video';
+    let entries;try{entries=fs.readdirSync(this.db.previewsDir,{withFileTypes:true});}catch{return false;}
+    for(const entry of entries)if(entry.isFile()&&entry.name.startsWith(`${safeId}_`)){try{fs.rmSync(path.join(this.db.previewsDir,entry.name),{force:true});}catch{}}
+    this.previewStates.delete(video.id);
+    return true;
+  }
+
+  getPreviewInfo(videoId){
+    const video=this.db.getVideoById(videoId);if(!video)return null;
+    const codec=String(video.codec||'').toUpperCase();
+    const required=!['H264','AVC1','AVC'].includes(codec);
+    if(!required)return {required:false,status:'not_needed',codec};
+    let identity;
+    try{identity=sourceIdentity(video.file_path);}catch{return {required:true,status:'source_unavailable',codec};}
+    const cache=this.#previewCache(video,identity);
+    try{const stat=fs.statSync(cache.path);if(stat.isFile()&&stat.size>1024)return {required:true,status:'ready',path:cache.path,codec};}catch{}
+    if(this.previewTasks.has(video.id))return {required:true,status:'generating',codec};
+    const failed=this.previewStates.get(video.id);
+    return failed==='failed'?{required:true,status:'failed',codec}:{required:true,status:'missing',codec};
+  }
+
+  startPreview(videoId){
+    const video=this.db.getVideoById(videoId);if(!video)return null;
+    const info=this.getPreviewInfo(videoId);if(!info?.required||['ready','generating','source_unavailable','not_needed'].includes(info.status))return info;
+    let identity;try{identity=sourceIdentity(video.file_path);}catch{return info;}
+    const cache=this.#previewCache(video,identity);
+    this.previewStates.set(video.id,'generating');
+    const task=this.#generatePreview(video,identity,cache).finally(()=>{this.previewTasks.delete(video.id);});
+    this.previewTasks.set(video.id,task);
+    return {...info,status:'generating'};
+  }
+
+  getPreviewPath(videoId){
+    const info=this.getPreviewInfo(videoId);
+    return info?.required&&info.status==='ready'?info.path:null;
+  }
+
+  async #generatePreview(video,identity,cache){
+    const tempDir=fs.mkdtempSync(path.join(cache.root,'preview-'));
+    try{
+      const bins=await this.getBinaries();if(!bins.ffmpeg)throw new Error('ffmpeg_missing');
+      const duration=Math.max(1,Number(video.duration)||1);
+      const timeout=Math.max(300000,Math.min(1800000,Math.round(duration*3000)));
+      const tempPath=path.join(tempDir,'preview.mp4');
+      await execFileAsync(bins.ffmpeg,['-nostdin','-i',video.file_path,'-map','0:v:0','-map','0:a:0?',
+        '-vf','scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+        '-c:v','libx264','-preset','veryfast','-crf','25','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k',
+        '-movflags','+faststart','-y',tempPath],{timeout,maxBuffer:4*1024*1024,windowsHide:true});
+      const stat=fs.statSync(tempPath);if(!stat.isFile()||stat.size<1024)throw new Error('invalid_preview');
+      try{if(!sameIdentity(identity,sourceIdentity(video.file_path)))throw new Error('source_changed');}catch(error){throw error;}
+      if(fs.existsSync(cache.path))fs.rmSync(cache.path,{force:true});
+      fs.renameSync(tempPath,cache.path);
+      this.previewStates.set(video.id,'ready');
+    }catch{this.previewStates.set(video.id,'failed');}
+    finally{try{fs.rmSync(tempDir,{recursive:true,force:true});}catch{}}
+  }
+
   // Extract keyframe for a given timestamp
   async extractKeyframe(video, timestampSec, shotIndex) {
     const bins = await this.getBinaries();
@@ -389,6 +524,7 @@ export class MediaEngine {
   getImportJob(jobId){return this.importJobManager.get(jobId);}
   waitForImportJob(jobId){return this.importJobManager.wait(jobId);}
   cancelImportForVideo(videoId){return this.importJobManager.cancelForVideo(videoId);}
+  cancelImportJob(jobId){return this.importJobManager.cancelJob(jobId);}
   async scanAndImportDirectories(directoryPaths,expectedParentPath,targetParentFolderId=null){
     return this.importJobManager.runLegacy({kind:'subfolders',directory_paths:directoryPaths,parent_directory_path:expectedParentPath,parent_folder_id:targetParentFolderId});
   }

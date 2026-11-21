@@ -10,6 +10,7 @@ export class VideoDatabase {
     this.cacheDir = path.join(this.dbDir, 'cache');
     this.storyboardsDir = path.join(this.cacheDir, 'storyboards');
     this.keyframesDir = path.join(this.cacheDir, 'keyframes');
+    this.previewsDir = path.join(this.cacheDir, 'previews');
     this.exportsDir = path.join(this.cacheDir, 'exports');
 
     this.customDbPath = options.databasePath || null;
@@ -28,6 +29,9 @@ export class VideoDatabase {
     }
     if (!fs.existsSync(this.keyframesDir)) {
       fs.mkdirSync(this.keyframesDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.previewsDir)) {
+      fs.mkdirSync(this.previewsDir, { recursive: true });
     }
     if (!fs.existsSync(this.exportsDir)) {
       fs.mkdirSync(this.exportsDir, { recursive: true });
@@ -545,6 +549,10 @@ export class VideoDatabase {
 
   getReadyStoryboardVideos() {
     return this.db.prepare(`SELECT id, file_path, file_name, duration, storyboard_path, storyboard_status FROM videos WHERE storyboard_status = 'ready' AND storyboard_path IS NOT NULL AND storyboard_path != ''`).all();
+  }
+
+  resetStoryboardCache() {
+    return this.db.prepare(`UPDATE videos SET storyboard_path = NULL, storyboard_status = 'not_started', storyboard_error = NULL, updated_at = ? WHERE storyboard_path IS NOT NULL OR storyboard_status != 'not_started'`).run(new Date().toISOString()).changes;
   }
 
   getPendingCaptureTimes() {

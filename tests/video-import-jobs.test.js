@@ -164,3 +164,57 @@ test('storyboard state updates only existing rows and insert-only upserts keep a
   assert.equal(f.db.setVideoStoryboard(inserted.video.id,source,output),false);
   assert.equal(f.db.getVideoById(inserted.video.id),null);
 });
+
+
+test('an active import job can be interrupted and resumed without touching source files',async t=>{
+  const f=fixture(t);
+  const {job}=f.engine.startImportJob({kind:'files',file_paths:f.files});
+  const cancelled=f.engine.cancelImportJob(job.id);
+  assert.equal(cancelled.cancel_requested,true);
+  const final=await f.engine.waitForImportJob(job.id);
+  assert.equal(final.status,'cancelled');
+  const before=f.originals.map(buffer=>Buffer.from(buffer));
+  const resumed=f.engine.startImportJob({kind:'files',file_paths:f.files});
+  const completed=await f.engine.waitForImportJob(resumed.job.id);
+  assert.equal(completed.status,'completed');assert.equal(completed.inserted,2);
+  assert.deepEqual(f.originals,f.files.map(file=>fs.readFileSync(file)));
+});
+
+test('storyboard regeneration and browser preview detection expose safe states',async t=>{
+  const f=fixture(t);
+  const h264=path.join(f.sourceDir,'h264.mp4');fs.writeFileSync(h264,'h264');
+  const hevc=path.join(f.sourceDir,'hevc.mp4');fs.writeFileSync(hevc,'hevc');
+  const a=f.db.upsertVideo({file_path:h264,file_name:'h264.mp4',status:'imported',codec:'H264',duration:3});
+  const b=f.db.upsertVideo({file_path:hevc,file_name:'hevc.mp4',status:'imported',codec:'HEVC',duration:3});
+  assert.equal(f.engine.getPreviewInfo(a.id).status,'not_needed');
+  const info=f.engine.getPreviewInfo(b.id);assert.equal(info.required,true);assert.ok(['missing','failed'].includes(info.status));
+  assert.equal(f.engine.getPreviewPath(b.id),null);
+  assert.equal(f.engine.regenerateStoryboard(b.id).status,'generating');
+  await until(()=>f.db.getVideoImportRecord(b.id).storyboard_status==='ready');
+  assert.ok(fs.existsSync(f.db.getVideoImportRecord(b.id).storyboard_path));
+});
+
+
+test('cache usage and one-click cleanup remove only derived files and reset storyboard refs',async t=>{
+  const f=fixture(t);
+  const source=f.files[0];
+  const storyboard=path.join(f.db.storyboardsDir,'cache-test.jpg');fs.writeFileSync(storyboard,Buffer.from([0xff,0xd8,0xff,0xd9]));
+  const preview=path.join(f.db.previewsDir,'vid_cache-test_h264.mp4');fs.writeFileSync(preview,'preview');
+  const video=f.db.upsertVideo({file_path:source,file_name:'a.mp4',status:'imported',duration:3,storyboard_path:storyboard,storyboard_status:'ready'});
+  const usage=await f.engine.getCacheUsage();assert.ok(usage.total>0);assert.ok(usage.storyboards>0);assert.ok(usage.previews>0);
+  f.engine.clearCache('all');
+  assert.equal(fs.existsSync(storyboard),false);assert.equal(fs.existsSync(preview),false);
+  const record=f.db.getVideoImportRecord(video.id);assert.equal(record.storyboard_status,'not_started');assert.equal(record.storyboard_path,null);
+});
+
+
+test('system player endpoint only accepts a catalog video and reports failure safely',async t=>{
+  const f=fixture(t),handler=createVideoManagerApiHandler({db:f.db,mediaEngine:f.engine});
+  const video=f.db.upsertVideo({file_path:f.files[0],file_name:'a.mp4',status:'imported',duration:3});
+  f.engine.openInSystemPlayer=id=>id===video.id;
+  const opened=await request(handler,'POST',`/api/video-manager/videos/${video.id}/open`);
+  assert.equal(opened.status,200);assert.equal(opened.body.success,true);
+  f.engine.openInSystemPlayer=()=>false;
+  const missing=await request(handler,'POST','/api/video-manager/videos/vid_missing/open');
+  assert.equal(missing.status,404);assert.equal(missing.body.success,false);
+});

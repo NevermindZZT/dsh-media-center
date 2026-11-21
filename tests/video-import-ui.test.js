@@ -15,6 +15,7 @@ function fixture(){
     selectedBrowserFolders:new Set(),selectedBrowserFiles:new Set(),browserData:{current_path:'C:\\video'},
     setIsImporting:value=>states.busy.push(value),setShowScanModal:value=>states.modal.push(value),setImportNotice:()=>{},
     setImportProgress:value=>states.progress.push(value),setSelectedBrowserFolders:()=>{},setSelectedBrowserFiles:()=>{},
+    rememberPendingImport:()=>{},clearPendingImport:()=>{},pendingImport:null,
     refreshCurrentViewRef:{current:async()=>{states.refresh++;}},window:{confirm:()=>true},alert:()=>{},JSON,
     fetch:(url,options)=>{states.request={url,options};return request.promise;}
   });
@@ -41,6 +42,7 @@ test('polling follows an active job and refreshes the current view',async()=>{
   const context=vm.createContext({importProgress:{id:'job_1',status:'importing'},importLockRef:{current:false},
     useEffect:fn=>{effect=fn;},setIsImporting:value=>events.push(['busy',value]),
     setImportProgress:value=>events.push(['job',value]),refreshCurrentViewRef:{current:async()=>events.push(['refresh'])},
+    clearPendingImport:()=>events.push(['clearPending']),
     fetch:async url=>({ok:true,json:async()=>({success:true,job:{id:'job_1',status:'completed',inserted:2}})}),
     setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{},window:{sessionStorage:{removeItem:()=>events.push(['clear'])}},encodeURIComponent});
   vm.runInContext(snippet,context);effect();await timer();
@@ -57,7 +59,7 @@ test('unknown background job clears stale resume token and unblocks UI',async()=
     setTimeout:fn=>{timer=fn;return 1;},clearTimeout:()=>{},window:{sessionStorage:{removeItem:()=>events.push(['clear'])}},encodeURIComponent});
   vm.runInContext(source.slice(pos,end+tail.length),context);effect();await timer();
   assert.equal(context.importLockRef.current,false);assert.ok(events.some(item=>item[0]==='clear'));
-  assert.ok(events.some(item=>item[0]==='job'&&item[1].status==='failed'));
+  assert.ok(events.some(item=>item[0]==='job'&&item[1].status==='interrupted'));
 });
 
 test('progress distinguishes discovery, deduplication and storyboard work',()=>{
@@ -66,6 +68,15 @@ test('progress distinguishes discovery, deduplication and storyboard work',()=>{
   assert.match(source,/dsh-video-manager-active-import/);
 });
 
+test('import can be interrupted and resumed from a saved request',()=>{
+  assert.match(source,/中断视频导入/);assert.match(source,/继续上次视频导入/);
+  assert.match(source,/dsh-video-manager-pending-import/);assert.match(source,/startVideoImport\(pendingImport\.url, pendingImport\.body\)/);
+});
+test('HEVC preview and storyboard regeneration are exposed in the UI',()=>{
+  assert.match(source,/生成兼容预览/);assert.match(source,/stream\?preview=1/);
+  assert.match(source,/重新生成故事板/);assert.match(source,/videos\/.*\/storyboard`,\s*\{ method: 'POST' \}/);
+  assert.match(source,/用系统播放器打开/);assert.match(source,/\/open`, \{ method: 'POST' \}/);
+});
 test('video cards expose analyzed summary and separate storyboard state',()=>{
   assert.match(source,/role: 'tooltip'/);assert.match(source,/summaryVideoId === v\.id/);assert.match(source,/v\.storyboard_status === 'generating'/);
 });
