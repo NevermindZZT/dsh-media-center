@@ -187,9 +187,9 @@ test('storyboard regeneration and browser preview detection expose safe states',
   const hevc=path.join(f.sourceDir,'hevc.mp4');fs.writeFileSync(hevc,'hevc');
   const a=f.db.upsertVideo({file_path:h264,file_name:'h264.mp4',status:'imported',codec:'H264',duration:3});
   const b=f.db.upsertVideo({file_path:hevc,file_name:'hevc.mp4',status:'imported',codec:'HEVC',duration:3});
-  assert.equal(f.engine.getPreviewInfo(a.id).status,'not_needed');
-  const info=f.engine.getPreviewInfo(b.id);assert.equal(info.required,true);assert.ok(['missing','failed'].includes(info.status));
-  assert.equal(f.engine.getPreviewPath(b.id),null);
+  assert.equal((await f.engine.getPreviewInfo(a.id)).status,'not_needed');
+  const info=await f.engine.getPreviewInfo(b.id);assert.equal(info.required,true);assert.ok(['missing','failed'].includes(info.status));
+  assert.equal(await f.engine.getPreviewPath(b.id),null);
   assert.equal(f.engine.regenerateStoryboard(b.id).status,'generating');
   await until(()=>f.db.getVideoImportRecord(b.id).storyboard_status==='ready');
   assert.ok(fs.existsSync(f.db.getVideoImportRecord(b.id).storyboard_path));

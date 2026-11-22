@@ -688,8 +688,8 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
         if (typeof mediaEngine?.getPreviewInfo !== 'function') return jsonResponse(res, { success:false, error:'预览转码不可用' }, 503);
         const video = db.getVideoById(previewMatch[1]);
         if (!video) return jsonResponse(res, { success:false, error:'Video not found' }, 404);
-        const info = method === 'POST' ? mediaEngine.startPreview(video.id) : mediaEngine.getPreviewInfo(video.id);
-        return jsonResponse(res, { success:true, preview: info ? { required:info.required, status:info.status, codec:info.codec } : null });
+        const info = method === 'POST' ? await mediaEngine.startPreview(video.id) : await mediaEngine.getPreviewInfo(video.id);
+        return jsonResponse(res, { success:true, preview: info ? { required:info.required, status:info.status, codec:info.codec, video_profile:info.video_profile, pix_fmt:info.pix_fmt } : null });
       }
 
       // 13. Video Media Stream: GET /api/media-center/videos/:id/stream
@@ -701,7 +701,7 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
           return res.end('Video file not found');
         }
         const wantsPreview = parsedUrl.searchParams.get('preview') === '1';
-        const previewPath = wantsPreview ? mediaEngine.getPreviewPath(video.id) : null;
+        const previewPath = wantsPreview ? await mediaEngine.getPreviewPath(video.id) : null;
         if (wantsPreview && !previewPath) {
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           return res.end('Compatible preview is not ready');

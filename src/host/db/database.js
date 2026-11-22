@@ -123,6 +123,8 @@ export class VideoDatabase {
         height INTEGER DEFAULT 0,
         fps REAL DEFAULT 0,
         codec TEXT,
+        video_profile TEXT,
+        pix_fmt TEXT,
         bitrate INTEGER DEFAULT 0,
         audio_channels INTEGER DEFAULT 0,
         sample_rate INTEGER DEFAULT 0,
@@ -163,6 +165,8 @@ export class VideoDatabase {
       if (!videoCols.includes('ai_latency_ms')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_latency_ms INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_analyzed_at')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_analyzed_at TEXT;");
       if (!videoCols.includes('ai_error')) this.db.exec('ALTER TABLE videos ADD COLUMN ai_error TEXT;');
+      if (!videoCols.includes('video_profile')) this.db.exec('ALTER TABLE videos ADD COLUMN video_profile TEXT;');
+      if (!videoCols.includes('pix_fmt')) this.db.exec('ALTER TABLE videos ADD COLUMN pix_fmt TEXT;');
       if (!videoCols.includes('captured_at')) {
         this.db.exec("ALTER TABLE videos ADD COLUMN captured_at TEXT;");
       }
@@ -448,6 +452,8 @@ export class VideoDatabase {
           height = COALESCE(?, height),
           fps = COALESCE(?, fps),
           codec = COALESCE(?, codec),
+          video_profile = COALESCE(?, video_profile),
+          pix_fmt = COALESCE(?, pix_fmt),
           bitrate = COALESCE(?, bitrate),
           audio_channels = COALESCE(?, audio_channels),
           sample_rate = COALESCE(?, sample_rate),
@@ -479,6 +485,8 @@ export class VideoDatabase {
         videoData.height ?? null,
         videoData.fps ?? null,
         videoData.codec ?? null,
+        videoData.video_profile ?? null,
+        videoData.pix_fmt ?? null,
         videoData.bitrate ?? null,
         videoData.audio_channels ?? null,
         videoData.sample_rate ?? null,
@@ -510,11 +518,11 @@ export class VideoDatabase {
       this.db.prepare(`
         INSERT INTO videos (
           id, folder_id, file_name, file_path, source_identity_json, file_size, duration,
-          width, height, fps, codec, bitrate, audio_channels, sample_rate,
+          width, height, fps, codec, video_profile, pix_fmt, bitrate, audio_channels, sample_rate,
           status, summary, user_notes, tags, storyboard_path, storyboard_status, storyboard_error,
           ai_model, ai_prompt_tokens, ai_completion_tokens, ai_total_tokens, ai_latency_ms, ai_analyzed_at, ai_error,
           captured_at, captured_at_source, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         videoData.folder_id ?? null,
@@ -527,6 +535,8 @@ export class VideoDatabase {
         videoData.height ?? 0,
         videoData.fps ?? 0,
         videoData.codec ?? '',
+        videoData.video_profile ?? null,
+        videoData.pix_fmt ?? null,
         videoData.bitrate ?? 0,
         videoData.audio_channels ?? 0,
         videoData.sample_rate ?? 0,

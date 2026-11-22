@@ -4,6 +4,23 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const { useState, useEffect, useRef, useMemo, createElement: h } = React;
 
+    // Chromium only reports HEVC support for a complete codec string; a bare hvc1 probe is falsely negative.
+    const BROWSER_SUPPORTS_HEVC = (() => {
+      if (typeof document === 'undefined') return false;
+      const video = document.createElement('video');
+      return ['video/mp4; codecs="hvc1.1.6.L153.B0"', 'video/mp4; codecs="hvc1.1.6.L120.90"', 'video/mp4; codecs="hev1.1.6.L120.90"']
+        .some(codec => video.canPlayType(codec) !== '');
+    })();
+    // Chromium hardware HEVC is commonly 4:2:0 only. Rext / 4:2:2 / 4:4:4 needs the proxy fallback.
+    function canPlayHevcDirectly(info) {
+      if (!BROWSER_SUPPORTS_HEVC) return false;
+      const codec = String(info?.codec || '').toUpperCase();
+      if (!['HEVC', 'H265', 'H.265', 'HEV1'].includes(codec)) return false;
+      if (/rext/i.test(String(info?.video_profile || ''))) return false;
+      const pixFmt = String(info?.pix_fmt || '').toLowerCase();
+      return pixFmt.includes('420');
+    }
+
     // --- Responsive Hook for Mobile Screen Detection ---
     function useIsMobile(breakpoint = 840) {
       const [isMobile, setIsMobile] = useState(
@@ -1225,6 +1242,7 @@ window.__ModuleLoader__.load({
       // Workbench root & Video Player refs
       const workbenchRef = useRef(null);
       const videoRef = useRef(null);
+      const selectedVideoIdRef = useRef(null);
 
       // Close open context menus on global click
       useEffect(() => {
@@ -1452,16 +1470,27 @@ window.__ModuleLoader__.load({
       }, [videos]);
 
       useEffect(() => {
+        selectedVideoIdRef.current = selectedVideo?.id || null;
+      }, [selectedVideo?.id]);
+
+      useEffect(() => {
         const id = selectedVideo?.id;
         setPreviewInfo(null);
         if (!id) return;
         let cancelled = false;
         fetch(`/api/media-center/videos/${encodeURIComponent(id)}/preview`)
           .then(response => response.json())
-          .then(data => { if (!cancelled && data.success) setPreviewInfo(data.preview); })
+          .then(data => {
+            if (cancelled || !data.success) return;
+            if (data.preview?.required && canPlayHevcDirectly(data.preview)) {
+              setPreviewInfo({ ...data.preview, required: false, status: 'direct' });
+              return;
+            }
+            setPreviewInfo(data.preview);
+          })
           .catch(() => { if (!cancelled) setPreviewInfo({ required: false, status: 'unknown' }); });
         return () => { cancelled = true; };
-      }, [selectedVideo?.id]);
+      }, [selectedVideo?.id, selectedVideo?.codec]);
 
       const loadCacheUsage = async () => {
         try {
@@ -2154,19 +2183,19 @@ window.__ModuleLoader__.load({
           if (!response.ok || !data.success) throw new Error(data.error || '无法打开系统播放器');
         } catch (error) { alert('打开原视频失败：' + (error.message || '请检查源文件是否可用')); }
       };
-      const startCompatiblePreview = async () => {
-        if (!selectedVideo?.id) return;
-        setPreviewInfo(current => ({ ...current, status: 'generating' }));
+      const startCompatiblePreview = async (videoId = selectedVideo?.id) => {
+        if (!videoId) return;
+        setPreviewInfo(current => current?.required ? { ...current, status: 'generating' } : current);
         try {
-          const response = await fetch(`/api/media-center/videos/${encodeURIComponent(selectedVideo.id)}/preview`, { method: 'POST' });
+          const response = await fetch(`/api/media-center/videos/${encodeURIComponent(videoId)}/preview`, { method: 'POST' });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || '无法生成兼容预览');
           setPreviewInfo(data.preview);
           const poll = async () => {
-            const statusResponse = await fetch(`/api/media-center/videos/${encodeURIComponent(selectedVideo.id)}/preview`);
+            const statusResponse = await fetch(`/api/media-center/videos/${encodeURIComponent(videoId)}/preview`);
             const statusData = await statusResponse.json();
             if (!statusData.success) return;
-            setPreviewInfo(statusData.preview);
+            setPreviewInfo(current => selectedVideoIdRef.current === videoId || !current ? statusData.preview : current);
             if (['missing', 'generating'].includes(statusData.preview?.status)) setTimeout(poll, 2000);
           };
           setTimeout(poll, 1500);
@@ -3169,9 +3198,9 @@ window.__ModuleLoader__.load({
                             ? h(React.Fragment, null, Icon.loader({ size: 18, color: '#fff' }), '正在生成浏览器兼容预览（H.264），完成后自动播放…')
                             : previewInfo.status === 'failed'
                               ? h(React.Fragment, null, '兼容预览生成失败，可重试。',
-                                  h('button', { type: 'button', style: buttonSecondaryStyle, onClick: startCompatiblePreview }, '重试生成'))
+                                  h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => startCompatiblePreview() }, '重试生成'))
                               : h(React.Fragment, null, `此视频编码为 ${previewInfo.codec || 'HEVC'}，当前浏览器无法直接播放。`,
-                                  h('button', { type: 'button', style: buttonPrimaryStyle, onClick: startCompatiblePreview }, '生成兼容预览')))
+                                  h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => startCompatiblePreview() }, '生成兼容预览')))
                       : h('video', {
                           ref: videoRef,
                           src: previewInfo?.required

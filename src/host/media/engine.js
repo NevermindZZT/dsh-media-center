@@ -203,6 +203,8 @@ export class MediaEngine {
       height: Number(videoStream.height || 0),
       fps,
       codec: String(videoStream.codec_name || '').toUpperCase(),
+      video_profile: String(videoStream.profile || ''),
+      pix_fmt: String(videoStream.pix_fmt || ''),
       bitrate: Number(format.bit_rate || videoStream.bit_rate || 0),
       audio_channels: Number(audioStream.channels || 0),
       sample_rate: Number(audioStream.sample_rate || 0),
@@ -340,23 +342,37 @@ export class MediaEngine {
     return true;
   }
 
-  getPreviewInfo(videoId){
-    const video=this.db.getVideoById(videoId);if(!video)return null;
-    const codec=String(video.codec||'').toUpperCase();
-    const required=!['H264','AVC1','AVC'].includes(codec);
-    if(!required)return {required:false,status:'not_needed',codec};
-    let identity;
-    try{identity=sourceIdentity(video.file_path);}catch{return {required:true,status:'source_unavailable',codec};}
-    const cache=this.#previewCache(video,identity);
-    try{const stat=fs.statSync(cache.path);if(stat.isFile()&&stat.size>1024)return {required:true,status:'ready',path:cache.path,codec};}catch{}
-    if(this.previewTasks.has(video.id))return {required:true,status:'generating',codec};
-    const failed=this.previewStates.get(video.id);
-    return failed==='failed'?{required:true,status:'failed',codec}:{required:true,status:'missing',codec};
+  async probeCodecDetails(filePath){
+    const bins=await this.getBinaries();if(!bins.ffprobe)return null;
+    try{
+      const {stdout}=await execFileAsync(bins.ffprobe,['-v','error','-select_streams','v:0','-show_entries','stream=profile,pix_fmt','-of','json',filePath],{maxBuffer:1024*1024,timeout:30000,windowsHide:true});
+      const stream=(JSON.parse(stdout).streams||[])[0]||{};
+      return {video_profile:String(stream.profile||''),pix_fmt:String(stream.pix_fmt||'')};
+    }catch{return null;}
   }
 
-  startPreview(videoId){
+  async getPreviewInfo(videoId){
+    let video=this.db.getVideoById(videoId);if(!video)return null;
+    const codec=String(video.codec||'').toUpperCase();
+    if(codec==='HEVC'&&(!video.video_profile||!video.pix_fmt)){
+      const details=await this.probeCodecDetails(video.file_path);
+      if(details){video={...video,...details};this.db.upsertVideo({id:video.id,...details});}
+    }
+    const required=!['H264','AVC1','AVC'].includes(codec);
+    const detail={codec,video_profile:video.video_profile||'',pix_fmt:video.pix_fmt||''};
+    if(!required)return {required:false,status:'not_needed',...detail};
+    let identity;
+    try{identity=sourceIdentity(video.file_path);}catch{return {required:true,status:'source_unavailable',...detail};}
+    const cache=this.#previewCache(video,identity);
+    try{const stat=fs.statSync(cache.path);if(stat.isFile()&&stat.size>1024)return {required:true,status:'ready',path:cache.path,...detail};}catch{}
+    if(this.previewTasks.has(video.id))return {required:true,status:'generating',...detail};
+    const failed=this.previewStates.get(video.id);
+    return failed==='failed'?{required:true,status:'failed',...detail}:{required:true,status:'missing',...detail};
+  }
+
+  async startPreview(videoId){
     const video=this.db.getVideoById(videoId);if(!video)return null;
-    const info=this.getPreviewInfo(videoId);if(!info?.required||['ready','generating','source_unavailable','not_needed'].includes(info.status))return info;
+    const info=await this.getPreviewInfo(videoId);if(!info?.required||['ready','generating','source_unavailable','not_needed'].includes(info.status))return info;
     let identity;try{identity=sourceIdentity(video.file_path);}catch{return info;}
     const cache=this.#previewCache(video,identity);
     this.previewStates.set(video.id,'generating');
@@ -365,8 +381,8 @@ export class MediaEngine {
     return {...info,status:'generating'};
   }
 
-  getPreviewPath(videoId){
-    const info=this.getPreviewInfo(videoId);
+  async getPreviewPath(videoId){
+    const info=await this.getPreviewInfo(videoId);
     return info?.required&&info.status==='ready'?info.path:null;
   }
 
@@ -378,8 +394,8 @@ export class MediaEngine {
       const timeout=Math.max(300000,Math.min(1800000,Math.round(duration*3000)));
       const tempPath=path.join(tempDir,'preview.mp4');
       await execFileAsync(bins.ffmpeg,['-nostdin','-i',video.file_path,'-map','0:v:0','-map','0:a:0?',
-        '-vf','scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-        '-c:v','libx264','-preset','veryfast','-crf','25','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k',
+        '-vf','scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2',
+        '-c:v','libx264','-preset','ultrafast','-crf','28','-pix_fmt','yuv420p','-c:a','aac','-b:a','128k',
         '-movflags','+faststart','-y',tempPath],{timeout,maxBuffer:4*1024*1024,windowsHide:true});
       const stat=fs.statSync(tempPath);if(!stat.isFile()||stat.size<1024)throw new Error('invalid_preview');
       try{if(!sameIdentity(identity,sourceIdentity(video.file_path)))throw new Error('source_changed');}catch(error){throw error;}

@@ -74,6 +74,11 @@ test('import can be interrupted and resumed from a saved request',()=>{
 });
 test('HEVC preview and storyboard regeneration are exposed in the UI',()=>{
   assert.match(source,/生成兼容预览/);assert.match(source,/stream\?preview=1/);
+  assert.match(source,/hvc1\.1\.6\.L153\.B0/);assert.match(source,/BROWSER_SUPPORTS_HEVC/);
+  assert.match(source,/canPlayHevcDirectly/);assert.match(source,/pixFmt\.includes\('420'\)/);
+  assert.match(source,/required: false, status: 'direct'/);
+  assert.doesNotMatch(source,/autoTimer/);
+  assert.match(source,/onClick: \(\) => startCompatiblePreview\(\)/);
   assert.match(source,/重新生成故事板/);assert.match(source,/videos\/.*\/storyboard`,\s*\{ method: 'POST' \}/);
   assert.match(source,/用系统播放器打开/);assert.match(source,/\/open`, \{ method: 'POST' \}/);
 });
