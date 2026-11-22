@@ -92,6 +92,7 @@ test('batch AI analysis offers unanalyzed-only and full selection scopes',()=>{
 
 test('video cards expose analyzed summary and separate storyboard state',()=>{
   assert.match(source,/role: 'tooltip'/);assert.match(source,/summaryVideoId === v\.id/);assert.match(source,/v\.storyboard_status === 'generating'/);
+  assert.match(source,/showVideoSummary/);assert.match(source,/summaryAnchor/);assert.match(source,/position: 'fixed'/);
 });
 
 

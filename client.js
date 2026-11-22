@@ -1155,6 +1155,7 @@ window.__ModuleLoader__.load({
       // Video Card Action Popup state
       const [activeVideoMenuId, setActiveVideoMenuId] = useState(null);
       const [summaryVideoId, setSummaryVideoId] = useState(null);
+      const [summaryAnchor, setSummaryAnchor] = useState(null);
       const [singleMoveVideoId, setSingleMoveVideoId] = useState(null);
 
       // Import Loading state (Prevents repeated submission and gives immediate feedback)
@@ -1468,6 +1469,14 @@ window.__ModuleLoader__.load({
         const timer = setInterval(() => { refreshCurrentViewRef.current(); }, 3000);
         return () => clearInterval(timer);
       }, [videos]);
+
+      useEffect(() => {
+        if (!summaryVideoId) return;
+        const hide = () => { setSummaryVideoId(null); setSummaryAnchor(null); };
+        window.addEventListener('scroll', hide, true);
+        window.addEventListener('resize', hide);
+        return () => { window.removeEventListener('scroll', hide, true); window.removeEventListener('resize', hide); };
+      }, [summaryVideoId]);
 
       useEffect(() => {
         selectedVideoIdRef.current = selectedVideo?.id || null;
@@ -2621,6 +2630,22 @@ window.__ModuleLoader__.load({
       const selectedAnalyzedCount = videos.filter(v => selectedVideoIds.has(v.id) && v.status === 'analyzed').length;
       const selectedAnalyzeableCount = Math.max(0, selectedVideoIds.size - selectedAnalyzedCount);
 
+      const showVideoSummary = (event, video) => {
+        if (!video?.summary) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        const width = Math.min(330, Math.max(220, rect.width));
+        const estimatedHeight = 220;
+        const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 12));
+        let top = rect.bottom + 8;
+        if (top + estimatedHeight > window.innerHeight - 12) top = Math.max(12, rect.top - estimatedHeight - 8);
+        setSummaryVideoId(video.id);
+        setSummaryAnchor({ top, left, width });
+      };
+      const hideVideoSummary = () => {
+        setSummaryVideoId(null);
+        setSummaryAnchor(null);
+      };
+
       return h('div', { ref: workbenchRef, style: workbenchStyle },
         renderMediaLibraryHeader({
           active: activeLibrary,
@@ -2887,14 +2912,14 @@ window.__ModuleLoader__.load({
 
                 return h('div', {
                   key: v.id,
-                  onMouseEnter: () => setSummaryVideoId(v.id),
-                  onMouseLeave: () => setSummaryVideoId(current => current === v.id ? null : current),
-                  onFocus: () => setSummaryVideoId(v.id),
-                  onBlur: e => { if (!e.currentTarget.contains(e.relatedTarget)) setSummaryVideoId(null); },
+                  onMouseEnter: e => showVideoSummary(e, v),
+                  onMouseLeave: hideVideoSummary,
+                  onFocus: e => showVideoSummary(e, v),
+                  onBlur: e => { if (!e.currentTarget.contains(e.relatedTarget)) hideVideoSummary(); },
                   tabIndex: 0,
                   title: v.summary || undefined,
                   'aria-describedby': summaryVideoId === v.id && v.summary ? `video-summary-${v.id}` : undefined,
-                  onKeyDown: e => { if (e.key === 'Escape') setSummaryVideoId(null); else if (e.key === 'Enter' && e.target === e.currentTarget) loadVideoDetail(v.id); },
+                  onKeyDown: e => { if (e.key === 'Escape') hideVideoSummary(); else if (e.key === 'Enter' && e.target === e.currentTarget) loadVideoDetail(v.id); },
                   onClick: () => loadVideoDetail(v.id),
                   style: {
                     backgroundColor: 'var(--dsw-alias-bg-layer-1)',
@@ -2990,11 +3015,11 @@ window.__ModuleLoader__.load({
 
                   summaryVideoId === v.id && !isMenuOpen && v.summary && h('div', {
                     role: 'tooltip', id: `video-summary-${v.id}`,
-                    style: { position: 'absolute', left: '6px', right: '6px', top: isMobile ? '100%' : '120px', zIndex: 15,
+                    style: { position: 'fixed', top: summaryAnchor?.top ?? 0, left: summaryAnchor?.left ?? 0, width: summaryAnchor?.width ?? 300, zIndex: 60,
                       padding: '10px', borderRadius: '6px', border: '1px solid var(--dsw-alias-border-l2)',
                       backgroundColor: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)',
                       boxShadow: '0 4px 16px rgba(0,0,0,0.25)', fontSize: '12px', lineHeight: '1.5',
-                      maxHeight: '240px', overflow: 'hidden', overflowWrap: 'anywhere', pointerEvents: 'none' }
+                      maxHeight: 'min(240px, 50vh)', overflow: 'hidden', overflowWrap: 'anywhere', pointerEvents: 'none' }
                   }, h('strong', { style: { display: 'block', marginBottom: '4px' } }, '视频摘要'), v.summary),
 
                   // Popup Menu
