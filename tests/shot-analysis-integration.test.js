@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { VideoDatabase } from '../src/host/db/database.js';
 import { ShotAnalysisService } from '../src/host/ai/shot-analysis-service.js';
-import { createVideoManagerApiHandler } from '../src/host/api/router.js';
+import { createMediaCenterApiHandler } from '../src/host/api/router.js';
 
 const ffmpeg = process.platform === 'win32' ? path.join(os.homedir(), '.local', 'bin', 'ffmpeg.exe') : 'ffmpeg';
 const available = spawnSync(ffmpeg, ['-version'], { stdio:'ignore' }).status === 0;
@@ -33,7 +33,7 @@ function fixture(t) {
   };
   const engine={getBinaries:async()=>({ffmpeg}),ensureCaptureTimes:async()=>{}};
   const service=new ShotAnalysisService(db,engine,videoAiAnalyzer);
-  const handler=createVideoManagerApiHandler({db,mediaEngine:engine,videoAiAnalyzer,shotAnalysisService:service});
+  const handler=createMediaCenterApiHandler({db,mediaEngine:engine,videoAiAnalyzer,shotAnalysisService:service});
   const request=(method,url,body,headers={}) => new Promise((resolve,reject)=>{
     const req=Readable.from(body === undefined ? [] : [JSON.stringify(body)]); req.method=method; req.url=url; req.headers=headers;
     const res={writeHead(status,headers){res.status=status; res.headers=headers;},end(buffer){ try { resolve({status:res.status,headers:res.headers,body:buffer ? JSON.parse(buffer.toString()) : null}); } catch(e){reject(e);} }};
@@ -45,26 +45,26 @@ function fixture(t) {
 test('cross-origin reads, writes and preflight are blocked before processing', {skip:!available}, async t=>{
   const f=fixture(t), host='127.0.0.1:3080', origin='https://outside.example';
   for (const method of ['GET','POST','OPTIONS']) {
-    const result=await f.request(method,'/api/video-manager/shot-analysis-settings', method === 'POST' ? {prompt:'alter'} : undefined,{host,origin});
+    const result=await f.request(method,'/api/media-center/shot-analysis-settings', method === 'POST' ? {prompt:'alter'} : undefined,{host,origin});
     assert.equal(result.status,403); assert.equal(result.headers['Access-Control-Allow-Origin'],undefined);
   }
-  const sameOrigin=await f.request('GET','/api/video-manager/shot-analysis-settings',undefined,{host,origin:'http://127.0.0.1:3080'});
+  const sameOrigin=await f.request('GET','/api/media-center/shot-analysis-settings',undefined,{host,origin:'http://127.0.0.1:3080'});
   assert.equal(sameOrigin.status,200);
 });
 
 test('shot prompt settings default, save and reject overlong values', {skip:!available}, async t=>{
   const f=fixture(t);
-  const initial=await f.request('GET','/api/video-manager/shot-analysis-settings');
+  const initial=await f.request('GET','/api/media-center/shot-analysis-settings');
   assert.ok(initial.body.prompt); assert.equal(initial.body.prompt,initial.body.default_prompt);
-  const saved=await f.request('POST','/api/video-manager/shot-analysis-settings',{prompt:'关注人物动作'});
+  const saved=await f.request('POST','/api/media-center/shot-analysis-settings',{prompt:'关注人物动作'});
   assert.equal(saved.body.prompt,'关注人物动作');
-  const rejected=await f.request('POST','/api/video-manager/shot-analysis-settings',{prompt:'x'.repeat(16001)});
+  const rejected=await f.request('POST','/api/media-center/shot-analysis-settings',{prompt:'x'.repeat(16001)});
   assert.equal(rejected.status,400);
-  assert.equal((await f.request('GET','/api/video-manager/shot-analysis-settings')).body.prompt,'关注人物动作');
+  assert.equal((await f.request('GET','/api/media-center/shot-analysis-settings')).body.prompt,'关注人物动作');
 });
 
 test('single shot candidate pipeline stores timestamps and applies only confirmed fields', {skip:!available}, async t=>{
-  const f=fixture(t), before=digest(f.source), base=`/api/video-manager/videos/${f.video.id}/shots/${f.shotId}`;
+  const f=fixture(t), before=digest(f.source), base=`/api/media-center/videos/${f.video.id}/shots/${f.shotId}`;
   const generated=await f.request('POST',`${base}/deep-analysis`);
   assert.equal(generated.status,200); const run=generated.body.run;
   assert.equal(run.status,'completed'); assert.equal(run.sample_times.length,9);
@@ -76,23 +76,23 @@ test('single shot candidate pipeline stores timestamps and applies only confirme
   assert.equal(f.db.getVideoShots(f.video.id)[0].subject,'原始主体');
   assert.ok(f.service.getStoryboardPath(run.id));
   const list=await f.request('GET',`${base}/deep-analyses`); assert.equal(list.body.runs[0].id,run.id);
-  const applied=await f.request('POST',`/api/video-manager/shot-analysis/${run.id}/apply`,{fields:['subject']});
+  const applied=await f.request('POST',`/api/media-center/shot-analysis/${run.id}/apply`,{fields:['subject']});
   assert.equal(applied.status,200); assert.equal(applied.body.shot.subject,'人物');
   assert.equal(f.db.getVideoShots(f.video.id)[0].visual_description,'人工描述');
   assert.equal(digest(f.source),before);
 });
 
 test('candidate apply is rejected during whole-video analysis', {skip:!available}, async t=>{
-  const f=fixture(t), url=`/api/video-manager/videos/${f.video.id}/shots/${f.shotId}`;
+  const f=fixture(t), url=`/api/media-center/videos/${f.video.id}/shots/${f.shotId}`;
   const run=(await f.request('POST',`${url}/deep-analysis`)).body.run;
   let release; const gate=new Promise(resolve=>{release=resolve;});
   f.service.videoAiAnalyzer.analyzeVideo=async()=>{ await gate; return {success:true}; };
-  const pending=f.request('POST',`/api/video-manager/videos/${f.video.id}/ai-analyze`);
+  const pending=f.request('POST',`/api/media-center/videos/${f.video.id}/ai-analyze`);
   await new Promise(resolve=>setImmediate(resolve));
-  const result=await f.request('POST',`/api/video-manager/shot-analysis/${run.id}/apply`,{fields:['subject']});
+  const result=await f.request('POST',`/api/media-center/shot-analysis/${run.id}/apply`,{fields:['subject']});
   assert.equal(result.status,409); assert.equal(f.db.getVideoShots(f.video.id)[0].subject,'原始主体');
   release(); await pending;
-  assert.equal((await f.request('POST',`/api/video-manager/shot-analysis/${run.id}/apply`,{fields:['subject']})).status,200);
+  assert.equal((await f.request('POST',`/api/media-center/shot-analysis/${run.id}/apply`,{fields:['subject']})).status,200);
 });
 
 test('duplicate trigger rejected, errors preserve source and existing shot', {skip:!available}, async t=>{
@@ -100,7 +100,7 @@ test('duplicate trigger rejected, errors preserve source and existing shot', {sk
   let release; const gate=new Promise(resolve=>{release=resolve;});
   const original=f.service.analyzer.analyze.bind(f.service.analyzer);
   f.service.analyzer.analyze=async options=>{await gate; return original(options);};
-  const url=`/api/video-manager/videos/${f.video.id}/shots/${f.shotId}/deep-analysis`;
+  const url=`/api/media-center/videos/${f.video.id}/shots/${f.shotId}/deep-analysis`;
   const first=f.request('POST',url);
   // analyze reserves synchronously before first asynchronous media operation.
   await new Promise(resolve=>setTimeout(resolve,10));
@@ -132,7 +132,7 @@ test('failed model response retains reported usage and sampled storyboard', {ski
     yield {type:'text-delta',text:'not-json'};
     yield {type:'finish',reason:{kind:'stop'}};
   };
-  const url=`/api/video-manager/videos/${f.video.id}/shots/${f.shotId}`;
+  const url=`/api/media-center/videos/${f.video.id}/shots/${f.shotId}`;
   assert.equal((await f.request('POST',`${url}/deep-analysis`)).status,400);
   const run=(await f.request('GET',`${url}/deep-analyses`)).body.runs[0];
   assert.equal(run.status,'failed'); assert.equal(run.audit.total_tokens,29);
@@ -144,7 +144,7 @@ test('failed model response retains reported usage and sampled storyboard', {ski
 test('failed AI call records a safe failure without changing existing shot or exposing provider text', {skip:!available}, async t=>{
   const f=fixture(t), before=digest(f.source);
   f.service.analyzer.analyze=async()=>{throw new Error('secret-provider-token');};
-  const url=`/api/video-manager/videos/${f.video.id}/shots/${f.shotId}`;
+  const url=`/api/media-center/videos/${f.video.id}/shots/${f.shotId}`;
   const result=await f.request('POST',`${url}/deep-analysis`);
   assert.equal(result.status,400); assert.doesNotMatch(JSON.stringify(result.body),/secret-provider-token/);
   const runs=(await f.request('GET',`${url}/deep-analyses`)).body.runs;

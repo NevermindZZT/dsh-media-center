@@ -8,8 +8,8 @@ import { Readable } from 'node:stream';
 import { MediaEngine } from '../src/host/media/engine.js';
 import { VideoDatabase } from '../src/host/db/database.js';
 import { VideoAiAnalyzer } from '../src/host/ai/video-analyzer.js';
-import { createVideoManagerApiHandler } from '../src/host/api/router.js';
-import { registerVideoManagerTools } from '../src/host/tools/register-tools.js';
+import { createMediaCenterApiHandler } from '../src/host/api/router.js';
+import { registerMediaCenterTools } from '../src/host/tools/register-tools.js';
 
 const ffmpeg = process.platform === 'win32' ? path.join(os.homedir(), '.local', 'bin', 'ffmpeg.exe') : 'ffmpeg';
 const ffprobe = process.platform === 'win32' ? path.join(os.homedir(), '.local', 'bin', 'ffprobe.exe') : 'ffprobe';
@@ -91,23 +91,23 @@ test('real ffmpeg distinguishes no-audio, empty valid detections and nonzero dec
 
 test('tool analysis reports unavailable tempo and preserves manual fields on detection failure',async t=>{
   const f=fixture(t), tools=new Map(), engine=mockedEngine({status:'error',reason:'ffmpeg_failed',intervals:null});
-  registerVideoManagerTools({tools:{register:def=>{tools.set(def.name,def);return()=>{};}}},{db:f.db,mediaEngine:engine});
-  const result=await tools.get('video_manager_trigger_analysis').execute({video_id:f.video.id});
+  registerMediaCenterTools({tools:{register:def=>{tools.set(def.name,def);return()=>{};}}},{db:f.db,mediaEngine:engine});
+  const result=await tools.get('media_center_trigger_analysis').execute({video_id:f.video.id});
   assert.equal(result.success,true); assert.equal(result.estimated_bpm,null); assert.equal(result.audio_analysis.tempo.status,'unavailable');
   assert.equal(result.audio_analysis.silence.status,'error'); assert.equal(result.silence_intervals_count,null);
   assertManualPreserved(f.db,f.video.id);
-  const detail=await tools.get('video_manager_get_video').execute({video_id:f.video.id});
+  const detail=await tools.get('media_center_get_video').execute({video_id:f.video.id});
   assert.match(detail.audio_tempo_notice,/未确认/);
 });
 
 test('HTTP analysis failure does not replace manual BPM, beats or silence; successful empty silence may clear silence',async t=>{
   const f=fixture(t), engine=mockedEngine({status:'unavailable',reason:'no_audio_stream',intervals:null});
-  const handler=createVideoManagerApiHandler({db:f.db,mediaEngine:engine});
-  let result=await request(handler,'POST',`/api/video-manager/videos/${f.video.id}/analyze`);
+  const handler=createMediaCenterApiHandler({db:f.db,mediaEngine:engine});
+  let result=await request(handler,'POST',`/api/media-center/videos/${f.video.id}/analyze`);
   assert.equal(result.status,200); assert.equal(result.body.audio_analysis.tempo.bpm,null); assert.equal(result.body.audio_analysis.silence.reason,'no_audio_stream');
   assertManualPreserved(f.db,f.video.id);
   engine.detectSilenceResult=async()=>({status:'ok',reason:null,intervals:[]});
-  result=await request(handler,'POST',`/api/video-manager/videos/${f.video.id}/analyze`);
+  result=await request(handler,'POST',`/api/media-center/videos/${f.video.id}/analyze`);
   assert.equal(result.body.audio_analysis.silence.status,'ok');
   const audio=f.db.getVideoAudio(f.video.id); assert.equal(audio.bpm,94); assert.deepEqual(audio.beats,[0.3,0.93]); assert.deepEqual(audio.silence_intervals,[]);
 });

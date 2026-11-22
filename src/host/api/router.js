@@ -3,7 +3,7 @@ import path from 'node:path';
 import { URL } from 'node:url';
 import { AnalysisQueue } from '../ai/analysis-queue.js';
 
-export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer, shotAnalysisService, editingWorkflow }) {
+export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer, shotAnalysisService, editingWorkflow }) {
   const analysisQueue = new AnalysisQueue(db);
   if (shotAnalysisService?.store) shotAnalysisService.store.isVideoBusy = id => analysisQueue.active.has(id);
   const recordAnalysisFailure = (id) => {
@@ -148,9 +148,9 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
 
     try {
       // Editing endpoints accept catalog IDs except the explicit local-music import.
-      if (pathname.startsWith('/api/video-manager/editing/')) {
+      if (pathname.startsWith('/api/media-center/editing/')) {
         if (!editingWorkflow) return jsonResponse(res, { success:false, error:'剪辑工作流不可用' }, 503);
-        const base = '/api/video-manager/editing';
+        const base = '/api/media-center/editing';
         const integer = (value, fallback, max) => {
           if (value == null || value === '') return fallback;
           if (!/^\d+$/.test(String(value))) throw new Error('invalid pagination');
@@ -176,20 +176,20 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
               license_note:body.license_note,license_confirmed:body.license_confirmed});
             return jsonResponse(res,{success:true,...result});
           }
-          const musicInterpretEditMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/interpret\/edits$/);
+          const musicInterpretEditMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/interpret\/edits$/);
           if(musicInterpretEditMatch&&method==='PUT'){
             const body=await parseJsonBody(req);
             if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户明确确认频谱解读编辑和模型节奏点'},400);
             const profile=editingWorkflow.saveMusicInterpretationEdits(musicInterpretEditMatch[1],{analysisId:body.analysis_id,edits:body.edits});
             return jsonResponse(res,{success:true,model_interpretation:profile.model_interpretation,model_interpretation_edits:profile.model_interpretation_edits,model_interpretation_edits_provenance:profile.model_interpretation_edits_provenance});
           }
-          const musicInterpretMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/interpret$/);
+          const musicInterpretMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/interpret$/);
           if(musicInterpretMatch&&method==='POST'){
             const body=await parseJsonBody(req);
             const result=await editingWorkflow.interpretMusicSpectrogram(musicInterpretMatch[1],{analysisId:body.analysis_id});
             return jsonResponse(res,{success:true,...result});
           }
-          const musicAnalysisMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/analysis(?:\/(confirm-beats|styles))?$/);
+          const musicAnalysisMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/analysis(?:\/(confirm-beats|styles))?$/);
           if(musicAnalysisMatch&&method==='GET'&&!musicAnalysisMatch[2]){
             const analysis=editingWorkflow.getMusicAnalysis(musicAnalysisMatch[1]);
             return jsonResponse(res,{success:true,analysis:analysis||null});
@@ -204,19 +204,19 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
             if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户明确确认 Agent 风格建议后保存'},400);
             return jsonResponse(res,{success:true,analysis:editingWorkflow.saveMusicStyleSuggestions(musicAnalysisMatch[1],{analysisId:body.analysis_id,styleTags:body.style_tags,rationale:body.rationale,confirmed:true})});
           }
-          const musicSpectrogramMatch=pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/spectrogram$/);
+          const musicSpectrogramMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/spectrogram$/);
           if(musicSpectrogramMatch&&method==='GET'){
             try{return streamImageFile(res,await editingWorkflow.getMusicSpectrogramPath(musicSpectrogramMatch[1]));}
             catch{return jsonResponse(res,{success:false,error:'无法生成或读取音乐频谱图'},404);}
           }
-          const musicStreamMatch = pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})\/stream$/);
+          const musicStreamMatch = pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/stream$/);
           if (musicStreamMatch && method === 'GET') {
             const item=editingWorkflow.catalog.get(musicStreamMatch[1]);
             if (!item) return jsonResponse(res,{success:false,error:'音乐记录不存在'},404);
             if(item.source_status!=='current')return jsonResponse(res,{success:false,error:'音乐源文件不可用或已变化'},409);
             return streamMusicFile(req,res,item.file_path);
           }
-          const musicMatch = pathname.match(/^\/api\/video-manager\/editing\/music\/(mus_[0-9a-f]{32})(?:\/(confirm-personal|analyze))?$/);
+          const musicMatch = pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})(?:\/(confirm-personal|analyze))?$/);
           if (musicMatch && method === 'DELETE' && !musicMatch[2]) {
             return jsonResponse(res,{success:true,removed:editingWorkflow.removeMusic(musicMatch[1])});
           }
@@ -256,7 +256,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
             const projects=editingWorkflow.projects.list({limit:integer(parsedUrl.searchParams.get('limit'),30,100),offset:integer(parsedUrl.searchParams.get('offset'),0,1000000)});
             return jsonResponse(res,{success:true,projects});
           }
-          const projectMatch=pathname.match(/^\/api\/video-manager\/editing\/projects\/(edit_[0-9a-f]{32})$/);
+          const projectMatch=pathname.match(/^\/api\/media-center\/editing\/projects\/(edit_[0-9a-f]{32})$/);
           if (projectMatch && method === 'GET') {
             const project=editingWorkflow.projects.get(projectMatch[1]);
             return project ? jsonResponse(res,{success:true,project}) : jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
@@ -284,8 +284,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
           return jsonResponse(res,{success:false,error:safe?message:'音乐资产或剪辑项目操作失败，请检查输入、来源状态和授权'},400);
         }
       }
-      // 1. Status & Binaries: GET /api/video-manager/status
-      if (pathname === '/api/video-manager/status' && method === 'GET') {
+      // 1. Status & Binaries: GET /api/media-center/status
+      if (pathname === '/api/media-center/status' && method === 'GET') {
         const bins = await mediaEngine.getBinaries();
         const settings = {
           ffmpeg_path: db.getSetting('ffmpeg_path'),
@@ -299,8 +299,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         });
       }
 
-      // 2. Settings: POST /api/video-manager/settings
-      if (pathname === '/api/video-manager/settings' && method === 'POST') {
+      // 2. Settings: POST /api/media-center/settings
+      if (pathname === '/api/media-center/settings' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (body.ffmpeg_path !== undefined) db.setSetting('ffmpeg_path', body.ffmpeg_path);
         if (body.ffprobe_path !== undefined) db.setSetting('ffprobe_path', body.ffprobe_path);
@@ -308,12 +308,12 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, binaries: bins });
       }
 
-      // Cache usage and cleanup: GET/POST /api/video-manager/cache, /cache/clear
-      if (pathname === '/api/video-manager/cache' && method === 'GET') {
+      // Cache usage and cleanup: GET/POST /api/media-center/cache, /cache/clear
+      if (pathname === '/api/media-center/cache' && method === 'GET') {
         if (typeof mediaEngine?.getCacheUsage !== 'function') return jsonResponse(res,{success:false,error:'缓存统计不可用'},503);
         return jsonResponse(res,{success:true,usage:await mediaEngine.getCacheUsage()});
       }
-      if (pathname === '/api/video-manager/cache/clear' && method === 'POST') {
+      if (pathname === '/api/media-center/cache/clear' && method === 'POST') {
         if (typeof mediaEngine?.clearCache !== 'function') return jsonResponse(res,{success:false,error:'缓存清理不可用'},503);
         const body=await parseJsonBody(req);
         const scope=body.scope==='previews'?'previews':'all';
@@ -321,29 +321,29 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res,{success:true,scope,usage:await mediaEngine.getCacheUsage()});
       }
 
-      // 3. Folders Tree: GET /api/video-manager/folders
-      if (pathname === '/api/video-manager/folders' && method === 'GET') {
+      // 3. Folders Tree: GET /api/media-center/folders
+      if (pathname === '/api/media-center/folders' && method === 'GET') {
         const tree = db.getFolderTree();
         return jsonResponse(res, { success: true, folders: tree });
       }
 
-      // 4. Create Folder: POST /api/video-manager/folders
-      if (pathname === '/api/video-manager/folders' && method === 'POST') {
+      // 4. Create Folder: POST /api/media-center/folders
+      if (pathname === '/api/media-center/folders' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (!body.name) return jsonResponse(res, { success: false, error: 'Folder name is required' }, 400);
         const folder = db.createFolder(body.name, body.parent_id || null, body.source_dir_path || null);
         return jsonResponse(res, { success: true, folder });
       }
 
-      // 5. Delete Folder: DELETE /api/video-manager/folders/:id
-      const folderDelMatch = pathname.match(/^\/api\/video-manager\/folders\/([a-zA-Z0-9_-]+)$/);
+      // 5. Delete Folder: DELETE /api/media-center/folders/:id
+      const folderDelMatch = pathname.match(/^\/api\/media-center\/folders\/([a-zA-Z0-9_-]+)$/);
       if (folderDelMatch && method === 'DELETE') {
         db.deleteFolder(folderDelMatch[1]);
         return jsonResponse(res, { success: true });
       }
 
-      // Video import job state: GET /api/video-manager/import-jobs/:id
-      const importJobMatch=pathname.match(/^\/api\/video-manager\/import-jobs\/(imp_[a-f0-9]{32})$/);
+      // Video import job state: GET /api/media-center/import-jobs/:id
+      const importJobMatch=pathname.match(/^\/api\/media-center\/import-jobs\/(imp_[a-f0-9]{32})$/);
       if(importJobMatch&&method==='GET'){
         if(typeof mediaEngine?.getImportJob!=='function')return jsonResponse(res,{success:false,error:'导入任务状态不可用'},503);
         const job=mediaEngine.getImportJob(importJobMatch[1]);
@@ -357,7 +357,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res,{success:true,job});
       }
 
-      // 5.1 Rename Folder: PUT /api/video-manager/folders/:id
+      // 5.1 Rename Folder: PUT /api/media-center/folders/:id
       if (folderDelMatch && method === 'PUT') {
         const body = await parseJsonBody(req);
         if (!body.name) return jsonResponse(res, { success: false, error: 'New folder name is required' }, 400);
@@ -365,8 +365,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, folder: renamed });
       }
 
-      // 6. Scan Directory: POST /api/video-manager/folders/scan
-      if (pathname === '/api/video-manager/folders/scan' && method === 'POST') {
+      // 6. Scan Directory: POST /api/media-center/folders/scan
+      if (pathname === '/api/media-center/folders/scan' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (typeof body.directory_path !== 'string' || !path.isAbsolute(body.directory_path)) {
           return jsonResponse(res, { success: false, error: 'directory_path must be an absolute path' }, 400);
@@ -376,7 +376,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       }
 
       // Scan multiple direct child directories under the current asset folder.
-      if (pathname === '/api/video-manager/folders/scan-selected' && method === 'POST') {
+      if (pathname === '/api/media-center/folders/scan-selected' && method === 'POST') {
         const body=await parseJsonBody(req);
         if (typeof body.parent_directory_path!=='string'||!path.isAbsolute(body.parent_directory_path)||!Array.isArray(body.directory_paths)||body.directory_paths.length<1||body.directory_paths.length>50||body.directory_paths.some(value=>typeof value!=='string'||!path.isAbsolute(value))) {
           return jsonResponse(res,{success:false,error:'parent_directory_path and 1–50 absolute directory_paths are required'},400);
@@ -385,15 +385,15 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res,{success:true,job:job.job,job_id:job.job?.id||null,merged:job.merged,scanned_count:0,imported_count:0,failed_count:0,folders:[]});
       }
 
-      // 6.1 Browse Local Filesystem: GET /api/video-manager/fs/browse
-      if (pathname === '/api/video-manager/fs/browse' && method === 'GET') {
+      // 6.1 Browse Local Filesystem: GET /api/media-center/fs/browse
+      if (pathname === '/api/media-center/fs/browse' && method === 'GET') {
         const dir = parsedUrl.searchParams.get('dir') || undefined;
         const result = mediaEngine.browseFileSystem(dir);
         return jsonResponse(res, { success: true, ...result });
       }
 
-      // 6.2 Import Specific Video Files: POST /api/video-manager/videos/import-files
-      if (pathname === '/api/video-manager/videos/import-files' && method === 'POST') {
+      // 6.2 Import Specific Video Files: POST /api/media-center/videos/import-files
+      if (pathname === '/api/media-center/videos/import-files' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (!Array.isArray(body.file_paths)||body.file_paths.length<1||body.file_paths.length>5000||body.file_paths.some(value=>typeof value!=='string')) {
           return jsonResponse(res, { success: false, error: 'file_paths must contain 1–5000 paths' }, 400);
@@ -402,8 +402,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res,{success:true,job:job.job,job_id:job.job?.id||null,merged:job.merged,imported_count:0,duplicates_count:0,failed_count:0,videos:[]});
       }
 
-      // 6.3 Batch Move Videos: POST /api/video-manager/videos/batch-move
-      if (pathname === '/api/video-manager/videos/batch-move' && method === 'POST') {
+      // 6.3 Batch Move Videos: POST /api/media-center/videos/batch-move
+      if (pathname === '/api/media-center/videos/batch-move' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (!Array.isArray(body.video_ids) || body.video_ids.length === 0) {
           return jsonResponse(res, { success: false, error: 'video_ids array is required' }, 400);
@@ -412,8 +412,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, moved_count: count });
       }
 
-      // 6.4 Batch Delete Videos: POST /api/video-manager/videos/batch-delete
-      if (pathname === '/api/video-manager/videos/batch-delete' && method === 'POST') {
+      // 6.4 Batch Delete Videos: POST /api/media-center/videos/batch-delete
+      if (pathname === '/api/media-center/videos/batch-delete' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (!Array.isArray(body.video_ids) || body.video_ids.length === 0) {
           return jsonResponse(res, { success: false, error: 'video_ids array is required' }, 400);
@@ -423,8 +423,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, deleted_count: count });
       }
 
-      // 7. Video List: GET /api/video-manager/videos
-      if (pathname === '/api/video-manager/videos' && method === 'GET') {
+      // 7. Video List: GET /api/media-center/videos
+      if (pathname === '/api/media-center/videos' && method === 'GET') {
         await mediaEngine.ensureCaptureTimes();
         const folderId = parsedUrl.searchParams.get('folder_id') || undefined;
         const query = parsedUrl.searchParams.get('query') || undefined;
@@ -447,8 +447,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, videos });
       }
 
-      // 8. Video Details: GET /api/video-manager/videos/:id
-      const videoDetailMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)$/);
+      // 8. Video Details: GET /api/media-center/videos/:id
+      const videoDetailMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)$/);
       if (videoDetailMatch && method === 'GET') {
         await mediaEngine.ensureCaptureTimes();
         const video = db.getVideoById(videoDetailMatch[1], true, true);
@@ -456,7 +456,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, video: analysisQueue.overlay(video) });
       }
 
-      // 9. Update Video: PUT /api/video-manager/videos/:id
+      // 9. Update Video: PUT /api/media-center/videos/:id
       if (videoDetailMatch && method === 'PUT') {
         const body = await parseJsonBody(req);
         const updated = db.upsertVideo({
@@ -471,15 +471,15 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, video: updated });
       }
 
-      // 10. Delete Video: DELETE /api/video-manager/videos/:id
+      // 10. Delete Video: DELETE /api/media-center/videos/:id
       if (videoDetailMatch && method === 'DELETE') {
         mediaEngine.cancelImportForVideo?.(videoDetailMatch[1]);
         db.deleteVideo(videoDetailMatch[1]);
         return jsonResponse(res, { success: true });
       }
 
-      // 11. Trigger Analysis: POST /api/video-manager/videos/:id/analyze
-      const analyzeMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/analyze$/);
+      // 11. Trigger Analysis: POST /api/media-center/videos/:id/analyze
+      const analyzeMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/analyze$/);
       if (analyzeMatch && method === 'POST') {
         const videoId = analyzeMatch[1];
         const video = db.getVideoById(videoId);
@@ -509,8 +509,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         });
       }
 
-      // 11.1 Directly Trigger Multi-modal AI Video Analysis: POST /api/video-manager/videos/:id/ai-analyze
-      const aiAnalyzeMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/ai-analyze$/);
+      // 11.1 Directly Trigger Multi-modal AI Video Analysis: POST /api/media-center/videos/:id/ai-analyze
+      const aiAnalyzeMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/ai-analyze$/);
       if (aiAnalyzeMatch && method === 'POST') {
         const videoId = aiAnalyzeMatch[1];
         const reservation = analysisQueue.reserve([videoId]);
@@ -529,8 +529,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         }
       }
 
-      // 11.2 Batch Multi-modal AI Video Analysis: POST /api/video-manager/videos/batch-ai-analyze
-      if (pathname === '/api/video-manager/videos/batch-ai-analyze' && method === 'POST') {
+      // 11.2 Batch Multi-modal AI Video Analysis: POST /api/media-center/videos/batch-ai-analyze
+      if (pathname === '/api/media-center/videos/batch-ai-analyze' && method === 'POST') {
         const body = await parseJsonBody(req);
         const reservation = analysisQueue.reserve(body?.video_ids);
         if (!reservation.ok) return jsonResponse(res, { success: false, error: reservation.error, video_ids: reservation.video_ids }, reservation.status);
@@ -566,7 +566,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       }
 
       // Single-shot deep analysis. Only server-generated paths are ever sent to the model.
-      const shotDeepMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/shots\/([a-zA-Z0-9_-]+)\/(deep-analysis|deep-analyses)$/);
+      const shotDeepMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/shots\/([a-zA-Z0-9_-]+)\/(deep-analysis|deep-analyses)$/);
       if (shotDeepMatch && method === 'POST' && shotDeepMatch[3] === 'deep-analysis') {
         try {
           const run = await shotAnalysisService.analyze(shotDeepMatch[1], shotDeepMatch[2]);
@@ -580,7 +580,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         const runs = shotAnalysisService.store.listRuns({ video_id: shotDeepMatch[1], shot_id: shotDeepMatch[2], limit: 50 });
         return jsonResponse(res, { success: true, runs });
       }
-      const shotRunMatch = pathname.match(/^\/api\/video-manager\/shot-analysis\/([a-zA-Z0-9_-]+)\/(apply|storyboard)$/);
+      const shotRunMatch = pathname.match(/^\/api\/media-center\/shot-analysis\/([a-zA-Z0-9_-]+)\/(apply|storyboard)$/);
       if (shotRunMatch && method === 'POST' && shotRunMatch[2] === 'apply') {
         try {
           const body = await parseJsonBody(req);
@@ -596,10 +596,10 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         if (!storyboard) return jsonResponse(res, { success: false, error: '故事板不可用' }, 404);
         return streamImageFile(res, storyboard);
       }
-      if (pathname === '/api/video-manager/shot-analysis-settings' && method === 'GET') {
+      if (pathname === '/api/media-center/shot-analysis-settings' && method === 'GET') {
         return jsonResponse(res, { success: true, ...shotAnalysisService.getPromptSettings() });
       }
-      if (pathname === '/api/video-manager/shot-analysis-settings' && method === 'POST') {
+      if (pathname === '/api/media-center/shot-analysis-settings' && method === 'POST') {
         try {
           const body = await parseJsonBody(req);
           return jsonResponse(res, { success: true, ...shotAnalysisService.savePromptSettings(body.prompt) });
@@ -609,14 +609,14 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       }
 
       // Return live registered DSH providers/models; no credentials are exposed.
-      if (pathname === '/api/video-manager/ai-models' && method === 'GET') {
+      if (pathname === '/api/media-center/ai-models' && method === 'GET') {
         const catalog = await videoAiAnalyzer.getModelCatalog();
         return jsonResponse(res, { success: true, ...catalog });
       }
-      if (pathname === '/api/video-manager/ai-settings' && method === 'GET') {
+      if (pathname === '/api/media-center/ai-settings' && method === 'GET') {
         return jsonResponse(res, { success: true, ...videoAiAnalyzer.getAiSettings() });
       }
-      if (pathname === '/api/video-manager/ai-settings' && method === 'POST') {
+      if (pathname === '/api/media-center/ai-settings' && method === 'POST') {
         const body = await parseJsonBody(req);
         try {
           const settings = await videoAiAnalyzer.saveAiSettings(body);
@@ -626,8 +626,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         }
       }
 
-      // 12. Video Storyboard Image: GET /api/video-manager/videos/:id/storyboard
-      const storyboardMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/storyboard$/);
+      // 12. Video Storyboard Image: GET /api/media-center/videos/:id/storyboard
+      const storyboardMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/storyboard$/);
       if (storyboardMatch && method === 'POST') {
         const video = db.getVideoById(storyboardMatch[1]);
         if (!video) return jsonResponse(res, { success: false, error: 'Video not found' }, 404);
@@ -646,7 +646,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       }
 
       // 12.2 Open the original media with the operating system's default player
-      const openVideoMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/open$/);
+      const openVideoMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/open$/);
       if (openVideoMatch && method === 'POST') {
         if (typeof mediaEngine?.openInSystemPlayer !== 'function') return jsonResponse(res, { success:false, error:'系统播放器不可用' }, 503);
         const opened = mediaEngine.openInSystemPlayer(openVideoMatch[1]);
@@ -654,7 +654,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       }
 
       // 12.1 Browser-compatible preview (H.264) for codecs such as HEVC
-      const previewMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/preview$/);
+      const previewMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/preview$/);
       if (previewMatch && method === 'DELETE') {
         if (typeof mediaEngine?.clearPreviewCache !== 'function') return jsonResponse(res, { success:false, error:'预览缓存清理不可用' }, 503);
         const removed = mediaEngine.clearPreviewCache(previewMatch[1]);
@@ -668,8 +668,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success:true, preview: info ? { required:info.required, status:info.status, codec:info.codec } : null });
       }
 
-      // 13. Video Media Stream: GET /api/video-manager/videos/:id/stream
-      const streamMatch = pathname.match(/^\/api\/video-manager\/videos\/([a-zA-Z0-9_-]+)\/stream$/);
+      // 13. Video Media Stream: GET /api/media-center/videos/:id/stream
+      const streamMatch = pathname.match(/^\/api\/media-center\/videos\/([a-zA-Z0-9_-]+)\/stream$/);
       if (streamMatch && method === 'GET') {
         const video = db.getVideoById(streamMatch[1]);
         if (!video || !fs.existsSync(video.file_path)) {
@@ -685,15 +685,15 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return streamVideoFile(req, res, previewPath || video.file_path);
       }
 
-      // 14. Keyframe image: GET /api/video-manager/keyframes/:file
-      const keyframeMatch = pathname.match(/^\/api\/video-manager\/keyframes\/([a-zA-Z0-9_.-]+)$/);
+      // 14. Keyframe image: GET /api/media-center/keyframes/:file
+      const keyframeMatch = pathname.match(/^\/api\/media-center\/keyframes\/([a-zA-Z0-9_.-]+)$/);
       if (keyframeMatch && method === 'GET') {
         const keyframeFile = path.join(db.keyframesDir, keyframeMatch[1]);
         return streamImageFile(res, keyframeFile);
       }
 
-      // 15. Upsert Shots: POST /api/video-manager/shots
-      if (pathname === '/api/video-manager/shots' && method === 'POST') {
+      // 15. Upsert Shots: POST /api/media-center/shots
+      if (pathname === '/api/media-center/shots' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (!body.video_id || !Array.isArray(body.shots)) {
           return jsonResponse(res, { success: false, error: 'video_id and shots array required' }, 400);
@@ -702,16 +702,16 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, saved_shot_ids: savedIds });
       }
 
-      // 16. Upsert Audio: POST /api/video-manager/audio
-      if (pathname === '/api/video-manager/audio' && method === 'POST') {
+      // 16. Upsert Audio: POST /api/media-center/audio
+      if (pathname === '/api/media-center/audio' && method === 'POST') {
         const body = await parseJsonBody(req);
         if (!body.video_id) return jsonResponse(res, { success: false, error: 'video_id required' }, 400);
         const audio = db.upsertVideoAudio(body.video_id, body);
         return jsonResponse(res, { success: true, audio });
       }
 
-      // 17. Semantic Shot Search: GET /api/video-manager/search/shots
-      if (pathname === '/api/video-manager/search/shots' && method === 'GET') {
+      // 17. Semantic Shot Search: GET /api/media-center/search/shots
+      if (pathname === '/api/media-center/search/shots' && method === 'GET') {
         const q = parsedUrl.searchParams.get('q') || '';
         const shotType = parsedUrl.searchParams.get('shot_type') || undefined;
         const movement = parsedUrl.searchParams.get('camera_movement') || undefined;
@@ -721,8 +721,8 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
         return jsonResponse(res, { success: true, count: results.length, shots: results });
       }
 
-      // 18. Export Project: POST /api/video-manager/export
-      if (pathname === '/api/video-manager/export' && method === 'POST') {
+      // 18. Export Project: POST /api/media-center/export
+      if (pathname === '/api/media-center/export' && method === 'POST') {
         const body = await parseJsonBody(req);
         const { sequence_name = 'My_Edit', format = 'jianying', clips = [], fps = 30 } = body;
 
@@ -752,7 +752,7 @@ export function createVideoManagerApiHandler({ db, mediaEngine, projectExporter,
       // Unmatched route
       return jsonResponse(res, { error: 'Not found', path: pathname }, 404);
     } catch (err) {
-      console.error('[VideoManagerApi] Error:', err);
+      console.error('[MediaCenterApi] Error:', err);
       return jsonResponse(res, { error: err.message }, 500);
     }
   };

@@ -1,7 +1,7 @@
 import { SHOT_ANALYSIS_FIELDS } from '../db/shot-analysis-store.js';
 import { MAX_MUSIC_ANALYSIS_SECONDS } from '../music/beat-analysis.js';
 
-export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporter, shotSearchService, shotAnalysisService, editingWorkflow }) {
+export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter, shotSearchService, shotAnalysisService, editingWorkflow }) {
   if (!ctx.tools || typeof ctx.tools.register !== 'function') {
     return () => {};
   }
@@ -35,19 +35,19 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   const musicId = {type:'string',description:'本地音乐库记录 ID（mus_…）。'};
   const musicProfileSummary=profile=>profile?{analysis_id:profile.analysis_id,music_id:profile.music_id,analysis_version:profile.analysis_version,method:profile.method,status:profile.status,bpm:profile.bpm,confidence:profile.confidence,analysis_window:profile.analysis_window,tempo_candidates:profile.tempo_candidates,confirmed_beat_count:profile.user_confirmed_beats?.length||0,user_confirmed_beats:profile.user_confirmed_beats,style_tags:profile.style_tags,style_rationale:profile.style_rationale,style_provenance:profile.style_provenance}:null;
   const pageFields = {limit:{type:'integer',minimum:1,maximum:100,description:'最多返回数量，默认 25。'},offset:{type:'integer',minimum:0,maximum:1000000,description:'分页偏移，默认 0。'}};
-  editTool('video_manager_edit_music_list','列出本地音乐资产，可按标题、作者、文件名和分析状态筛选；返回最新分析摘要，授权状态是用户声明而非版权验证。',
+  editTool('media_center_edit_music_list','列出本地音乐资产，可按标题、作者、文件名和分析状态筛选；返回最新分析摘要，授权状态是用户声明而非版权验证。',
     {query:{type:'string',description:'按标题、艺术家或文件名搜索。'},license_status:{type:'string',enum:['unknown','personal_confirmed']},analysis_status:{type:'string',description:'按分析状态筛选，例如 not_analyzed、ok、low_confidence、stale。'},style_tag:{type:'string',description:'按用户已确认的 Agent 风格标签筛选。'},...pageFields}, [],
     args => ({success:true,...editingWorkflow.listMusicCatalog(args)}));
-  editTool('video_manager_edit_music_import','导入本地音乐引用，不复制、修改或删除源文件。',
+  editTool('media_center_edit_music_import','导入本地音乐引用，不复制、修改或删除源文件。',
     {file_path:{type:'string',description:'用户明确指定的本地音频绝对路径。'},title:{type:'string'},artist:{type:'string'},source_name:{type:'string'},source_url:{type:'string'},license_note:{type:'string'}}, ['file_path'],
     async args => ({success:true,...await editingWorkflow.catalog.importFile({file_path:args.file_path,title:args.title,artist:args.artist,source_name:args.source_name,source_url:args.source_url,license_note:args.license_note,license_status:'unknown'})}));
-  editTool('video_manager_edit_music_remove','从音乐库移出记录，不删除或更改源文件。', {music_id:musicId}, ['music_id'],
+  editTool('media_center_edit_music_remove','从音乐库移出记录，不删除或更改源文件。', {music_id:musicId}, ['music_id'],
     args => ({success:true,removed:editingWorkflow.removeMusic(args.music_id)}));
-  editTool('video_manager_edit_music_confirm_personal','记录用户对个人分享用途的许可声明，不验证版权。',
+  editTool('media_center_edit_music_confirm_personal','记录用户对个人分享用途的许可声明，不验证版权。',
     {music_id:musicId,license_note:{type:'string',description:'用户提供的授权说明。'},confirmed:{type:'boolean',description:'仅在用户明确确认此音乐可用于个人分享时设为 true。'}}, ['music_id','confirmed'],
     args => args.confirmed !== true ? {success:false,error:'须先由用户明确确认个人分享使用权限'} :
       ({success:true,music:editingWorkflow.catalog.confirmPersonalUse(args.music_id,{confirmed:true,license_note:args.license_note})}));
-  editTool('video_manager_edit_music_analyze','对本地音乐窗口进行只读DSP测量，返回BPM估计与拍点候选；原始瞬态时间列表不保存/不返回，候选仍需试听确认。',
+  editTool('media_center_edit_music_analyze','对本地音乐窗口进行只读DSP测量，返回BPM估计与拍点候选；原始瞬态时间列表不保存/不返回，候选仍需试听确认。',
     {music_id:musicId,start_seconds:{type:'number',minimum:0,description:'分析窗口的源音频起点（秒），默认 0。'},duration_seconds:{type:'number',minimum:0.1,maximum:MAX_MUSIC_ANALYSIS_SECONDS,description:'分析窗口时长（秒，最多10分钟/600秒）；省略时默认完整音频时长。'}}, ['music_id'],
     async args => {
       const analysis=await editingWorkflow.analyzeMusic(args.music_id,{startSeconds:args.start_seconds,durationSeconds:args.duration_seconds});
@@ -55,7 +55,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
       const candidates=Array.isArray(analysis.beat_candidates)?analysis.beat_candidates:[];result.beat_candidates=candidates.slice(0,200);result.beat_candidates_omitted=Math.max(0,candidates.length-200);
       return {success:true,analysis:result};
     });
-  editTool('video_manager_edit_music_analysis_detail','读取版本化音乐分析档案；若已执行频谱图模型分析，也返回速度与近似节奏提示、场景/风格标签、用户编辑和确认记录。模型提示与DSP候选分开，不能当作精确节拍。',
+  editTool('media_center_edit_music_analysis_detail','读取版本化音乐分析档案；若已执行频谱图模型分析，也返回速度与近似节奏提示、场景/风格标签、用户编辑和确认记录。模型提示与DSP候选分开，不能当作精确节拍。',
     {music_id:musicId,limit:{type:'integer',minimum:1,maximum:500,description:'DSP拍点候选与用户确认点每类最多返回数量，默认100；原始瞬态列表不返回。'}}, ['music_id'],
     args=>{
       const analysis=editingWorkflow.getMusicAnalysis(args.music_id);
@@ -67,16 +67,16 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
       }
       return {success:true,analysis:result};
     });
-  editTool('video_manager_edit_music_spectrogram_interpret','使用已配置图像模型解读指定音乐分析窗口的频谱图。返回带来源的近似速度/节奏点、场景与风格建议；模型提示不是DSP测量或精确拍点。',
+  editTool('media_center_edit_music_spectrogram_interpret','使用已配置图像模型解读指定音乐分析窗口的频谱图。返回带来源的近似速度/节奏点、场景与风格建议；模型提示不是DSP测量或精确拍点。',
     {music_id:musicId,analysis_id:{type:'string',description:'本地节奏分析返回的 analysis_id；模型解读使用该版本的源文件和窗口。'},confirmed:{type:'boolean',description:'仅当用户明确要求对该音频调用大模型解读时设为 true。'}}, ['music_id','analysis_id','confirmed'],
     async args=>args.confirmed!==true?{success:false,error:'须先获得用户对频谱模型解读的明确请求'}:{success:true,...await editingWorkflow.interpretMusicSpectrogram(args.music_id,{analysisId:args.analysis_id})});
-  editTool('video_manager_edit_music_confirm_beats','仅在用户试听并明确确认一组拍点候选后保存；每个确认点必须对应实测音频中的节奏拍点候选。',
-    {music_id:musicId,analysis_id:{type:'string',description:'video_manager_edit_music_analyze 返回的 analysis_id。'},beats:{type:'array',minItems:1,maxItems:2000,items:{type:'number',minimum:0},description:'用户听审后确认的源音频秒数，必须从 beat_candidates 中选择。'},confirmed:{type:'boolean',description:'仅当用户明确批准保存这些拍点时为 true。'}}, ['music_id','analysis_id','beats','confirmed'],
+  editTool('media_center_edit_music_confirm_beats','仅在用户试听并明确确认一组拍点候选后保存；每个确认点必须对应实测音频中的节奏拍点候选。',
+    {music_id:musicId,analysis_id:{type:'string',description:'media_center_edit_music_analyze 返回的 analysis_id。'},beats:{type:'array',minItems:1,maxItems:2000,items:{type:'number',minimum:0},description:'用户听审后确认的源音频秒数，必须从 beat_candidates 中选择。'},confirmed:{type:'boolean',description:'仅当用户明确批准保存这些拍点时为 true。'}}, ['music_id','analysis_id','beats','confirmed'],
     args=>args.confirmed!==true?{success:false,error:'须先获得用户对拍点候选的明确确认'}:{success:true,analysis:musicProfileSummary(editingWorkflow.confirmMusicBeats(args.music_id,{analysisId:args.analysis_id,beats:args.beats,confirmed:true}))});
-  editTool('video_manager_edit_music_set_styles','保存 DSH 会话 Agent 基于音乐测量与视频素材给出的风格建议；每项是主观建议而非声学测量，须用户明确确认。',
+  editTool('media_center_edit_music_set_styles','保存 DSH 会话 Agent 基于音乐测量与视频素材给出的风格建议；每项是主观建议而非声学测量，须用户明确确认。',
     {music_id:musicId,analysis_id:{type:'string',description:'对应音乐分析记录的 analysis_id。'},style_tags:{type:'array',minItems:1,maxItems:30,items:{type:'string',maxLength:100},description:'如山地风光慢剪、城市夜景、快速蒙太奇等建议标签。'},rationale:{type:'string',maxLength:2000,description:'建议依据和不确定性。'},confirmed:{type:'boolean',description:'仅当用户明确要求保存这些风格建议时为 true。'}}, ['music_id','analysis_id','style_tags','rationale','confirmed'],
     args=>args.confirmed!==true?{success:false,error:'须先获得用户对风格建议的明确确认'}:{success:true,analysis:editingWorkflow.saveMusicStyleSuggestions(args.music_id,{analysisId:args.analysis_id,styleTags:args.style_tags,rationale:args.rationale,confirmed:true})});
-  editTool('video_manager_edit_jamendo_search','搜索 Jamendo 曲目元数据；结果不代表已获授权，不能直接导入。使用主机环境变量 JAMENDO_CLIENT_ID。',
+  editTool('media_center_edit_jamendo_search','搜索 Jamendo 曲目元数据；结果不代表已获授权，不能直接导入。使用主机环境变量 JAMENDO_CLIENT_ID。',
     {query:{type:'string',description:'曲目、作者或风格关键词。'},limit:{type:'integer',minimum:1,maximum:20},offset:{type:'integer',minimum:0,maximum:1000}}, ['query'],
     async (args,context) => {
       const clientId=process.env.JAMENDO_CLIENT_ID;
@@ -90,10 +90,10 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   const editClipSchema={type:'object',properties:{id:{type:'string',minLength:1,maxLength:200},source:editSourceSchema,source_in_seconds:{type:'number',minimum:0},source_out_seconds:{type:'number',exclusiveMinimum:0},timeline_start_frame:{type:'integer',minimum:0},timeline_end_frame:{type:'integer',minimum:1},rationale:{type:'string',maxLength:500},evidence:{type:'object',properties:{shot_id:{type:'string',minLength:1},purpose:{type:'string',maxLength:300},beat_relation:{type:'string',maxLength:300}},required:['shot_id'],additionalProperties:false},rights:{type:'object',properties:{status:{type:'string',enum:['confirmed','restricted','unknown']},scope:{type:'string',maxLength:100},note:{type:'string',maxLength:2000}},required:['status'],additionalProperties:false}},required:['id','source','source_in_seconds','source_out_seconds','timeline_start_frame','timeline_end_frame'],additionalProperties:false};
   const musicClipSchema={...editClipSchema,required:[...editClipSchema.required,'rights']};
   const editProjectSchema={type:'object',description:'版本化非线性剪辑时间线。由当前 DSH 会话 Agent 根据用户需求设计创意与时序；插件仅校验素材/范围、规范化并预览/保存，不调用另一个 AI 代替 Agent。来源仅引用素材库 ID，不传本地路径。tracks.music 恰有一条音乐片段，必须填写授权状态声明；用户声明不等于版权核验。',properties:{schema_version:{type:'integer',const:1},title:{type:'string',minLength:1,maxLength:300},rationale:{type:'string',minLength:1,maxLength:10000},fps:{type:'object',properties:{num:{type:'integer',minimum:1},den:{type:'integer',minimum:1}},required:['num','den'],additionalProperties:false},canvas:{type:'object',properties:{width:{type:'integer',minimum:1},height:{type:'integer',minimum:1},aspect:{type:'string',enum:['16:9','9:16']}},required:['width','height','aspect'],additionalProperties:false},duration_frames:{type:'integer',minimum:1},tracks:{type:'object',properties:{video:{type:'array',minItems:1,maxItems:40,items:editClipSchema},music:{type:'array',minItems:1,maxItems:1,items:musicClipSchema}},required:['video','music'],additionalProperties:false},evidence:{type:'object',properties:{story_arc:{type:'array',maxItems:20,items:{type:'object',properties:{label:{type:'string',maxLength:200},rationale:{type:'string',maxLength:1000}},required:['label','rationale'],additionalProperties:false}},uncertainties:{type:'array',maxItems:30,items:{type:'string',maxLength:1000}},notice:{type:'string',maxLength:2000},beat_evidence:{type:'string',maxLength:2000}},additionalProperties:false}},required:['schema_version','title','rationale','fps','duration_frames','tracks'],additionalProperties:false};
-  editTool('video_manager_edit_preview_project','预览并校验当前 DSH 会话 Agent 自行编排的结构化剪辑项目。插件不调用模型、不解码/复制/修改媒体；会做只读文件属性检查，并核验素材库 ID、分镜范围、轨道、音视频时长和项目帧边界。输入只含素材库 ID，禁止客户端绝对路径。音乐分析仅返回 BPM 估计与瞬态候选，不提供已确认拍点；不要把瞬态写成 beats 或声称准确卡点。预览不落库；将完整规范化项目与警告展示给用户，依据反馈留在 DSH 会话中继续迭代。',
+  editTool('media_center_edit_preview_project','预览并校验当前 DSH 会话 Agent 自行编排的结构化剪辑项目。插件不调用模型、不解码/复制/修改媒体；会做只读文件属性检查，并核验素材库 ID、分镜范围、轨道、音视频时长和项目帧边界。输入只含素材库 ID，禁止客户端绝对路径。音乐分析仅返回 BPM 估计与瞬态候选，不提供已确认拍点；不要把瞬态写成 beats 或声称准确卡点。预览不落库；将完整规范化项目与警告展示给用户，依据反馈留在 DSH 会话中继续迭代。',
     {project:editProjectSchema}, ['project'],
     args => editingWorkflow.previewProject(args.project));
-  editTool('video_manager_edit_save_project','仅在用户已看到完整规范化预览并明确授权后保存该预览；只提交服务端预览 ID，客户端不能替换方案内容。confirmed=true 必须对应本轮用户明确确认。',
+  editTool('media_center_edit_save_project','仅在用户已看到完整规范化预览并明确授权后保存该预览；只提交服务端预览 ID，客户端不能替换方案内容。confirmed=true 必须对应本轮用户明确确认。',
     {preview_id:{type:'string',description:'尚未过期的服务端剪辑方案预览 ID。'},confirmed:{type:'boolean',description:'仅当用户已查看完整预览并明确授权保存时为 true。'}}, ['preview_id','confirmed'],
     args => {
        if(args.confirmed!==true)return {success:false,error:'须先获得用户对完整预览的明确授权'};
@@ -101,7 +101,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
        const record=result?.record;
        return result?.success?{success:true,project:record?{id:record.id,title:record.title,revision:record.revision,created_at:record.created_at,updated_at:record.updated_at}:undefined,warnings:result.warnings||[]}:result;
      });
-  editTool('video_manager_edit_projects','列出已保存的剪辑项目摘要，或按 project_id 读取完整项目。',
+  editTool('media_center_edit_projects','列出已保存的剪辑项目摘要，或按 project_id 读取完整项目。',
     {project_id:{type:'string',description:'项目 ID；省略时列出摘要。'},...pageFields}, [],
     args => args.project_id ? (()=>{const project=editingWorkflow.projects.get(args.project_id);return project ? {success:true,project} : {success:false,error:'剪辑项目不存在'};})() :
       ({success:true,projects:editingWorkflow.projects.list({limit:args.limit ?? 25,offset:args.offset ?? 0})}));
@@ -155,7 +155,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   const failure = error => ({ success: false, error: typeof error?.message === 'string' ? error.message.slice(0, 300) : '片段分析操作失败' });
 
   addTool({
-    name: 'video_manager_analyze_shot',
+    name: 'media_center_analyze_shot',
     description: '对已有片段按采样帧生成深度分析候选和审计记录，不应用或覆盖原标注；读取结果后再由用户决定是否应用。',
     parameters: {
       type: 'object',
@@ -174,7 +174,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   });
 
   addTool({
-    name: 'video_manager_get_shot_analysis',
+    name: 'media_center_get_shot_analysis',
     description: '查看片段最近的深度分析候选、原标注快照和消耗；返回内容不含提示词，截断字段须在工作台查看完整值。',
     parameters: {
       type: 'object',
@@ -198,7 +198,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
   });
 
   addTool({
-    name: 'video_manager_apply_shot_analysis',
+    name: 'media_center_apply_shot_analysis',
     description: '将深度分析候选中的指定字段应用到原片段标注；必须先展示完整候选并获得用户对这些字段的明确授权。不会修改视频源文件。',
     parameters: {
       type: 'object',
@@ -226,9 +226,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 1. video_manager_list_folders
+  // 1. media_center_list_folders
   addTool({
-    name: 'video_manager_list_folders',
+    name: 'media_center_list_folders',
     description: '列出视频资产库的文件夹目录树（至少包含两级层级，如“项目名称/场景分类”），并返回各个目录下的视频总数及已分析视频数量。',
     parameters: {
       type: 'object',
@@ -246,9 +246,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 2. video_manager_scan_directory
+  // 2. media_center_scan_directory
   addTool({
-    name: 'video_manager_scan_directory',
+    name: 'media_center_scan_directory',
     description: '扫描用户明确指定的目录并导入其中视频，按物理子目录镜像分类；可归入指定素材父分类。源媒体只读引用。会跳过已入库文件；imported_count 仅为本次新增行数，duplicates_count 是被跳过的已存在引用，不代表失败。此工具会等待本次导入和故事板队列完成。',
     parameters: {
       type: 'object',
@@ -271,7 +271,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
 
   // Import multiple checked child folders under one asset parent.
   addTool({
-    name: 'video_manager_import_subfolders',
+    name: 'media_center_import_subfolders',
     description: '将用户明确选择的多个直接子文件夹作为指定素材分类的子分类导入，并递归导入其中视频；源视频只读引用，不复制、修改或删除。重复引用会被跳过，不计为失败；此工具会等待导入和故事板处理完成。',
     parameters: {type:'object',properties:{
       parent_directory_path:{type:'string',description:'用户正在浏览的父文件夹绝对路径。'},
@@ -284,9 +284,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 2.1 video_manager_import_files
+  // 2.1 media_center_import_files
   addTool({
-    name: 'video_manager_import_files',
+    name: 'media_center_import_files',
     description: '直接导入一个或多个指定的本地视频文件到指定分类目录中。提取视频参数并生成故事板大图；已存在引用会跳过并计入 duplicates_count（非失败）。此工具会等待导入和故事板处理完成。',
     parameters: {
       type: 'object',
@@ -314,9 +314,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 3. video_manager_search_videos
+  // 3. media_center_search_videos
   addTool({
-    name: 'video_manager_search_videos',
+    name: 'media_center_search_videos',
     description: '多条件检索视频素材库。支持按目录层级、分析状态、文件名/描述关键词或标签过滤，返回紧凑的视频列表。',
     parameters: {
       type: 'object',
@@ -380,9 +380,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 4. video_manager_get_video
+  // 4. media_center_get_video
   addTool({
-    name: 'video_manager_get_video',
+    name: 'media_center_get_video',
     description: '获取视频源路径、基础参数及可选的分镜和音频信息。历史 BPM/节拍值来源未确认，不能视为实测。',
     parameters: {
       type: 'object',
@@ -414,9 +414,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 5. video_manager_trigger_analysis
+  // 5. media_center_trigger_analysis
   addTool({
-    name: 'video_manager_trigger_analysis',
+    name: 'media_center_trigger_analysis',
     description: '提取视频故事板、初始分镜与静音区间。节拍和 BPM 检测目前不可用；旧值来源未确认，不应视为实测结果。',
     parameters: {
       type: 'object',
@@ -458,7 +458,7 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
 
         return {
           success: true,
-          message: '底层音视频特征抽取完成。请基于返回的故事板大图及分镜关键帧进行多模态审美与内容理解，然后调用 video_manager_upsert_shots 完善分镜信息。',
+          message: '底层音视频特征抽取完成。请基于返回的故事板大图及分镜关键帧进行多模态审美与内容理解，然后调用 media_center_upsert_shots 完善分镜信息。',
           video_id: video.id,
           storyboard_image_path: storyboardPath,
           shots_count: shots.length,
@@ -474,9 +474,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 6. video_manager_upsert_shots
+  // 6. media_center_upsert_shots
   addTool({
-    name: 'video_manager_upsert_shots',
+    name: 'media_center_upsert_shots',
     description: '批量写入或更新视频的分镜解析数据。AI Agent 分析完关键帧或故事板后，调用此工具结构化写入景别、运镜、画面详细描述、主体物及可用度评分。',
     parameters: {
       type: 'object',
@@ -524,9 +524,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 7. video_manager_update_audio_info
+  // 7. media_center_update_audio_info
   addTool({
-    name: 'video_manager_update_audio_info',
+    name: 'media_center_update_audio_info',
     description: '写入或更新视频的音频分析信息，包括语音转录文本与时间轴（Transcripts）、背景音乐情绪（bgm_mood）、BPM节拍及音效打点（SFX）。',
     parameters: {
       type: 'object',
@@ -575,9 +575,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 8. video_manager_update_video
+  // 8. media_center_update_video
   addTool({
-    name: 'video_manager_update_video',
+    name: 'media_center_update_video',
     description: '更新视频的整体元数据，包括全片摘要（summary）、业务标签（tags）以及人工备注（user_notes）。',
     parameters: {
       type: 'object',
@@ -603,9 +603,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 9. video_manager_search_shots
+  // 9. media_center_search_shots
   addTool({
-    name: 'video_manager_search_shots',
+    name: 'media_center_search_shots',
     description: '跨视频进行分镜语义检索。根据自然语言描述（如“日落时分的雪山特写”、“奔跑的儿童”），毫秒级召回最契合的镜头片段及其精准入出点。',
     parameters: {
       type: 'object',
@@ -661,9 +661,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 10. video_manager_export_project
+  // 10. media_center_export_project
   addTool({
-    name: 'video_manager_export_project',
+    name: 'media_center_export_project',
     description: '生成实验性剪辑工程文件（jianying、fcpxml、edl）；剪映仅包含视频轨道、不含音乐，也未经 11.7.3 打开验证，不会自动安装草稿。',
     parameters: {
       type: 'object',
@@ -736,9 +736,9 @@ export function registerVideoManagerTools(ctx, { db, mediaEngine, projectExporte
     }
   });
 
-  // 11. video_manager_configure_ffmpeg
+  // 11. media_center_configure_ffmpeg
   addTool({
-    name: 'video_manager_configure_ffmpeg',
+    name: 'media_center_configure_ffmpeg',
     description: '设置或查看 FFmpeg 和 FFprobe 的可执行文件绝对路径。在系统未全局配置环境变量时，可通过此工具手动指定路径。',
     parameters: {
       type: 'object',

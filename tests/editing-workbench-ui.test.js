@@ -9,7 +9,7 @@ const start=source.indexOf('    function MusicLibraryWorkbench(');
 const end=source.indexOf('    // --- Main Workbench View Component',start);
 assert.ok(tabsStart>=0&&start>=0&&end>start,'MusicLibraryWorkbench and navigation tabs exist');
 const panelSource=source.slice(Math.min(tabsStart,start),end);
-const mainSource=source.slice(source.indexOf('    function VideoManagerWorkbench('));
+const mainSource=source.slice(source.indexOf('    function MediaCenterWorkbench('));
 
 function harness(){
  const values=[],refs=[],effectDeps=[],pendingEffects=[],calls=[],responses=[],confirmMessages=[];
@@ -54,10 +54,10 @@ function goodProfile(overrides={}){return {analysis_id:'analysis_1',status:'ok',
    assert.match(panelSource,/gridTemplateColumns: 'minmax\(0, 1fr\) auto minmax\(0, 1fr\)'/);assert.match(panelSource,/renderLibraryColumnLayout/);assert.match(panelSource,/renderAssetImportDialog/);
    assert.match(panelSource,/来源目录/);assert.match(panelSource,/音乐内容区/);assert.match(panelSource,/音乐详情/);
 
-  assert.doesNotMatch(panelSource,/剪辑项目|video_manager_edit_projects|\/projects/);
+  assert.doesNotMatch(panelSource,/剪辑项目|media_center_edit_projects|\/projects/);
   assert.doesNotMatch(panelSource,/ai-settings|ai-analyze|chat\/completions|music-recommendations|\/styles/);
   assert.equal(f.find('input','本地音频绝对路径'),undefined);assert.ok(f.find('button','导入音乐'));
-  assert.doesNotMatch(panelSource,/剪辑项目|video_manager_edit_projects|\/projects/);
+  assert.doesNotMatch(panelSource,/剪辑项目|media_center_edit_projects|\/projects/);
   assert.doesNotMatch(panelSource,/ai-settings|ai-analyze|chat\/completions|music-recommendations|\/styles/);
  });
 

@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {Readable} from 'node:stream';
+import {DatabaseSync} from 'node:sqlite';
 import {VideoDatabase} from '../src/host/db/database.js';
 import {MediaEngine} from '../src/host/media/engine.js';
-import {createVideoManagerApiHandler} from '../src/host/api/router.js';
+import {createMediaCenterApiHandler} from '../src/host/api/router.js';
 
 function deferred(){
   let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};
@@ -51,22 +52,22 @@ async function until(fn,{timeout=2000}={}){
 }
 
 test('import POST returns a queued pollable job, inserts rows before storyboards finish, and exposes storyboard lifecycle',async t=>{
-  const gate=deferred(),f=fixture(t),handler=createVideoManagerApiHandler({db:f.db,mediaEngine:f.engine});
+  const gate=deferred(),f=fixture(t),handler=createMediaCenterApiHandler({db:f.db,mediaEngine:f.engine});
   f.setGate(gate);
-  const response=await request(handler,'POST','/api/video-manager/videos/import-files',{file_paths:f.files});
+  const response=await request(handler,'POST','/api/media-center/videos/import-files',{file_paths:f.files});
   assert.equal(response.status,200);assert.ok(response.body.job?.id);assert.equal(response.body.job.status,'queued');assert.equal(response.body.job.total_known,false);
   assert.equal(response.body.job.total,0);assert.equal(response.body.job.percent,null);assert.equal(response.body.job.requested_count,2);assert.equal(response.body.job.importable,null);
   const jobId=response.body.job.id;
-  const importing=await until(async()=>{const r=await request(handler,'GET',`/api/video-manager/import-jobs/${jobId}`);return r.body.job.inserted===2?r.body.job:null;});
+  const importing=await until(async()=>{const r=await request(handler,'GET',`/api/media-center/import-jobs/${jobId}`);return r.body.job.inserted===2?r.body.job:null;});
   assert.equal(importing.status,'storyboarding');
-  const listed=await request(handler,'GET','/api/video-manager/videos?limit=20');
+  const listed=await request(handler,'GET','/api/media-center/videos?limit=20');
   assert.equal(listed.body.videos.length,2);
   assert.ok(listed.body.videos.every(video=>video.status==='imported'&&['pending','generating'].includes(video.storyboard_status)));
   assert.equal(listed.body.videos.some(video=>video.source_identity_json),false);
   gate.resolve();
   const final=await f.engine.waitForImportJob(jobId);
   assert.equal(final.status,'completed');assert.equal(final.inserted,2);assert.equal(final.storyboard_done,2);
-  const ready=await request(handler,'GET','/api/video-manager/videos?limit=20');
+  const ready=await request(handler,'GET','/api/media-center/videos?limit=20');
   assert.ok(ready.body.videos.every(video=>video.storyboard_status==='ready'));
   assert.deepEqual(f.files.map(file=>fs.readFileSync(file)),f.originals);
 });
@@ -209,12 +210,34 @@ test('cache usage and one-click cleanup remove only derived files and reset stor
 
 
 test('system player endpoint only accepts a catalog video and reports failure safely',async t=>{
-  const f=fixture(t),handler=createVideoManagerApiHandler({db:f.db,mediaEngine:f.engine});
+  const f=fixture(t),handler=createMediaCenterApiHandler({db:f.db,mediaEngine:f.engine});
   const video=f.db.upsertVideo({file_path:f.files[0],file_name:'a.mp4',status:'imported',duration:3});
   f.engine.openInSystemPlayer=id=>id===video.id;
-  const opened=await request(handler,'POST',`/api/video-manager/videos/${video.id}/open`);
+  const opened=await request(handler,'POST',`/api/media-center/videos/${video.id}/open`);
   assert.equal(opened.status,200);assert.equal(opened.body.success,true);
   f.engine.openInSystemPlayer=()=>false;
-  const missing=await request(handler,'POST','/api/video-manager/videos/vid_missing/open');
+  const missing=await request(handler,'POST','/api/media-center/videos/vid_missing/open');
   assert.equal(missing.status,404);assert.equal(missing.body.success,false);
+});
+
+
+
+test('legacy dsh-video-manager data is migrated to dsh-media-center with rewritten cache paths',t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-media-center-migration-'));
+  const first=new VideoDatabase({workspaceRoot:root});
+  first.db.close();
+  const legacyDir=path.join(root,'.dsh-video-manager');
+  fs.renameSync(path.join(root,'.dsh-media-center'),legacyDir);
+  fs.renameSync(path.join(legacyDir,'media_center.db'),path.join(legacyDir,'video_manager.db'));
+  const source=path.join(root,'source.mp4');fs.writeFileSync(source,'source');
+  const storyboard=path.join(legacyDir,'cache','storyboards','legacy.jpg');fs.writeFileSync(storyboard,Buffer.from([0xff,0xd8,0xff,0xd9]));
+  const oldDb=new DatabaseSync(path.join(legacyDir,'video_manager.db'));
+  oldDb.prepare('INSERT INTO videos (id,file_path,file_name,status,storyboard_path,storyboard_status) VALUES (?,?,?,?,?,?)').run('vid_legacy',source,'source.mp4','imported',storyboard,'ready');
+  oldDb.close();
+  const migrated=new VideoDatabase({workspaceRoot:root});
+  t.after(()=>{migrated.db.close();fs.rmSync(root,{recursive:true,force:true});});
+  const row=migrated.getVideoById('vid_legacy');
+  assert.ok(row.storyboard_path.includes('.dsh-media-center'));
+  assert.equal(fs.existsSync(row.storyboard_path),true);
+  assert.equal(fs.existsSync(path.join(root,'.dsh-video-manager','video_manager.db')),true);
 });

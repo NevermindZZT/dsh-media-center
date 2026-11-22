@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { createVideoManagerApiHandler } from '../src/host/api/router.js';
-import { registerVideoManagerTools } from '../src/host/tools/register-tools.js';
+import { createMediaCenterApiHandler } from '../src/host/api/router.js';
+import { registerMediaCenterTools } from '../src/host/tools/register-tools.js';
 import { apply } from '../index.js';
 import { EditingWorkflow } from '../src/host/edit/editing-workflow.js';
 import fs from 'node:fs';
@@ -35,17 +35,17 @@ function fixture() {
     previewProject:input=>{const project=input?.project??input;if(project?.schema_version!==1)throw new Error('invalid project');calls.push(['preview_project',project]);return {success:true,preview_id:PREVIEW,project:{...project,title:'canonical'}};},
     commitPreview:args=>{calls.push(['commit',args]);return {success:true,record:{id:PROJECT}};}
   };
-  const handler=createVideoManagerApiHandler({db:{},mediaEngine:{},editingWorkflow:service});
+  const handler=createMediaCenterApiHandler({db:{},mediaEngine:{},editingWorkflow:service});
   const request=(method,url,body,headers={})=>new Promise((resolve,reject)=>{
     const req=Readable.from(body===undefined?[]:[JSON.stringify(body)]); req.method=method;req.url=url;req.headers=headers;
     const res={writeHead(status,headers){this.status=status;this.headers=headers;},end(buffer){try{resolve({status:this.status,body:buffer?JSON.parse(buffer.toString()):null});}catch(e){reject(e);}}};
     Promise.resolve(handler(req,res)).catch(reject);
   });
   const mediaEngine={scanAndImportDirectories:async(paths,parentPath,parentId)=>{calls.push(['scan_subfolders',paths,parentPath,parentId]);return {scanned_count:paths.length,imported_count:3,failed_count:0,folders:[]};}};
-  const defs=[];registerVideoManagerTools({tools:{register:def=>{defs.push(def);return()=>{};}}},{editingWorkflow:service,mediaEngine});
+  const defs=[];registerMediaCenterTools({tools:{register:def=>{defs.push(def);return()=>{};}}},{editingWorkflow:service,mediaEngine});
   return {service,calls,request,defs,tool:name=>defs.find(d=>d.name===name)};
 }
-const base='/api/video-manager/editing';
+const base='/api/media-center/editing';
 
 test('music CRUD and license confirmation use the shared catalog and reject unconfirmed assertions',async()=>{
   const f=fixture();
@@ -92,7 +92,7 @@ test('spectrogram interpretation edits require explicit confirmation',async()=>{
 });
 
 test('multi-folder import tool uses selected parent and safe host service operation',async()=>{
-  const f=fixture(),tool=f.tool('video_manager_import_subfolders');
+  const f=fixture(),tool=f.tool('media_center_import_subfolders');
   const paths=['C:\\parent\\scene-a','C:\\parent\\scene-b'];
   const result=await tool.execute({parent_directory_path:'C:\\parent',directory_paths:paths,parent_folder_id:'folder_trip'});
   assert.equal(result.success,true);assert.equal(result.imported_count,3);
@@ -101,7 +101,7 @@ test('multi-folder import tool uses selected parent and safe host service operat
 });
 
 test('music analysis detail is bounded and user-only confirmation tools share the Host service',async()=>{
-  const f=fixture(),detail=f.tool('video_manager_edit_music_analysis_detail'),confirm=f.tool('video_manager_edit_music_confirm_beats'),styles=f.tool('video_manager_edit_music_set_styles'),interpret=f.tool('video_manager_edit_music_spectrogram_interpret');
+  const f=fixture(),detail=f.tool('media_center_edit_music_analysis_detail'),confirm=f.tool('media_center_edit_music_confirm_beats'),styles=f.tool('media_center_edit_music_set_styles'),interpret=f.tool('media_center_edit_music_spectrogram_interpret');
   const analysis=await detail.execute({music_id:MUSIC,limit:10});assert.equal(analysis.analysis.analysis_id,'ma_0123456789abcdef0123456789abcdef');
   assert.equal(analysis.analysis.model_interpretation.tempo_hypotheses[0].bpm,100);assert.deepEqual(analysis.analysis.model_interpretation.style_tags,['夜景慢剪']);
   assert.equal((await interpret.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,confirmed:false})).success,false);
@@ -116,7 +116,7 @@ test('music analysis detail is bounded and user-only confirmation tools share th
 
 test('AI music recommendation is absent from plugin tools and API',async()=>{
   const f=fixture();
-  assert.equal(f.tool('video_manager_edit_music_recommend'),undefined);
+  assert.equal(f.tool('media_center_edit_music_recommend'),undefined);
   assert.equal((await f.request('POST',`${base}/music-recommendations`,{brief:{prompt:'旅行',duration:30},musicIds:[MUSIC]})).status,404);
   assert.equal(f.calls.length,0);
 });
@@ -160,16 +160,16 @@ test('origin protection and input failures do not disclose internal exception de
 
 test('tools preview an Agent-created project and save only after explicit confirmation',async()=>{
   const f=fixture();
-  const confirm=f.tool('video_manager_edit_music_confirm_personal');
-  const save=f.tool('video_manager_edit_save_project');
-  const previewTool=f.tool('video_manager_edit_preview_project');
+  const confirm=f.tool('media_center_edit_music_confirm_personal');
+  const save=f.tool('media_center_edit_save_project');
+  const previewTool=f.tool('media_center_edit_preview_project');
   const project={schema_version:1,title:'旅行',rationale:'由当前会话 Agent 编排',fps:{num:30,den:1},duration_frames:30,canvas:{width:1920,height:1080,aspect:'16:9'},tracks:{video:[{id:'clip1',source:{id:'vid_a',duration_seconds:10},source_in_seconds:0,source_out_seconds:1,timeline_start_frame:0,timeline_end_frame:30,evidence:{shot_id:'shot_a'}}],music:[{id:'m0',source:{id:MUSIC,duration_seconds:5},source_in_seconds:0,source_out_seconds:1,timeline_start_frame:0,timeline_end_frame:30,rights:{status:'confirmed',scope:'个人分享',note:'用户声明'}}]}};
   assert.equal((await confirm.execute({music_id:MUSIC,confirmed:false})).success,false);
   assert.equal((await save.execute({preview_id:PREVIEW,confirmed:false})).success,false);
   assert.equal(f.calls.length,0);
-  assert.equal(f.tool('video_manager_edit_music_recommend'),undefined);
-  assert.equal(f.tool('video_manager_edit_preview'),undefined);
-  assert.equal(f.tool('video_manager_edit_save'),undefined);
+  assert.equal(f.tool('media_center_edit_music_recommend'),undefined);
+  assert.equal(f.tool('media_center_edit_preview'),undefined);
+  assert.equal(f.tool('media_center_edit_save'),undefined);
   const preview=await previewTool.execute({project});
   assert.equal(preview.success,true);
   assert.deepEqual(f.calls[0],['preview_project',project]);
@@ -195,8 +195,8 @@ test('plugin entry binds save to the exact server-held project preview',async t=
   process.chdir(root);
   apply({llm:{},attachments:{},webServer:{register:()=>()=>{}},tools:{register:d=>{defs.push(d);return()=>{};}},effect:fn=>{dispose=fn();}},{});
   const project={schema_version:1,title:'trusted',rationale:'Agent authored',fps:{num:30,den:1},duration_frames:30,tracks:{video:[{id:'clip1',source:{id:'vid_a',duration_seconds:10},source_in_seconds:0,source_out_seconds:1,timeline_start_frame:0,timeline_end_frame:30,evidence:{shot_id:'shot_a'}}],music:[{id:'m0',source:{id:MUSIC,duration_seconds:5},source_in_seconds:0,source_out_seconds:1,timeline_start_frame:0,timeline_end_frame:30,rights:{status:'confirmed',scope:'个人分享',note:'用户声明'}}]}};
-  const preview=defs.find(d=>d.name==='video_manager_edit_preview_project');
-  const save=defs.find(d=>d.name==='video_manager_edit_save_project');
+  const preview=defs.find(d=>d.name==='media_center_edit_preview_project');
+  const save=defs.find(d=>d.name==='media_center_edit_save_project');
   const result=await preview.execute({project}); assert.equal(result.success,true); assert.equal(result.preview_id,PREVIEW);
   result.project.title='tampered';
   const denied=await save.execute({preview_id:PREVIEW,confirmed:false});assert.equal(denied.success,false);assert.equal(saved,undefined);
@@ -208,7 +208,7 @@ test('plugin entry binds save to the exact server-held project preview',async t=
 test('Jamendo tool never accepts or exposes client ID in schema or result',async()=>{
   const f=fixture(), old=process.env.JAMENDO_CLIENT_ID;process.env.JAMENDO_CLIENT_ID='secret-jamendo';
   try {
-    const tool=f.tool('video_manager_edit_jamendo_search');
+    const tool=f.tool('media_center_edit_jamendo_search');
     assert.equal(tool.parameters.properties.clientId,undefined);
     const result=await tool.execute({query:'travel'},{signal:undefined});
     assert.equal(result.success,true); assert.doesNotMatch(JSON.stringify(result),/secret-jamendo/);

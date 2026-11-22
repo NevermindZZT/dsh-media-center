@@ -1,10 +1,10 @@
 {
   "meta": {
-    "title": "Media asset library",
+    "title": "Media Center",
     "description": "Organize local video, music, and other media assets with hierarchical folders, video-shot analysis, audio measurement, and editing-project export."
   },
   "panel": {
-    "title": "Media library",
+    "title": "Media Center",
     "folders": "Folders",
     "videos": "Videos",
     "shots": "Shots",

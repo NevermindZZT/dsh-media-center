@@ -25,7 +25,7 @@ function fixture(){
 test('import closes dialog before server responds and tracks background job',async()=>{
   const f=fixture();const pending=f.context.importFiles(['C:\\video\\a.mp4']);
   assert.deepEqual(f.states.modal,[false]);assert.equal(f.states.progress[0].status,'starting');
-  assert.equal(f.states.request.url,'/api/video-manager/videos/import-files');
+  assert.equal(f.states.request.url,'/api/media-center/videos/import-files');
   f.request.resolve({ok:true,json:async()=>({success:true,job:{id:'job_1',status:'scanning',total:null}})});
   await pending;assert.equal(f.states.progress.at(-1).id,'job_1');assert.equal(f.states.busy.at(-1),true);assert.equal(f.states.refresh,1);
 });
@@ -65,12 +65,12 @@ test('unknown background job clears stale resume token and unblocks UI',async()=
 test('progress distinguishes discovery, deduplication and storyboard work',()=>{
   assert.match(source,/total_known === false/);assert.match(source,/importProgress\.importable/);
   assert.match(source,/importProgress\.duplicates/);assert.match(source,/importProgress\.storyboard_done/);
-  assert.match(source,/dsh-video-manager-active-import/);
+  assert.match(source,/dsh-media-center-active-import/);
 });
 
 test('import can be interrupted and resumed from a saved request',()=>{
   assert.match(source,/中断视频导入/);assert.match(source,/继续上次视频导入/);
-  assert.match(source,/dsh-video-manager-pending-import/);assert.match(source,/startVideoImport\(pendingImport\.url, pendingImport\.body\)/);
+  assert.match(source,/dsh-media-center-pending-import/);assert.match(source,/startVideoImport\(pendingImport\.url, pendingImport\.body\)/);
 });
 test('HEVC preview and storyboard regeneration are exposed in the UI',()=>{
   assert.match(source,/生成兼容预览/);assert.match(source,/stream\?preview=1/);

@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-video-manager',
+  id: '@local/dsh-media-center',
   factory(require) {
     const React = require('react');
     const { useState, useEffect, useRef, useMemo, createElement: h } = React;
@@ -341,7 +341,7 @@ window.__ModuleLoader__.load({
       return { text, title: text };
     }
 
-    const SORT_STORAGE_KEY = 'dsh-video-manager.sortRule';
+    const SORT_STORAGE_KEY = 'dsh-media-center.sortRule';
     const MAX_MUSIC_ANALYSIS_SECONDS = 600;
     const MAX_MUSIC_IMPORT_BATCH = 50;
     const DEFAULT_SORT_RULE = 'captured_at_desc';
@@ -376,7 +376,7 @@ window.__ModuleLoader__.load({
     function LibraryPageTabs({ active, onSelect, isMobile }) {
       return h('div', {
         role: 'tablist',
-        'aria-label': '媒体资源库页面',
+        'aria-label': '媒体中心页面',
         style: {
           display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '3px',
           border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '7px',
@@ -405,7 +405,7 @@ window.__ModuleLoader__.load({
     function renderMediaLibraryHeader({ active, onSelect, isMobile, status, onSettings, buttonStyle }) {
       const binaries = status?.binaries;
       return h('header', {
-        'aria-label': '媒体资源库通用标题栏',
+        'aria-label': '媒体中心通用标题栏',
         style: {
           minHeight: isMobile ? '48px' : '54px', flexShrink: 0,
           borderBottom: '1px solid var(--dsw-alias-border-l1)',
@@ -417,7 +417,7 @@ window.__ModuleLoader__.load({
       },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: isMobile ? '5px' : '8px', minWidth: 0 } },
           Icon.hardDrive({ size: isMobile ? 17 : 19, color: '#3b82f6' }),
-          h('strong', { style: { fontSize: isMobile ? '12px' : '14px', fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '媒体资源库'),
+          h('strong', { style: { fontSize: isMobile ? '12px' : '14px', fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '媒体中心'),
           !isMobile && binaries && h('span', {
             style: {
               fontSize: '10px', padding: '2px 6px', borderRadius: '4px', whiteSpace: 'nowrap',
@@ -432,7 +432,7 @@ window.__ModuleLoader__.load({
         ),
         h('div', { style: { justifySelf: 'end', display: 'flex', alignItems: 'center', minWidth: 0 } },
           h('button', {
-            type: 'button', 'aria-label': '媒体资源库设置', title: '设置', style: buttonStyle,
+            type: 'button', 'aria-label': '媒体中心设置', title: '设置', style: buttonStyle,
             onClick: onSettings
           }, Icon.settings({ size: 13 }), !isMobile && '设置')
         )
@@ -576,7 +576,7 @@ window.__ModuleLoader__.load({
           const params=new URLSearchParams({limit:'100'});
           if(nextQuery.trim())params.set('query',nextQuery.trim());
           if(nextLicense!=='all')params.set('license_status',nextLicense);
-          const data=await call(`/api/video-manager/editing/music?${params}`);
+          const data=await call(`/api/media-center/editing/music?${params}`);
           const list=data.items||data.music?.items||[];setItems(list);
           if(!keepSelected||!list.some(item=>item.id===selectedId)){setSelectedId(list[0]?.id||'');setProfile(null);setAnalysisId('');setSelectedCandidates(new Set());}else if(selectedId)await loadProfile(selectedId);
         }catch(e){setError(e?.message||'无法读取音乐库');}
@@ -590,7 +590,7 @@ window.__ModuleLoader__.load({
         if(!id){setProfile(null);setAnalysisId('');setModelInterpretationDraft(null);setSelectedModelBeatSuggestions(new Set());return;}
         setError('');
         try{
-          const data=await call(`/api/video-manager/editing/music/${encodeURIComponent(id)}/analysis`);
+          const data=await call(`/api/media-center/editing/music/${encodeURIComponent(id)}/analysis`);
           const loadedProfile=extractProfile(data);
           setProfile(loadedProfile);setAnalysisId(data.analysis_id||loadedProfile?.analysis_id||'');setSelectedCandidates(new Set());setModelInterpretationDraft(null);setSelectedModelBeatSuggestions(new Set());
 
@@ -679,7 +679,7 @@ window.__ModuleLoader__.load({
       const browse=async dir=>{
         setBusy('browse');setError('');
         try{
-          const url=dir?`/api/video-manager/fs/browse?dir=${encodeURIComponent(dir)}`:'/api/video-manager/fs/browse';
+          const url=dir?`/api/media-center/fs/browse?dir=${encodeURIComponent(dir)}`:'/api/media-center/fs/browse';
           const data=await call(url);setBrowser(data);setShowBrowser(true);
         }catch(e){setError(e?.message||'无法浏览本地目录');}
         finally{setBusy('');}
@@ -693,7 +693,7 @@ window.__ModuleLoader__.load({
         try{
           for(const [index,sourcePath] of paths.entries()){
             try{
-              const result=await call('/api/video-manager/editing/music',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_path:sourcePath,title:paths.length===1?musicTitle.trim():'',artist:paths.length===1?artist.trim():'',license_status:'unknown',license_note:licenseNote.trim()})});
+              const result=await call('/api/media-center/editing/music',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_path:sourcePath,title:paths.length===1?musicTitle.trim():'',artist:paths.length===1?artist.trim():'',license_status:'unknown',license_note:licenseNote.trim()})});
               imported.push({music:result.music,created:result.created!==false});
             }catch(error){failed.push({path:sourcePath,message:error?.message||'导入失败'});}
             finally{setImportProgress({completed:index+1,total:paths.length});}
@@ -715,7 +715,7 @@ window.__ModuleLoader__.load({
         if(!selectedId||!window.confirm('请确认你有权将这首音乐用于个人分享。此操作只记录你的声明，不代表插件或平台核验版权。继续？'))return;
         setBusy('rights');setError('');
         try{
-          await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/confirm-personal`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,license_note:licenseNote.trim()})});
+          await call(`/api/media-center/editing/music/${encodeURIComponent(selectedId)}/confirm-personal`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,license_note:licenseNote.trim()})});
           setNotice('个人用途声明已记录；该声明未经独立核验。');await loadLibrary(query,licenseFilter,true);
         }catch(e){setError(e?.message||'无法记录许可声明');}
         finally{setBusy('');}
@@ -726,7 +726,7 @@ window.__ModuleLoader__.load({
         if(!Number.isFinite(start)||start<0||!Number.isFinite(duration)||duration<=0||duration>MAX_MUSIC_ANALYSIS_SECONDS){setError(`分析窗口起点须非负，长度须为 0–${MAX_MUSIC_ANALYSIS_SECONDS} 秒（10分钟）。`);return;}
         setBusy('analyze');setError('');setNotice('');setSelectedCandidates(new Set());
         try{
-          const result=await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startSeconds:start,durationSeconds:duration})});
+          const result=await call(`/api/media-center/editing/music/${encodeURIComponent(selectedId)}/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startSeconds:start,durationSeconds:duration})});
           const analyzedProfile=extractProfile(result);
           setAnalysisId(result.analysis_id||analyzedProfile?.analysis_id||'');setProfile(analyzedProfile);
           setNotice('本地节奏分析已保存；拍点候选须试听确认，模型节奏/风格建议会单独标注。');
@@ -739,7 +739,7 @@ window.__ModuleLoader__.load({
         if(!sourceCurrent){setError('音乐源文件缺失或身份已变化，无法生成频谱图。');return;}
         setBusy('interpret');setError('');setNotice('');
         try{
-          await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/interpret`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId})});
+          await call(`/api/media-center/editing/music/${encodeURIComponent(selectedId)}/interpret`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId})});
           await loadProfile(selectedId);
           setNotice('频谱图模型解读已记录；速度与节奏点是近似视觉提示，与DSP候选分开，标签可手动编辑。');
         }catch(e){if(isLegacyMusicHostError(e))setNotice('当前 Host 尚未加载新版频谱解读接口；重载插件/Host 后即可使用。');else setError(e?.message||'频谱图模型解读失败');}
@@ -749,7 +749,7 @@ window.__ModuleLoader__.load({
         if(!selectedId||!analysisId||!profile?.model_interpretation)return;
         setBusy('interpretEdit');setError('');setNotice('');
         try{
-          const result=await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/interpret/edits`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId,edits,confirmed:true})});
+          const result=await call(`/api/media-center/editing/music/${encodeURIComponent(selectedId)}/interpret/edits`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId,edits,confirmed:true})});
           setProfile(current=>current?{...current,model_interpretation_edits:result.model_interpretation_edits,model_interpretation_edits_provenance:result.model_interpretation_edits_provenance}:current);
           setModelInterpretationDraft(null);setSelectedModelBeatSuggestions(new Set());setNotice(noticeText);
         }catch(e){setError(e?.message||'无法保存频谱解读编辑');}
@@ -780,7 +780,7 @@ window.__ModuleLoader__.load({
       const removeMusic=async()=>{
         if(!selectedId||!window.confirm('仅从音乐库移除这条引用；不会删除或修改磁盘源文件。继续？'))return;
         setBusy('remove');setError('');
-        try{await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}`,{method:'DELETE'});setSelectedId('');setProfile(null);setAnalysisId('');await loadLibrary(query,licenseFilter,false);}
+        try{await call(`/api/media-center/editing/music/${encodeURIComponent(selectedId)}`,{method:'DELETE'});setSelectedId('');setProfile(null);setAnalysisId('');await loadLibrary(query,licenseFilter,false);}
         catch(e){setError(e?.message||'移除音乐记录失败');}
         finally{setBusy('');}
       };
@@ -815,7 +815,7 @@ window.__ModuleLoader__.load({
         if(!window.confirm(`确认你已试听并核对这 ${selectedBeatTimes.length} 个候选拍点？这只记录你的人工判断。`))return;
         setBusy('confirm-beats');setError('');
         try{
-          const result=await call(`/api/video-manager/editing/music/${encodeURIComponent(selectedId)}/analysis/confirm-beats`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId,beats:selectedBeatTimes,confirmed:true})});
+          const result=await call(`/api/media-center/editing/music/${encodeURIComponent(selectedId)}/analysis/confirm-beats`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysis_id:analysisId,beats:selectedBeatTimes,confirmed:true})});
           const confirmedProfile=extractProfile(result);
           setProfile(confirmedProfile);setAnalysisId(result.analysis_id||confirmedProfile?.analysis_id||analysisId);setSelectedCandidates(new Set());setNotice('已记录所选人工确认拍点。');await loadLibrary(query,licenseFilter,true);
         }catch(e){if(isLegacyMusicHostError(e))setNotice('当前 Host 尚未加载新版音乐分析接口；请重载插件/Host 后再确认。');else setError(e?.message||'无法确认拍点');}
@@ -962,7 +962,7 @@ window.__ModuleLoader__.load({
                 return h('button',{key:item.id,type:'button','aria-label':`选择音乐 ${title}`,style:{padding:0,borderRadius:'7px',border:active?'1px solid var(--dsw-alias-border-l2)':'1px solid var(--dsw-alias-border-l1)',backgroundColor:active?'var(--dsw-alias-bg-layer-2)':'var(--dsw-alias-bg-layer-1)',color:'var(--dsw-alias-label-primary)',cursor:'pointer',textAlign:'left',overflow:'hidden',display:'flex',flexDirection:'column',minWidth:0},onClick:()=>{setSelectedId(item.id);if(isMobile)setMobileTab?.('detail');}},
                   h('div',{style:{position:'relative',width:'100%',aspectRatio:'16 / 9',overflow:'hidden',backgroundColor:'var(--dsw-alias-bg-layer-2)',display:'flex',alignItems:'center',justifyContent:'center'}},
                     h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--dsw-alias-label-secondary)'}},Icon.music({size:28})),
-                    h('img',{src:`/api/video-manager/editing/music/${encodeURIComponent(item.id)}/spectrogram`,alt:`${title} 的频谱图`,loading:'lazy',decoding:'async',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:e=>{e.currentTarget.style.display='none';}})
+                    h('img',{src:`/api/media-center/editing/music/${encodeURIComponent(item.id)}/spectrogram`,alt:`${title} 的频谱图`,loading:'lazy',decoding:'async',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:e=>{e.currentTarget.style.display='none';}})
                   ),
                   h('div',{style:{display:'flex',flexDirection:'column',gap:'3px',padding:'9px 10px 10px',minWidth:0}},
                     h('strong',{style:{fontSize:'12px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
@@ -981,7 +981,7 @@ window.__ModuleLoader__.load({
                   h('div',{style:{minWidth:0}},h('h3',{style:{margin:'0 0 4px',fontSize:'15px',overflowWrap:'anywhere'}},selected.title||selected.file_name),h('div',{style:{fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},`${selected.artist||selected.source_name||'作者未提供'} · ${selected.duration?Number(selected.duration).toFixed(1)+' 秒':'时长未知'}`)),
                   h('button',{type:'button',style:secondary,disabled:!!busy,onClick:removeMusic},'从音乐库移除')
                 ),
-                sourceCurrent&&h('audio',{controls:true,preload:'metadata','aria-label':`试听 ${selected.title||selected.file_name}`,src:`/api/video-manager/editing/music/${encodeURIComponent(selected.id)}/stream`,style:{width:'100%',position:'sticky',top:0,zIndex:8,backgroundColor:'var(--dsw-alias-bg-layer-1)',padding:'4px 0'}}),
+                sourceCurrent&&h('audio',{controls:true,preload:'metadata','aria-label':`试听 ${selected.title||selected.file_name}`,src:`/api/media-center/editing/music/${encodeURIComponent(selected.id)}/stream`,style:{width:'100%',position:'sticky',top:0,zIndex:8,backgroundColor:'var(--dsw-alias-bg-layer-1)',padding:'4px 0'}}),
                  !sourceCurrent&&h('div',{role:'alert',style:{fontSize:'12px',color:'var(--dsw-alias-label-secondary)'}},'源文件缺失或身份已变化；请从本地音乐重新导入后再试听和分析。'),
                 h('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap',fontSize:'12px'}},
                   h('span',null,`来源状态：${sourceCurrent?'当前文件与导入时匹配':'缺失/已变化'} · 许可状态：${activeRights?'用户已声明个人用途（未独立核验）':'未知'}`),
@@ -1072,7 +1072,7 @@ window.__ModuleLoader__.load({
     }
 
     // --- Main Workbench View Component with Mobile Responsive Layout ---
-    function VideoManagerWorkbench() {
+    function MediaCenterWorkbench() {
       // Responsive state (mobile: < 840px)
       const isMobile = useIsMobile(840);
       const [mobileTab, setMobileTab] = useState('videos'); // 'folders' | 'videos' | 'detail'
@@ -1146,15 +1146,15 @@ window.__ModuleLoader__.load({
       const [importNotice, setImportNotice] = useState('');
       const [importProgress, setImportProgress] = useState(() => {
         try {
-          const id = window.sessionStorage.getItem('dsh-video-manager-active-import');
+          const id = window.sessionStorage.getItem('dsh-media-center-active-import');
           if (id) return { id, status: 'running' };
-          const pending = JSON.parse(window.localStorage.getItem('dsh-video-manager-pending-import') || 'null');
+          const pending = JSON.parse(window.localStorage.getItem('dsh-media-center-pending-import') || 'null');
           if (pending?.url) return { status: 'interrupted', total: null };
           return null;
         } catch { return null; }
       });
       const [pendingImport, setPendingImport] = useState(() => {
-        try { return JSON.parse(window.localStorage.getItem('dsh-video-manager-pending-import') || 'null'); } catch { return null; }
+        try { return JSON.parse(window.localStorage.getItem('dsh-media-center-pending-import') || 'null'); } catch { return null; }
       });
 
       // AI Analysis Running States
@@ -1290,7 +1290,7 @@ window.__ModuleLoader__.load({
       // 1. Load System Status
       const loadStatus = async () => {
         try {
-          const res = await fetch('/api/video-manager/status');
+          const res = await fetch('/api/media-center/status');
           const data = await res.json();
           if (data.success) {
             setStatus(data);
@@ -1308,7 +1308,7 @@ window.__ModuleLoader__.load({
       const loadFolders = async () => {
         const version = ++requestVersions.current.folders;
         try {
-          const res = await fetch('/api/video-manager/folders');
+          const res = await fetch('/api/media-center/folders');
           const data = await res.json();
           if (data.success && version === requestVersions.current.folders) {
             setFolders(data.folders || []);
@@ -1329,7 +1329,7 @@ window.__ModuleLoader__.load({
           const finalSortBy = sBy !== null ? sBy : parsedSort.sortBy;
           const finalSortDir = sDir !== null ? sDir : parsedSort.sortDir;
 
-          let url = '/api/video-manager/videos?limit=200';
+          let url = '/api/media-center/videos?limit=200';
           if (folderId) url += `&folder_id=${encodeURIComponent(folderId)}`;
           if (query) url += `&query=${encodeURIComponent(query)}`;
           if (status) url += `&status=${encodeURIComponent(status)}`;
@@ -1364,7 +1364,7 @@ window.__ModuleLoader__.load({
         if (!silent) viewRef.current.videoId = videoId;
         const version = ++requestVersions.current.detail;
         try {
-          const res = await fetch(`/api/video-manager/videos/${videoId}`);
+          const res = await fetch(`/api/media-center/videos/${videoId}`);
           const data = await res.json();
           if (data.success && data.video && version === requestVersions.current.detail &&
               viewRef.current.videoId === videoId && (!silent || !editingRef.current)) {
@@ -1410,12 +1410,12 @@ window.__ModuleLoader__.load({
         setIsImporting(true);
         const poll = async () => {
           try {
-            const response = await fetch(`/api/video-manager/import-jobs/${encodeURIComponent(importProgress.id)}`);
+            const response = await fetch(`/api/media-center/import-jobs/${encodeURIComponent(importProgress.id)}`);
             if (response.status === 404) {
               if (!cancelled) {
                 setImportProgress({ status: 'interrupted', error: '后台任务已不可查询；可从此处继续本次导入。' });
                 importLockRef.current = false; setIsImporting(false);
-                try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+                try { window.sessionStorage.removeItem('dsh-media-center-active-import'); } catch {}
                 await refreshCurrentViewRef.current();
               }
               return;
@@ -1427,7 +1427,7 @@ window.__ModuleLoader__.load({
             const active = ['queued', 'running', 'initializing', 'scanning', 'importing', 'storyboarding'].includes(data.job.status);
             if (!active) {
               importLockRef.current = false; setIsImporting(false);
-              try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+              try { window.sessionStorage.removeItem('dsh-media-center-active-import'); } catch {}
               if (['completed', 'completed_with_errors'].includes(data.job.status)) clearPendingImport();
             }
             await refreshCurrentViewRef.current();
@@ -1451,7 +1451,7 @@ window.__ModuleLoader__.load({
         setPreviewInfo(null);
         if (!id) return;
         let cancelled = false;
-        fetch(`/api/video-manager/videos/${encodeURIComponent(id)}/preview`)
+        fetch(`/api/media-center/videos/${encodeURIComponent(id)}/preview`)
           .then(response => response.json())
           .then(data => { if (!cancelled && data.success) setPreviewInfo(data.preview); })
           .catch(() => { if (!cancelled) setPreviewInfo({ required: false, status: 'unknown' }); });
@@ -1460,7 +1460,7 @@ window.__ModuleLoader__.load({
 
       const loadCacheUsage = async () => {
         try {
-          const response = await fetch('/api/video-manager/cache');
+          const response = await fetch('/api/media-center/cache');
           const data = await response.json();
           if (data.success) setCacheUsage(data.usage || null);
         } catch {}
@@ -1470,7 +1470,7 @@ window.__ModuleLoader__.load({
         if (!window.confirm(scope === 'previews' ? '仅清理兼容预览缓存？源视频与故事板不受影响。' : '清理故事板、预览、关键帧和音乐频谱图缓存？源视频不受影响，故事板需要重新生成。')) return;
         setCacheBusy(true);
         try {
-          const response = await fetch('/api/video-manager/cache/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) });
+          const response = await fetch('/api/media-center/cache/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || '清理缓存失败');
           setCacheUsage(data.usage || null);
@@ -1482,7 +1482,7 @@ window.__ModuleLoader__.load({
       // 5. Load AI Settings
       const loadAiCatalog = async () => {
         try {
-          const response = await fetch('/api/video-manager/ai-models');
+          const response = await fetch('/api/media-center/ai-models');
           const catalog = await response.json();
           if (!response.ok || !catalog.success) throw new Error('无法加载 DSH 模型列表');
           setAiProviders(catalog.providers || []);
@@ -1493,7 +1493,7 @@ window.__ModuleLoader__.load({
       };
       const loadAiSettings = async () => {
         try {
-          const res = await fetch('/api/video-manager/ai-settings');
+          const res = await fetch('/api/media-center/ai-settings');
           const data = await res.json();
           if (data.success) {
             setAiMode(data.mode || 'dsh');
@@ -1515,7 +1515,7 @@ window.__ModuleLoader__.load({
         setShotPromptLoaded(false);
         setShotPromptError('');
         try {
-          const response = await fetch('/api/video-manager/shot-analysis-settings');
+          const response = await fetch('/api/media-center/shot-analysis-settings');
           const data = await response.json();
           if (!response.ok || !data.success || typeof data.prompt !== 'string' || typeof data.default_prompt !== 'string') {
             throw new Error(data.error || '无法读取镜头深度分析提示词');
@@ -1532,7 +1532,7 @@ window.__ModuleLoader__.load({
       const saveShotAnalysisSettings = async () => {
         if (!shotPromptLoaded) throw new Error('镜头深度分析提示词尚未加载，未保存设置');
         if (shotPrompt === shotPromptInitialRef.current) return;
-        const response = await fetch('/api/video-manager/shot-analysis-settings', {
+        const response = await fetch('/api/media-center/shot-analysis-settings', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: shotPrompt })
         });
         const data = await response.json();
@@ -1547,8 +1547,8 @@ window.__ModuleLoader__.load({
         setSelectedBrowserFolders(new Set());
         try {
           const url = dirPath
-            ? `/api/video-manager/fs/browse?dir=${encodeURIComponent(dirPath)}`
-            : `/api/video-manager/fs/browse`;
+            ? `/api/media-center/fs/browse?dir=${encodeURIComponent(dirPath)}`
+            : `/api/media-center/fs/browse`;
           const res = await fetch(url);
           const data = await res.json();
           if (data.success) {
@@ -1637,7 +1637,7 @@ window.__ModuleLoader__.load({
       const hasActiveShotAnalysis = shotId => shotLocksRef.current.has(shotId) ||
         (shotRuns[shotId] || []).some(run => run.status === 'running' || run.status === 'queued');
       const shotAnalysisUrl = (videoId, shotId, suffix) =>
-        `/api/video-manager/videos/${encodeURIComponent(videoId)}/shots/${encodeURIComponent(shotId)}/${suffix}`;
+        `/api/media-center/videos/${encodeURIComponent(videoId)}/shots/${encodeURIComponent(shotId)}/${suffix}`;
       const loadShotRuns = async (videoId, shotId) => {
         const version = (shotRunVersionsRef.current[shotId] || 0) + 1;
         shotRunVersionsRef.current[shotId] = version;
@@ -1686,7 +1686,7 @@ window.__ModuleLoader__.load({
         setApplyingShotRun(run.id);
         setShotRunError(current => ({ ...current, [shot.id]: '' }));
         try {
-          const response = await fetch(`/api/video-manager/shot-analysis/${encodeURIComponent(run.id)}/apply`, {
+          const response = await fetch(`/api/media-center/shot-analysis/${encodeURIComponent(run.id)}/apply`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields })
           });
           const data = await response.json();
@@ -1728,7 +1728,7 @@ window.__ModuleLoader__.load({
               run.status === 'applied' && h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
                 `已应用字段：${Array.isArray(run.applied_fields) && run.applied_fields.length ? run.applied_fields.map(field => SHOT_ANALYSIS_FIELDS.find(([key]) => key === field)?.[1] || field).join('、') : '未提供'}`),
               run.error_message && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, `失败原因：${run.error_message}`),
-              run.storyboard_path && run.id && h('img', { src: `/api/video-manager/shot-analysis/${encodeURIComponent(run.id)}/storyboard`, alt: '镜头采样故事板', style: { display: 'block', width: '100%', height: 'auto', borderRadius: '4px' } }),
+              run.storyboard_path && run.id && h('img', { src: `/api/media-center/shot-analysis/${encodeURIComponent(run.id)}/storyboard`, alt: '镜头采样故事板', style: { display: 'block', width: '100%', height: 'auto', borderRadius: '4px' } }),
               Array.isArray(run.sample_times) && run.sample_times.length > 0 && h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' } }, `采样时间（原视频秒数）：${run.sample_times.map(t => typeof t === 'number' ? t.toFixed(2) : String(t)).join('、')}`),
               (run.status === 'completed' || run.status === 'applied') && SHOT_ANALYSIS_FIELDS.filter(([field]) => Object.hasOwn(candidate, field)).map(([field, label]) => {
                 const checked = selected.includes(field);
@@ -1774,7 +1774,7 @@ window.__ModuleLoader__.load({
         if (video && (video.status === 'queued' || video.status === 'analyzing')) return;
         setAiAnalyzingId(videoId);
         try {
-          const res = await fetch(`/api/video-manager/videos/${videoId}/ai-analyze`, { method: 'POST' });
+          const res = await fetch(`/api/media-center/videos/${videoId}/ai-analyze`, { method: 'POST' });
           const data = await res.json();
           if (data.success) {
             const audit = data.audit;
@@ -1807,7 +1807,7 @@ window.__ModuleLoader__.load({
         setVideos(current => current.map(v => ids.includes(v.id) ? { ...v, status: 'queued' } : v));
         setSelectedVideo(current => current && ids.includes(current.id) ? { ...current, status: 'queued' } : current);
         try {
-          const res = await fetch('/api/video-manager/videos/batch-ai-analyze', {
+          const res = await fetch('/api/media-center/videos/batch-ai-analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ video_ids: ids })
@@ -1833,7 +1833,7 @@ window.__ModuleLoader__.load({
       // Save AI Settings
       const handleSaveAiSettings = async () => {
         try {
-          const res = await fetch('/api/video-manager/ai-settings', {
+          const res = await fetch('/api/media-center/ai-settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1860,7 +1860,7 @@ window.__ModuleLoader__.load({
       const handleRenameFolder = async (folderId, newName) => {
         if (!newName || !newName.trim()) return;
         try {
-          const res = await fetch(`/api/video-manager/folders/${folderId}`, {
+          const res = await fetch(`/api/media-center/folders/${folderId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: newName.trim() })
@@ -1882,7 +1882,7 @@ window.__ModuleLoader__.load({
           return;
         }
         try {
-          const res = await fetch(`/api/video-manager/folders/${folderId}`, { method: 'DELETE' });
+          const res = await fetch(`/api/media-center/folders/${folderId}`, { method: 'DELETE' });
           const data = await res.json();
           if (data.success) {
             if (selectedFolderId === folderId) {
@@ -1902,7 +1902,7 @@ window.__ModuleLoader__.load({
           return;
         }
         try {
-          const res = await fetch(`/api/video-manager/videos/${videoId}`, { method: 'DELETE' });
+          const res = await fetch(`/api/media-center/videos/${videoId}`, { method: 'DELETE' });
           const data = await res.json();
           if (data.success) {
             if (selectedVideo && selectedVideo.id === videoId) {
@@ -1929,7 +1929,7 @@ window.__ModuleLoader__.load({
           return;
         }
         try {
-          const res = await fetch('/api/video-manager/videos/batch-delete', {
+          const res = await fetch('/api/media-center/videos/batch-delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ video_ids: ids })
@@ -1953,7 +1953,7 @@ window.__ModuleLoader__.load({
         const ids = Array.from(selectedVideoIds);
         if (ids.length === 0) return;
         try {
-          const res = await fetch('/api/video-manager/videos/batch-move', {
+          const res = await fetch('/api/media-center/videos/batch-move', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1977,7 +1977,7 @@ window.__ModuleLoader__.load({
       const handleSaveMeta = async () => {
         if (!selectedVideo || !editingMeta) return;
         try {
-          const res = await fetch(`/api/video-manager/videos/${selectedVideo.id}`, {
+          const res = await fetch(`/api/media-center/videos/${selectedVideo.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(editingMeta)
@@ -1998,7 +1998,7 @@ window.__ModuleLoader__.load({
       const handleSaveShots = async () => {
         if (!selectedVideo) return;
         try {
-          const res = await fetch('/api/video-manager/shots', {
+          const res = await fetch('/api/media-center/shots', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2020,7 +2020,7 @@ window.__ModuleLoader__.load({
       const handleSaveAudio = async () => {
         if (!selectedVideo || !editingAudio) return;
         try {
-          const res = await fetch('/api/video-manager/audio', {
+          const res = await fetch('/api/media-center/audio', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2044,7 +2044,7 @@ window.__ModuleLoader__.load({
           return;
         }
         try {
-          const res = await fetch('/api/video-manager/settings', {
+          const res = await fetch('/api/media-center/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ffmpeg_path: ffmpegInput, ffprobe_path: ffprobeInput })
@@ -2064,11 +2064,11 @@ window.__ModuleLoader__.load({
       const rememberPendingImport = (url, body) => {
         const pending = { url, body, saved_at: new Date().toISOString() };
         setPendingImport(pending);
-        try { window.localStorage.setItem('dsh-video-manager-pending-import', JSON.stringify(pending)); } catch {}
+        try { window.localStorage.setItem('dsh-media-center-pending-import', JSON.stringify(pending)); } catch {}
       };
       const clearPendingImport = () => {
         setPendingImport(null);
-        try { window.localStorage.removeItem('dsh-video-manager-pending-import'); } catch {}
+        try { window.localStorage.removeItem('dsh-media-center-pending-import'); } catch {}
       };
       const startVideoImport = async (url, body) => {
         if (importLockRef.current) return;
@@ -2082,13 +2082,13 @@ window.__ModuleLoader__.load({
           const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
           const data = await response.json();
           if (!response.ok || !data.success || !data.job?.id) throw new Error(data.error || '无法启动导入任务');
-          try { window.sessionStorage.setItem('dsh-video-manager-active-import', data.job.id); } catch {}
+          try { window.sessionStorage.setItem('dsh-media-center-active-import', data.job.id); } catch {}
           setImportProgress(data.job);
           await refreshCurrentViewRef.current();
           if (['completed', 'completed_with_errors'].includes(data.job.status)) {
             clearPendingImport();
             importLockRef.current = false; setIsImporting(false);
-            try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+            try { window.sessionStorage.removeItem('dsh-media-center-active-import'); } catch {}
           }
         } catch (error) {
           setImportProgress({ status: 'failed', error: error.message || '导入启动失败' });
@@ -2100,7 +2100,7 @@ window.__ModuleLoader__.load({
       const cancelVideoImport = async () => {
         if (!importProgress?.id) return;
         try {
-          const response = await fetch(`/api/video-manager/import-jobs/${encodeURIComponent(importProgress.id)}`, { method: 'POST' });
+          const response = await fetch(`/api/media-center/import-jobs/${encodeURIComponent(importProgress.id)}`, { method: 'POST' });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || '无法中断导入');
           setImportProgress(data.job);
@@ -2112,7 +2112,7 @@ window.__ModuleLoader__.load({
       };
       const regenerateStoryboard = async (videoId) => {
         try {
-          const response = await fetch(`/api/video-manager/videos/${encodeURIComponent(videoId)}/storyboard`, { method: 'POST' });
+          const response = await fetch(`/api/media-center/videos/${encodeURIComponent(videoId)}/storyboard`, { method: 'POST' });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || '无法重新生成故事板');
           setVideos(current => current.map(video => video.id === videoId ? { ...video, storyboard_status: 'generating', storyboard_error: null } : video));
@@ -2120,13 +2120,13 @@ window.__ModuleLoader__.load({
       };
       const clearCompatiblePreview = async (videoId) => {
         try {
-          await fetch(`/api/video-manager/videos/${encodeURIComponent(videoId)}/preview`, { method: 'DELETE' });
+          await fetch(`/api/media-center/videos/${encodeURIComponent(videoId)}/preview`, { method: 'DELETE' });
           if (selectedVideo?.id === videoId) setPreviewInfo(current => current?.required ? { ...current, status: 'missing' } : current);
         } catch {}
       };
       const openInSystemPlayer = async (videoId) => {
         try {
-          const response = await fetch(`/api/video-manager/videos/${encodeURIComponent(videoId)}/open`, { method: 'POST' });
+          const response = await fetch(`/api/media-center/videos/${encodeURIComponent(videoId)}/open`, { method: 'POST' });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || '无法打开系统播放器');
         } catch (error) { alert('打开原视频失败：' + (error.message || '请检查源文件是否可用')); }
@@ -2135,12 +2135,12 @@ window.__ModuleLoader__.load({
         if (!selectedVideo?.id) return;
         setPreviewInfo(current => ({ ...current, status: 'generating' }));
         try {
-          const response = await fetch(`/api/video-manager/videos/${encodeURIComponent(selectedVideo.id)}/preview`, { method: 'POST' });
+          const response = await fetch(`/api/media-center/videos/${encodeURIComponent(selectedVideo.id)}/preview`, { method: 'POST' });
           const data = await response.json();
           if (!response.ok || !data.success) throw new Error(data.error || '无法生成兼容预览');
           setPreviewInfo(data.preview);
           const poll = async () => {
-            const statusResponse = await fetch(`/api/video-manager/videos/${encodeURIComponent(selectedVideo.id)}/preview`);
+            const statusResponse = await fetch(`/api/media-center/videos/${encodeURIComponent(selectedVideo.id)}/preview`);
             const statusData = await statusResponse.json();
             if (!statusData.success) return;
             setPreviewInfo(statusData.preview);
@@ -2158,7 +2158,7 @@ window.__ModuleLoader__.load({
         const targetPath = (customPath || scanDirPath || '').trim();
         if (!targetPath) return;
 
-        await startVideoImport('/api/video-manager/folders/scan', { directory_path: targetPath, parent_id: selectedFolderId || null });
+        await startVideoImport('/api/media-center/folders/scan', { directory_path: targetPath, parent_id: selectedFolderId || null });
       };
 
       const handleScanSelectedFolders = async () => {
@@ -2167,7 +2167,7 @@ window.__ModuleLoader__.load({
         if(directoryPaths.length>50){alert('一次最多选择 50 个子文件夹。');return;}
         if(!window.confirm(`将递归导入 ${directoryPaths.length} 个所选文件夹中的所有视频，并把它们作为当前素材分类的子分类。源视频不会复制或修改。继续？`))return;
         setSelectedBrowserFolders(new Set());
-        await startVideoImport('/api/video-manager/folders/scan-selected', {
+        await startVideoImport('/api/media-center/folders/scan-selected', {
           parent_directory_path: browserData.current_path, directory_paths: directoryPaths, parent_id: selectedFolderId || null
         });
       };
@@ -2178,13 +2178,13 @@ window.__ModuleLoader__.load({
         if (importLockRef.current || !targetPaths || targetPaths.length === 0) return;
 
         setSelectedBrowserFiles(new Set());
-        await startVideoImport('/api/video-manager/videos/import-files', { file_paths: targetPaths, folder_id: selectedFolderId || null });
+        await startVideoImport('/api/media-center/videos/import-files', { file_paths: targetPaths, folder_id: selectedFolderId || null });
       };
 
       const handleCreateFolder = async () => {
         if (!newFolderName.trim()) return;
         try {
-          const res = await fetch('/api/video-manager/folders', {
+          const res = await fetch('/api/media-center/folders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: newFolderName.trim(), parent_id: newFolderParentId || null })
@@ -2210,7 +2210,7 @@ window.__ModuleLoader__.load({
             description: s.visual_description
           }));
 
-          const res = await fetch('/api/video-manager/export', {
+          const res = await fetch('/api/media-center/export', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2590,7 +2590,7 @@ window.__ModuleLoader__.load({
             !['starting', 'initializing', 'scanning', 'queued', 'running', 'importing', 'storyboarding', 'cancelling'].includes(importProgress.status) && h('button', {
               type: 'button', style: buttonSecondaryStyle, onClick: () => {
                 importLockRef.current = false; setIsImporting(false);
-                try { window.sessionStorage.removeItem('dsh-video-manager-active-import'); } catch {}
+                try { window.sessionStorage.removeItem('dsh-media-center-active-import'); } catch {}
                 setImportProgress(null);
               }, 'aria-label': '关闭导入进度'
             }, '关闭')
@@ -2886,7 +2886,7 @@ window.__ModuleLoader__.load({
                     // Storyboard image
                     v.storyboard_path
                       ? h('img', {
-                          src: `/api/video-manager/videos/${v.id}/storyboard?v=${encodeURIComponent(v.updated_at || '')}`,
+                          src: `/api/media-center/videos/${v.id}/storyboard?v=${encodeURIComponent(v.updated_at || '')}`,
                           style: { width: '100%', height: '100%', objectFit: 'cover' },
                           alt: v.file_name
                         })
@@ -3144,8 +3144,8 @@ window.__ModuleLoader__.load({
                       : h('video', {
                           ref: videoRef,
                           src: previewInfo?.required
-                            ? `/api/video-manager/videos/${selectedVideo.id}/stream?preview=1&v=${encodeURIComponent(selectedVideo.updated_at || '')}`
-                            : `/api/video-manager/videos/${selectedVideo.id}/stream`,
+                            ? `/api/media-center/videos/${selectedVideo.id}/stream?preview=1&v=${encodeURIComponent(selectedVideo.updated_at || '')}`
+                            : `/api/media-center/videos/${selectedVideo.id}/stream`,
                           controls: true,
                           style: { width: '100%', height: '100%' }
                         })
@@ -3971,7 +3971,7 @@ window.__ModuleLoader__.load({
                 style: buttonPrimaryStyle,
                 onClick: async () => {
                   if (singleMoveVideoId) {
-                    await fetch(`/api/video-manager/videos/${singleMoveVideoId}`, {
+                    await fetch(`/api/media-center/videos/${singleMoveVideoId}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ folder_id: batchTargetFolderId || null })
@@ -4535,9 +4535,9 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('sidebar.panellist', () => {
           return ctx.slots.register({
             name: 'sidebar.panellist',
-            id: 'video-manager',
+            id: 'media-center',
             order: 35,
-            label: () => '媒体资源库'
+            label: () => '媒体中心'
           }, PanelIcon);
         });
 
@@ -4545,8 +4545,8 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('main', () => {
           return ctx.slots.register({
             name: 'main',
-            key: 'video-manager'
-          }, VideoManagerWorkbench);
+            key: 'media-center'
+          }, MediaCenterWorkbench);
         });
       }
     };

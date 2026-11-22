@@ -5,8 +5,8 @@ import { ShotSearchService } from './src/host/search/shot-search.js';
 import { VideoAiAnalyzer } from './src/host/ai/video-analyzer.js';
 import { ShotAnalysisService } from './src/host/ai/shot-analysis-service.js';
 import { EditingWorkflow } from './src/host/edit/editing-workflow.js';
-import { createVideoManagerApiHandler } from './src/host/api/router.js';
-import { registerVideoManagerTools } from './src/host/tools/register-tools.js';
+import { createMediaCenterApiHandler } from './src/host/api/router.js';
+import { registerMediaCenterTools } from './src/host/tools/register-tools.js';
 
 export const inject = ['tools', 'webServer', 'llm', 'attachments'];
 
@@ -24,7 +24,7 @@ export function apply(ctx, config) {
     // 1. Register Host Web API Route
     let disposeRoute = () => {};
     if (ctx.webServer && typeof ctx.webServer.register === 'function') {
-      const handler = createVideoManagerApiHandler({
+      const handler = createMediaCenterApiHandler({
         db,
         mediaEngine,
         projectExporter,
@@ -35,13 +35,13 @@ export function apply(ctx, config) {
       });
       disposeRoute = ctx.webServer.register({
         kind: 'prefix',
-        path: '/api/video-manager',
+        path: '/api/media-center',
         handler
       });
     }
 
     // 2. Register Agent Tools
-    const disposeTools = registerVideoManagerTools(ctx, {
+    const disposeTools = registerMediaCenterTools(ctx, {
       db,
       mediaEngine,
       projectExporter,

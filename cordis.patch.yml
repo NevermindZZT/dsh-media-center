@@ -1,4 +1,4 @@
 - insert:
-    - id: dsh-video-manager
-      name: '@local/dsh-video-manager'
+    - id: dsh-media-center
+      name: '@local/dsh-media-center'
       config: {}

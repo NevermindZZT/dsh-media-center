@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { registerVideoManagerTools } from '../src/host/tools/register-tools.js';
+import { registerMediaCenterTools } from '../src/host/tools/register-tools.js';
 import { SHOT_ANALYSIS_FIELDS } from '../src/host/db/shot-analysis-store.js';
 
 const makeRun = (overrides = {}) => ({
@@ -16,15 +16,15 @@ const makeRun = (overrides = {}) => ({
 function fixture(service) {
   const defs = new Map(); let disposals = 0;
   const ctx = { tools: { register(def) { assert.ok(!defs.has(def.name)); defs.set(def.name, def); return () => { disposals++; }; } } };
-  const dispose = registerVideoManagerTools(ctx, { db: {}, mediaEngine: {}, projectExporter: {}, shotSearchService: {}, shotAnalysisService: service });
+  const dispose = registerMediaCenterTools(ctx, { db: {}, mediaEngine: {}, projectExporter: {}, shotSearchService: {}, shotAnalysisService: service });
   return { defs, dispose, get disposals() { return disposals; } };
 }
 
 test('registers the three schemas while preserving existing tools and disposal', () => {
   const f = fixture();
-  for (const name of ['video_manager_analyze_shot','video_manager_get_shot_analysis','video_manager_apply_shot_analysis',
-    'video_manager_list_folders','video_manager_search_videos','video_manager_get_video','video_manager_export_project']) assert.ok(f.defs.has(name));
-  const apply = f.defs.get('video_manager_apply_shot_analysis');
+  for (const name of ['media_center_analyze_shot','media_center_get_shot_analysis','media_center_apply_shot_analysis',
+    'media_center_list_folders','media_center_search_videos','media_center_get_video','media_center_export_project']) assert.ok(f.defs.has(name));
+  const apply = f.defs.get('media_center_apply_shot_analysis');
   assert.deepEqual(apply.parameters.required, ['run_id', 'fields', 'confirmed']);
   assert.deepEqual(apply.parameters.properties.fields.items.enum, SHOT_ANALYSIS_FIELDS);
   assert.match(apply.parameters.properties.confirmed.description, /明确授权/);
@@ -35,7 +35,7 @@ test('registers the three schemas while preserving existing tools and disposal',
 test('analyze calls the same service without applying; omits prompt and returns review/audit', async () => {
   const calls = [];
   const f = fixture({ analyze: async (...args) => { calls.push(args); return makeRun(); }, store: { applyFields: () => { throw new Error('must not call'); } } });
-  const result = await f.defs.get('video_manager_analyze_shot').execute({ video_id:'vid_1', shot_id:'shot_1' });
+  const result = await f.defs.get('media_center_analyze_shot').execute({ video_id:'vid_1', shot_id:'shot_1' });
   assert.equal(result.success, true); assert.deepEqual(calls, [['vid_1','shot_1']]);
   assert.equal(result.run.run_id, 'sar_1'); assert.equal(result.run.candidate.visual_description, '举手');
   assert.equal(result.run.baseline.visual_description, '旧描述');
@@ -46,7 +46,7 @@ test('analyze calls the same service without applying; omits prompt and returns 
 test('run retrieval passes exact filtered bounded listRuns parameters and truncates long candidate fields', async () => {
   const calls = [];
   const f = fixture({ store: { listRuns: async opts => { calls.push(opts); return Array.from({length: 8}, (_, i) => makeRun({ id:`sar_${i}`, candidate: { visual_description:'x'.repeat(1300) } })); } } });
-  const tool = f.defs.get('video_manager_get_shot_analysis');
+  const tool = f.defs.get('media_center_get_shot_analysis');
   let r = await tool.execute({ video_id:'vid_1', shot_id:'shot_1' });
   assert.deepEqual(calls[0], {video_id:'vid_1',shot_id:'shot_1',limit:3});
   assert.equal(r.runs.length, 3); assert.equal(r.runs[0].candidate.visual_description.length, 1200);
@@ -61,7 +61,7 @@ test('run retrieval passes exact filtered bounded listRuns parameters and trunca
 test('application refuses missing or false confirmation and invalid fields without mutation', async () => {
   const calls = [];
   const f = fixture({store:{applyFields: async (...args)=> {calls.push(args); return {run:makeRun({status:'applied'}), applied_fields:args[1]};}}});
-  const tool=f.defs.get('video_manager_apply_shot_analysis');
+  const tool=f.defs.get('media_center_apply_shot_analysis');
   for (const confirmed of [undefined,false,'true',1,null]) {
     const result=await tool.execute({run_id:'sar_1',fields:['subject'],confirmed});
     assert.equal(result.success,false); assert.match(result.error,/明确授权/);
@@ -78,13 +78,13 @@ test('application refuses missing or false confirmation and invalid fields witho
 
 test('invalid identifiers, missing service and underlying failures return errors safely', async () => {
   const absent=fixture();
-  for (const name of ['video_manager_analyze_shot','video_manager_get_shot_analysis']) {
+  for (const name of ['media_center_analyze_shot','media_center_get_shot_analysis']) {
     assert.equal((await absent.defs.get(name).execute({video_id:'',shot_id:'s'})).success,false);
     assert.match((await absent.defs.get(name).execute({video_id:'v',shot_id:'s'})).error,/不可用/);
   }
-  assert.match((await absent.defs.get('video_manager_apply_shot_analysis').execute({run_id:'r',fields:['subject'],confirmed:true})).error,/不可用/);
+  assert.match((await absent.defs.get('media_center_apply_shot_analysis').execute({run_id:'r',fields:['subject'],confirmed:true})).error,/不可用/);
   const failed=fixture({analyze:async()=>{throw new Error('视频或片段不存在');}, store:{listRuns:()=>{throw new Error('查询失败');},applyFields:()=>{throw new Error('shot boundaries changed since analysis');}}});
-  assert.match((await failed.defs.get('video_manager_analyze_shot').execute({video_id:'v',shot_id:'s'})).error,/不存在/);
-  assert.match((await failed.defs.get('video_manager_get_shot_analysis').execute({video_id:'v',shot_id:'s'})).error,/查询失败/);
-  assert.match((await failed.defs.get('video_manager_apply_shot_analysis').execute({run_id:'r',fields:['subject'],confirmed:true})).error,/boundaries changed/);
+  assert.match((await failed.defs.get('media_center_analyze_shot').execute({video_id:'v',shot_id:'s'})).error,/不存在/);
+  assert.match((await failed.defs.get('media_center_get_shot_analysis').execute({video_id:'v',shot_id:'s'})).error,/查询失败/);
+  assert.match((await failed.defs.get('media_center_apply_shot_analysis').execute({run_id:'r',fields:['subject'],confirmed:true})).error,/boundaries changed/);
 });

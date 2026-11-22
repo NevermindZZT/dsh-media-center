@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 export class VideoDatabase {
   constructor(options = {}) {
     this.workspaceRoot = options.workspaceRoot || process.cwd();
-    this.dbDir = path.join(this.workspaceRoot, '.dsh-video-manager');
+    this.dbDir = path.join(this.workspaceRoot, '.dsh-media-center');
+    this.legacyDbDir = path.join(this.workspaceRoot, '.dsh-video-manager');
     this.cacheDir = path.join(this.dbDir, 'cache');
     this.storyboardsDir = path.join(this.cacheDir, 'storyboards');
     this.keyframesDir = path.join(this.cacheDir, 'keyframes');
@@ -14,10 +15,40 @@ export class VideoDatabase {
     this.exportsDir = path.join(this.cacheDir, 'exports');
 
     this.customDbPath = options.databasePath || null;
-    this.dbPath = this.customDbPath || path.join(this.dbDir, 'video_manager.db');
+    this.dbPath = this.customDbPath || path.join(this.dbDir, 'media_center.db');
 
+    this.migrateLegacyData();
     this.ensureDirs();
     this.initDb();
+  }
+
+  migrateLegacyData() {
+    if (this.customDbPath || fs.existsSync(this.dbPath)) return;
+    const legacyDbPath = path.join(this.legacyDbDir, 'video_manager.db');
+    if (!fs.existsSync(legacyDbPath)) return;
+    try {
+      fs.mkdirSync(this.dbDir, { recursive: true });
+      const legacyCache = path.join(this.legacyDbDir, 'cache');
+      if (fs.existsSync(legacyCache) && !fs.existsSync(this.cacheDir)) {
+        fs.cpSync(legacyCache, this.cacheDir, { recursive: true });
+      }
+      const escaped = this.dbPath.replaceAll("'", "''");
+      const source = new DatabaseSync(legacyDbPath, { readOnly: true });
+      try { source.exec(`VACUUM INTO '${escaped}'`); } finally { source.close(); }
+      const migrated = new DatabaseSync(this.dbPath);
+      try {
+        const tables = new Set(migrated.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name));
+        const columns = [['videos', 'storyboard_path'], ['video_shots', 'keyframe_path'], ['shot_analysis_runs', 'storyboard_path']];
+        for (const [table, column] of columns) {
+          if (!tables.has(table)) continue;
+          migrated.prepare(`UPDATE ${table} SET ${column}=replace(${column}, ?, ?) WHERE ${column} LIKE ?`)
+            .run(this.legacyDbDir, this.dbDir, `${this.legacyDbDir}%`);
+        }
+      } finally { migrated.close(); }
+      console.log(`[MediaCenter] Migrated data directory to ${this.dbDir}`);
+    } catch (error) {
+      console.warn('[MediaCenter] Legacy data migration failed:', error.message);
+    }
   }
 
   ensureDirs() {
@@ -42,8 +73,8 @@ export class VideoDatabase {
       const gitignorePath = path.join(this.workspaceRoot, '.gitignore');
       if (fs.existsSync(gitignorePath)) {
         const content = fs.readFileSync(gitignorePath, 'utf8');
-        if (!content.includes('.dsh-video-manager')) {
-          fs.appendFileSync(gitignorePath, '\n# DSH Video Manager data and cache\n.dsh-video-manager/\n');
+        if (!content.includes('.dsh-media-center')) {
+          fs.appendFileSync(gitignorePath, '\n# DSH Media Center data and cache\n.dsh-media-center/\n.dsh-video-manager/\n');
         }
       }
     } catch {

@@ -6,7 +6,7 @@ import path from 'node:path';
 import {Readable} from 'node:stream';
 import {VideoDatabase} from '../src/host/db/database.js';
 import {MediaEngine} from '../src/host/media/engine.js';
-import {createVideoManagerApiHandler} from '../src/host/api/router.js';
+import {createMediaCenterApiHandler} from '../src/host/api/router.js';
 
 function fixture(t){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-subfolder-import-'));
@@ -48,9 +48,9 @@ test('rejects paths outside current browser directory, duplicate selection and i
 
 test('HTTP multi-folder import returns an immediate pollable job and completes asynchronously',async t=>{
  const f=fixture(t);
- const handler=createVideoManagerApiHandler({db:f.db,mediaEngine:f.engine});
+ const handler=createMediaCenterApiHandler({db:f.db,mediaEngine:f.engine});
  const request=()=>new Promise((resolve,reject)=>{
-  const req=Readable.from([JSON.stringify({parent_directory_path:f.parentDirectory,directory_paths:[f.folderA,f.folderB],parent_id:f.parent.id})]);req.method='POST';req.url='/api/video-manager/folders/scan-selected';req.headers={};
+  const req=Readable.from([JSON.stringify({parent_directory_path:f.parentDirectory,directory_paths:[f.folderA,f.folderB],parent_id:f.parent.id})]);req.method='POST';req.url='/api/media-center/folders/scan-selected';req.headers={};
   const res={writeHead(status){this.status=status;},end(buffer){resolve({status:this.status,body:JSON.parse(buffer.toString())});}};
   Promise.resolve(handler(req,res)).catch(reject);
  });
