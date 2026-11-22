@@ -80,3 +80,11 @@ test('HEVC preview and storyboard regeneration are exposed in the UI',()=>{
 test('video cards expose analyzed summary and separate storyboard state',()=>{
   assert.match(source,/role: 'tooltip'/);assert.match(source,/summaryVideoId === v\.id/);assert.match(source,/v\.storyboard_status === 'generating'/);
 });
+
+
+test('settings use grouped navigation and expose AI concurrency',()=>{
+  assert.match(source,/aria-label': '设置分类'/);
+  assert.match(source,/settingsSection === 'ai'/);
+  assert.match(source,/AI 分析最大并发/);
+  assert.match(source,/清理全部缓存/);
+});

@@ -379,9 +379,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
                      │
                      ▼
   POST /api/media-center/videos/:id/ai-analyze
+  或 POST /api/media-center/videos/batch-ai-analyze
                      │
                      ▼
       [Host 端 VideoAiAnalyzer 引擎]
+   0. 批量任务按设置中的 1–8 并发数启动 worker；单条任务不受该并发限制。
    1. 解析模型配置 (resolveAiConfig):
       ├─ 自动读取 DSH Profile 中激活的多模态视觉大模型 (默认 zero-plus)
       ├─ 从 ~/.dsh/.credentials.yaml 自动解析 API Key

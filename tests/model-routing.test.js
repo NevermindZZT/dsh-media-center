@@ -217,3 +217,14 @@ test('unknown modality remains selectable; custom HTTP errors do not leak key or
   await assert.rejects(f.analyzer.analyzeVideo('v1'), error => !error.message.includes('secret') && /401/.test(error.message));
   assert.equal(f.writes.length, 0);
 });
+
+
+test('AI concurrency is configurable and validated between 1 and 8', async t => {
+  const f = fixture(t, { ai_mode:'dsh', ai_provider:'p1', ai_dsh_model:'vision' });
+  assert.equal(f.analyzer.getAiSettings().concurrency,3);
+  const saved = await f.analyzer.saveAiSettings({ concurrency: 5 });
+  assert.equal(saved.concurrency,5);
+  assert.equal(f.settings.get('ai_concurrency'),'5');
+  await assert.rejects(f.analyzer.saveAiSettings({ concurrency: 9 }), /1–8/);
+  await assert.rejects(f.analyzer.saveAiSettings({ concurrency: 1.5 }), /1–8/);
+});

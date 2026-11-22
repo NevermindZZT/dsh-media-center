@@ -534,29 +534,37 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
         const body = await parseJsonBody(req);
         const reservation = analysisQueue.reserve(body?.video_ids);
         if (!reservation.ok) return jsonResponse(res, { success: false, error: reservation.error, video_ids: reservation.video_ids }, reservation.status);
-        const results = [];
+        const results = new Array(body.video_ids.length);
         let succeeded = 0;
         try {
-          for (const vid of body.video_ids) {
-            try {
-              analysisQueue.start(vid, reservation.token);
-              // A queued video can be removed while an earlier video is processing.
-              if (!db.getVideoById(vid)) throw new Error('Video not found');
-              const r = await videoAiAnalyzer.analyzeVideo(vid);
-              if (r?.success === false) throw new Error(r.error || 'AI analysis failed');
-              results.push({ video_id: vid, success: true, audit: r.audit });
-              succeeded++;
-            } catch (e) {
-              recordAnalysisFailure(vid);
-              results.push({ video_id: vid, success: false, error: e.message });
-            } finally {
-              analysisQueue.release(vid, reservation.token);
+          const requested = Math.max(1, Math.min(8, Number(videoAiAnalyzer.getAiSettings?.().concurrency) || 3));
+          let cursor = 0;
+          const worker = async () => {
+            while (cursor < body.video_ids.length) {
+              const index = cursor++;
+              const vid = body.video_ids[index];
+              try {
+                analysisQueue.start(vid, reservation.token);
+                // A queued video can be removed while other videos are processing.
+                if (!db.getVideoById(vid)) throw new Error('Video not found');
+                const r = await videoAiAnalyzer.analyzeVideo(vid);
+                if (r?.success === false) throw new Error(r.error || 'AI analysis failed');
+                results[index] = { video_id: vid, success: true, audit: r.audit };
+                succeeded++;
+              } catch (e) {
+                recordAnalysisFailure(vid);
+                results[index] = { video_id: vid, success: false, error: e.message };
+              } finally {
+                analysisQueue.release(vid, reservation.token);
+              }
             }
-          }
+          };
+          await Promise.all(Array.from({ length: Math.min(requested, body.video_ids.length) }, () => worker()));
           return jsonResponse(res, {
             success: true,
             total: body.video_ids.length,
             succeeded,
+            concurrency: requested,
             results
           });
         } finally {

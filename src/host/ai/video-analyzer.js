@@ -30,6 +30,7 @@ export class VideoAiAnalyzer {
       dsh_model: this.db.getSetting('ai_dsh_model') || '',
       custom_model: this.db.getSetting('ai_model') || '',
       reasoning_effort: this.db.getSetting('ai_reasoning_effort') || '',
+      concurrency: Math.max(1, Math.min(8, Number(this.db.getSetting('ai_concurrency')) || 3)),
       model: (mode === 'custom'
         ? this.db.getSetting('ai_model') : this.db.getSetting('ai_dsh_model')) || '',
       base_url: this.safeBaseUrl(this.db.getSetting('ai_base_url') || ''),
@@ -170,6 +171,8 @@ export class VideoAiAnalyzer {
     const model = patch.model ?? (mode === current.mode ? current.model :
       (mode === 'custom' ? this.db.getSetting('ai_model') : this.db.getSetting('ai_dsh_model'))) ?? '';
     const reasoningEffort = Object.hasOwn(patch, 'reasoning_effort') ? patch.reasoning_effort : current.reasoning_effort;
+    const concurrency = Object.hasOwn(patch, 'concurrency') ? Number(patch.concurrency) : current.concurrency;
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('AI 并发数必须为 1–8 的整数');
     if (mode === 'dsh') await this.validateDshRoute(provider, model, reasoningEffort);
     if (mode === 'custom') {
       const baseUrl = patch.base_url ?? current.base_url;
@@ -191,6 +194,7 @@ export class VideoAiAnalyzer {
       this.db.setSetting('ai_model', model);
     }
     if (patch.prompt_template !== undefined) this.db.setSetting('ai_prompt_template', patch.prompt_template);
+    this.db.setSetting('ai_concurrency', String(concurrency));
     return this.getAiSettings();
   }
 

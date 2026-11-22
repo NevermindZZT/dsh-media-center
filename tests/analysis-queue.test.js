@@ -22,7 +22,7 @@ function fixture() {
       return rows;
     }
   };
-  const analyzer = { analyzeVideo: id => { const d = defer(); work.push({id,...d}); return d.promise; } };
+  const analyzer = { getAiSettings: () => ({ concurrency: 1 }), analyzeVideo: id => { const d = defer(); work.push({id,...d}); return d.promise; } };
   const handler = createMediaCenterApiHandler({ db, mediaEngine: { ensureCaptureTimes: async () => {} }, videoAiAnalyzer: analyzer });
   const request = (method, url, body) => {
     const req = Readable.from(body === undefined ? [] : [JSON.stringify(body)]); req.method=method; req.url=url; req.headers={};

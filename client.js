@@ -1203,6 +1203,8 @@ window.__ModuleLoader__.load({
       const [aiApiKeyInput, setAiApiKeyInput] = useState('');
       const [aiModelInput, setAiModelInput] = useState('');
       const [aiReasoningInput, setAiReasoningInput] = useState('');
+      const [aiConcurrency, setAiConcurrency] = useState(3);
+      const [settingsSection, setSettingsSection] = useState('general');
       const [aiMode, setAiMode] = useState('dsh');
       const [aiProviderInput, setAiProviderInput] = useState('');
       const [aiProviders, setAiProviders] = useState([]);
@@ -1501,6 +1503,7 @@ window.__ModuleLoader__.load({
             setAiBaseUrlInput(data.base_url || '');
             setAiModelInput(data.model || '');
             setAiReasoningInput(data.reasoning_effort || '');
+            setAiConcurrency(Number(data.concurrency) || 3);
             setAiPromptTemplate(data.custom_prompt || data.default_prompt || '');
             setDefaultPromptText(data.default_prompt || '');
           }
@@ -1843,6 +1846,7 @@ window.__ModuleLoader__.load({
               api_key: aiMode === 'custom' ? (aiApiKeyInput || undefined) : undefined,
               model: aiModelInput,
               reasoning_effort: aiMode === 'dsh' ? aiReasoningInput : undefined,
+              concurrency: Number(aiConcurrency),
               prompt_template: aiPromptTemplate
             })
           });
@@ -4268,174 +4272,123 @@ window.__ModuleLoader__.load({
           )
         }),
 
-        // 4. Settings Modal with AI Config & Prompt Template
+        // 4. Settings Modal
         showSettingsModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: isMobile ? '95vw' : '600px' } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-              Icon.settings({ size: 18, color: '#3b82f6' }),
-              h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '插件设置与 AI 分析配置')
+          h('div', { style: { ...modalCardStyle, width: isMobile ? '96vw' : '980px', maxWidth: '96vw', height: isMobile ? '90vh' : 'min(820px,88vh)', padding: 0, gap: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '16px 20px', borderBottom: '1px solid var(--dsw-alias-border-l1)', flexShrink: 0 } },
+              h('div', null,
+                h('h3', { style: { margin: 0, fontSize: '18px', fontWeight: 650, color: 'var(--dsw-alias-label-primary)' } }, '设置'),
+                h('div', { style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '媒体中心 · 分析、模型、提示词与缓存')
+              ),
+              h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setShowSettingsModal(false) }, '关闭')
             ),
-
-            // Settings Content with Scroll
-            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, overflowY: 'auto', paddingRight: '4px' } },
-              // Section 1: FFmpeg
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-                h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '1. 媒体引擎环境 (FFmpeg / FFprobe)'),
-                h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
-                  h('div', null,
-                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFmpeg 绝对路径:'),
-                    h('input', {
-                      type: 'text',
-                      value: ffmpegInput,
-                      onChange: (e) => setFfmpegInput(e.target.value),
-                      placeholder: '自动检测或如 C:\\ffmpeg\\bin\\ffmpeg.exe',
-                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                    })
-                  ),
-                  h('div', null,
-                    h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFprobe 绝对路径:'),
-                    h('input', {
-                      type: 'text',
-                      value: ffprobeInput,
-                      onChange: (e) => setFfprobeInput(e.target.value),
-                      placeholder: '自动检测或如 C:\\ffmpeg\\bin\\ffprobe.exe',
-                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                    })
-                  )
-                )
+            h('div', { style: { display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, minHeight: 0 } },
+              h('nav', { 'aria-label': '设置分类', style: { width: isMobile ? '100%' : '190px', flexShrink: 0, padding: '10px', backgroundColor: 'var(--dsw-alias-bg-layer-2)', borderRight: isMobile ? 'none' : '1px solid var(--dsw-alias-border-l1)', borderBottom: isMobile ? '1px solid var(--dsw-alias-border-l1)' : 'none', display: 'flex', flexDirection: isMobile ? 'row' : 'column', gap: '4px', overflowX: isMobile ? 'auto' : 'visible' } },
+                [['general', '通用设置', Icon.settings], ['ai', 'AI 与并发', Icon.sparkles], ['prompts', '分析提示词', Icon.edit], ['cache', '缓存管理', Icon.hardDrive]].map(([id, label, icon]) => h('button', {
+                  key: id, type: 'button', onClick: () => setSettingsSection(id),
+                  style: { display: 'flex', alignItems: 'center', gap: '9px', padding: '9px 10px', border: 'none', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'left', width: isMobile ? 'auto' : '100%', backgroundColor: settingsSection === id ? 'var(--dsw-alias-bg-layer-1)' : 'transparent', color: settingsSection === id ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)', fontWeight: settingsSection === id ? 600 : 400, fontSize: '13px' }
+                }, icon({ size: 15 }), label))
               ),
-
-              // Section 2: AI Multi-modal Model
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-                h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '2. AI 视觉大模型配置'),
-                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
-                  '视频分析与音乐频谱解读共用当前 DSH 图像模型配置；自定义模式使用单独填写的兼容端点。模型未声明图片能力时，请自行确认支持图片。'
-                ),
-                aiMode === 'dsh' && h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadAiCatalog }, '刷新 DSH 模型列表'),
-                aiCatalogWarning && h('div', { role: 'alert', style: { color: 'var(--dsw-alias-label-primary)', fontSize: '11px' } }, aiCatalogWarning),
-                h('label', { style: { fontSize: '11px' } }, '模型来源',
-                  h('select', {
-                    value: aiMode,
-                    onChange: e => { setAiMode(e.target.value); setAiProviderInput(''); setAiModelInput(''); setAiReasoningInput(''); },
-                    style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                  },
-                    h('option', { value: 'dsh' }, 'DSH 已配置模型'),
-                    h('option', { value: 'custom' }, '自定义 OpenAI 兼容端点')
-                  )
-                ),
-                aiMode === 'dsh' ? h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
-                  h('label', { style: { fontSize: '11px' } }, 'DSH 服务商',
-                    h('select', {
-                      value: aiProviderInput,
-                      onChange: e => { setAiProviderInput(e.target.value); setAiModelInput(''); setAiReasoningInput(''); },
-                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                    },
-                      h('option', { value: '' }, '请选择服务商'),
-                      aiProviderInput && !aiProviders.some(p => p.id === aiProviderInput) &&
-                        h('option', { value: aiProviderInput, disabled: true }, `${aiProviderInput}（当前不可用）`),
-                      aiProviders.map(p => h('option', { key: p.id, value: p.id }, p.name || p.id))
-                    )
+              h('div', { style: { flex: 1, minWidth: 0, overflowY: 'auto', padding: '18px 22px' } },
+                settingsSection === 'general' && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+                  h('div', null,
+                    h('div', { style: { fontSize: '15px', fontWeight: 650, color: 'var(--dsw-alias-label-primary)' } }, '通用设置'),
+                    h('div', { style: { marginTop: '4px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.55' } }, '配置本机媒体引擎。源视频、音频只作为只读引用，不会被复制或修改。')
                   ),
-                  h('label', { style: { fontSize: '11px' } }, '模型',
-                    h('select', {
-                      value: aiModelInput,
-                      onChange: e => { setAiModelInput(e.target.value); setAiReasoningInput(''); },
-                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                    },
-                      h('option', { value: '' }, '请选择模型'),
-                      !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).some(m => m.id === aiModelInput) && aiModelInput &&
-                        h('option', { value: aiModelInput, disabled: true }, `${aiModelInput}（当前不可用）`),
-                      (aiProviders.find(p => p.id === aiProviderInput)?.models || []).map(m =>
-                        h('option', { key: m.id, value: m.id, disabled: Array.isArray(m.inputModalities) && !m.inputModalities.includes('image') },
-                          `${m.name || m.id}${Array.isArray(m.inputModalities) ? (m.inputModalities.includes('image') ? '' : '（不支持图片）') : '（图片能力未声明）'}`)
-                      )
-                    )
-                  ),
-                  h('label', { style: { fontSize: '11px' } }, '推理档位',
-                    h('select', {
-                      value: aiReasoningInput,
-                      onChange: e => setAiReasoningInput(e.target.value),
-                      disabled: !aiModelInput || !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.length,
-                      style: { ...inputStyle, width: '100%', marginTop: '3px' }
-                    },
-                      h('option', { value: '' }, '请选择推理档位'),
-                      aiReasoningInput && !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.some(e => e.id === aiReasoningInput) &&
-                        h('option', { value: aiReasoningInput, disabled: true }, `${aiReasoningInput}（当前不可用）`),
-                      ((aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts || []).map(e =>
-                        h('option', { key: e.id, value: e.id }, e.name || e.id)
-                      )
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+                    h('div', null,
+                      h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '媒体引擎环境'),
+                      h('div', { style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '留空时自动从系统 PATH 检测 FFmpeg 与 FFprobe。修改后保存生效。')
                     ),
-                    h('div', { style: { marginTop: '3px', color: 'var(--dsw-alias-label-secondary)' } },
-                      !aiModelInput ? '请先选择服务商和模型。' :
-                      (aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning_unavailable ? '无法读取模型能力，请刷新模型列表。' :
-                      (aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.length ? '请选择档位；请求将直接使用该档位，不会自动换档重试。' : '该模型未声明可选择的推理档位。'
+                    h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px' } },
+                      h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFmpeg 绝对路径',
+                        h('input', { type: 'text', 'aria-label': 'FFmpeg 路径', value: ffmpegInput, onChange: (e) => setFfmpegInput(e.target.value), placeholder: 'C:\\ffmpeg\\bin\\ffmpeg.exe', style: { ...inputStyle, width: '100%', marginTop: '4px' } })),
+                      h('label', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, 'FFprobe 绝对路径',
+                        h('input', { type: 'text', 'aria-label': 'FFprobe 路径', value: ffprobeInput, onChange: (e) => setFfprobeInput(e.target.value), placeholder: 'C:\\ffmpeg\\bin\\ffprobe.exe', style: { ...inputStyle, width: '100%', marginTop: '4px' } }))
                     )
-                  )
-                ) : h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px' } },
-                  h('label', { style: { fontSize: '11px' } }, '自定义模型名称',
-                    h('input', { type: 'text', value: aiModelInput, onChange: e => setAiModelInput(e.target.value), style: { ...inputStyle, width: '100%' } })
                   ),
-                  h('label', { style: { fontSize: '11px' } }, 'API 基础端点',
-                    h('input', { type: 'text', value: aiBaseUrlInput, onChange: e => setAiBaseUrlInput(e.target.value), placeholder: 'https://example.com/v1', style: { ...inputStyle, width: '100%' } })
-                  ),
-                  h('label', { style: { fontSize: '11px' } }, 'API Key（留空保留已有值）',
-                    h('input', { type: 'password', value: aiApiKeyInput, onChange: e => setAiApiKeyInput(e.target.value), autoComplete: 'new-password', style: { ...inputStyle, width: '100%' } })
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' } },
+                    h('div', null, h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '当前运行环境'), h('div', { style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, status?.binaries?.ffmpeg ? 'FFmpeg 与 FFprobe 就绪' : '未检测到可用的 FFmpeg')),
+                    h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => loadStatus() }, '重新检测')
                   )
+                ),
+                settingsSection === 'ai' && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+                  h('div', null,
+                    h('div', { style: { fontSize: '15px', fontWeight: 650 } }, 'AI 与并发'),
+                    h('div', { style: { marginTop: '4px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.55' } }, '视频分析与音乐频谱解读共用当前 DSH 图像模型配置；自定义模式使用单独填写的兼容端点。')
+                  ),
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+                      h('div', null, h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '视觉模型'), h('div', { style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '用于视频故事板分析与音乐频谱图解读。')),
+                      aiMode === 'dsh' && h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadAiCatalog }, '刷新 DSH 模型列表')
+                    ),
+                    aiCatalogWarning && h('div', { role: 'alert', style: { color: 'var(--dsw-alias-label-primary)', fontSize: '11px' } }, aiCatalogWarning),
+                    h('label', { style: { fontSize: '11px' } }, '模型来源',
+                      h('select', { value: aiMode, onChange: e => { setAiMode(e.target.value); setAiProviderInput(''); setAiModelInput(''); setAiReasoningInput(''); }, style: { ...inputStyle, width: '100%', marginTop: '4px' } },
+                        h('option', { value: 'dsh' }, 'DSH 已配置模型'), h('option', { value: 'custom' }, '自定义 OpenAI 兼容端点'))),
+                    aiMode === 'dsh' ? h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px' } },
+                      h('label', { style: { fontSize: '11px' } }, 'DSH 服务商',
+                        h('select', { value: aiProviderInput, onChange: e => { setAiProviderInput(e.target.value); setAiModelInput(''); setAiReasoningInput(''); }, style: { ...inputStyle, width: '100%', marginTop: '4px' } },
+                          h('option', { value: '' }, '请选择服务商'), aiProviderInput && !aiProviders.some(p => p.id === aiProviderInput) && h('option', { value: aiProviderInput, disabled: true }, `${aiProviderInput}（当前不可用）`), aiProviders.map(p => h('option', { key: p.id, value: p.id }, p.name || p.id)))),
+                      h('label', { style: { fontSize: '11px' } }, '模型',
+                        h('select', { value: aiModelInput, onChange: e => { setAiModelInput(e.target.value); setAiReasoningInput(''); }, style: { ...inputStyle, width: '100%', marginTop: '4px' } },
+                          h('option', { value: '' }, '请选择模型'), !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).some(m => m.id === aiModelInput) && aiModelInput && h('option', { value: aiModelInput, disabled: true }, `${aiModelInput}（当前不可用）`),
+                          (aiProviders.find(p => p.id === aiProviderInput)?.models || []).map(m => h('option', { key: m.id, value: m.id, disabled: Array.isArray(m.inputModalities) && !m.inputModalities.includes('image') }, `${m.name || m.id}${Array.isArray(m.inputModalities) ? (m.inputModalities.includes('image') ? '' : '（不支持图片）') : '（图片能力未声明）'}`)))),
+                      h('label', { style: { fontSize: '11px' } }, '推理档位',
+                        h('select', { value: aiReasoningInput, onChange: e => setAiReasoningInput(e.target.value), disabled: !aiModelInput || !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.length, style: { ...inputStyle, width: '100%', marginTop: '4px' } },
+                          h('option', { value: '' }, '请选择推理档位'), aiReasoningInput && !(aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.some(e => e.id === aiReasoningInput) && h('option', { value: aiReasoningInput, disabled: true }, `${aiReasoningInput}（当前不可用）`),
+                          ((aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts || []).map(e => h('option', { key: e.id, value: e.id }, e.name || e.id)))),
+                      h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', marginTop: '3px' } },
+                        !aiModelInput ? '请先选择服务商和模型。' : (aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning_unavailable ? '无法读取模型能力，请刷新模型列表。' : (aiProviders.find(p => p.id === aiProviderInput)?.models || []).find(m => m.id === aiModelInput)?.reasoning?.efforts?.length ? '请求直接使用所选档位，不会自动换档重试。' : '该模型未声明可选择的推理档位。')
+                    ) : h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '12px' } },
+                      h('label', { style: { fontSize: '11px' } }, '自定义模型名称', h('input', { type: 'text', value: aiModelInput, onChange: e => setAiModelInput(e.target.value), style: { ...inputStyle, width: '100%', marginTop: '4px' } })),
+                      h('label', { style: { fontSize: '11px' } }, 'API 基础端点', h('input', { type: 'text', value: aiBaseUrlInput, onChange: e => setAiBaseUrlInput(e.target.value), placeholder: 'https://example.com/v1', style: { ...inputStyle, width: '100%', marginTop: '4px' } })),
+                      h('label', { style: { fontSize: '11px' } }, 'API Key（留空保留已有值）', h('input', { type: 'password', value: aiApiKeyInput, onChange: e => setAiApiKeyInput(e.target.value), autoComplete: 'new-password', style: { ...inputStyle, width: '100%', marginTop: '4px' } }))
+                    )
+                  ),
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' } },
+                    h('div', { style: { maxWidth: '560px' } },
+                      h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '批量 AI 分析并发'),
+                      h('div', { style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.55' } }, '同时请求远端图像模型的最大数量。模型并发能力强时可提高；过高会增加本机解码、内存与网络压力。')
+                    ),
+                    h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' } }, '最大并发',
+                      h('input', { type: 'number', 'aria-label': 'AI 分析最大并发', min: 1, max: 8, step: 1, value: aiConcurrency, onChange: e => setAiConcurrency(e.target.value), style: { ...inputStyle, width: '90px' } }),
+                      h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '1–8'))
+                  )
+                ),
+                settingsSection === 'prompts' && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+                  h('div', null, h('div', { style: { fontSize: '15px', fontWeight: 650 } }, '分析提示词'), h('div', { style: { marginTop: '4px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '提示词影响模型对视频与镜头的理解；修改后点击“保存全部配置”生效。')),
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('div', { style: { fontSize: '13px', fontWeight: 600 } }, 'AI 视频分析提示词'), h('button', { type: 'button', style: { ...buttonSecondaryStyle, padding: '3px 9px', fontSize: '11px' }, onClick: () => setAiPromptTemplate(defaultPromptText) }, '恢复默认')),
+                    h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '支持变量：{{video_name}}, {{duration}}, {{resolution}}, {{fps}}, {{folder_name}}'),
+                    h('textarea', { rows: 9, 'aria-label': 'AI 视频分析提示词', value: aiPromptTemplate, onChange: (e) => setAiPromptTemplate(e.target.value), style: { ...inputStyle, resize: 'vertical', lineHeight: '1.45', fontFamily: 'monospace', fontSize: '11px' } })
+                  ),
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' } },
+                    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '镜头深度分析提示词'), h('button', { type: 'button', style: { ...buttonSecondaryStyle, padding: '3px 9px', fontSize: '11px' }, disabled: !shotPromptLoaded, onClick: () => setShotPrompt(shotDefaultPrompt) }, '恢复默认')),
+                    h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '仅影响单片段镜头精读。'),
+                    shotPromptError && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, shotPromptError, h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadShotAnalysisSettings }, '重试读取')),
+                    h('textarea', { 'aria-label': '镜头深度分析提示词', rows: 9, value: shotPrompt, disabled: !shotPromptLoaded, onChange: e => setShotPrompt(e.target.value), style: { ...inputStyle, resize: 'vertical', lineHeight: '1.45', fontFamily: 'monospace', fontSize: '11px' } })
+                  )
+                ),
+                settingsSection === 'cache' && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },
+                  h('div', null, h('div', { style: { fontSize: '15px', fontWeight: 650 } }, '缓存管理'), h('div', { style: { marginTop: '4px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '仅清理插件生成的衍生文件；源视频、音频和导出工程不受影响。')),
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+                    h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '缓存占用'),
+                    h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.8' } },
+                      cacheUsage ? `故事板 ${formatFileSize(cacheUsage.storyboards)} · 兼容预览 ${formatFileSize(cacheUsage.previews)} · 关键帧 ${formatFileSize(cacheUsage.keyframes)} · 音乐频谱 ${formatFileSize(cacheUsage.music_spectrograms)}` : '点击设置时统计缓存占用。',
+                      cacheUsage && h('div', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, `合计 ${formatFileSize(cacheUsage.total)}`)),
+                    h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+                      h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: () => clearPluginCache('previews') }, '仅清理兼容预览'),
+                      h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: () => clearPluginCache('all') }, '清理全部缓存'),
+                      h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: loadCacheUsage }, '刷新占用'))
+                  ),
+                  h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '清理故事板后，列表中的故事板会重置为未生成，可再次按需生成。')
                 )
-              ),
-
-              // Section 3: Prompt Template
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                  h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '3. AI 视频分析提示词模板 (Prompt)'),
-                  h('button', {
-                    style: { ...buttonSecondaryStyle, padding: '2px 8px', fontSize: '10px' },
-                    onClick: () => setAiPromptTemplate(defaultPromptText)
-                  }, '恢复默认提示词')
-                ),
-                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
-                  '支持变量动态注入：{{video_name}}, {{duration}}, {{resolution}}, {{fps}}, {{folder_name}}'
-                ),
-                h('textarea', {
-                  rows: 8,
-                  value: aiPromptTemplate,
-                  onChange: (e) => setAiPromptTemplate(e.target.value),
-                  style: { ...inputStyle, resize: 'vertical', lineHeight: '1.4', fontFamily: 'monospace', fontSize: '11px' }
-                })
-              ),
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
-                  h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '4. 镜头深度分析提示词'),
-                  h('button', { type: 'button', style: { ...buttonSecondaryStyle, padding: '2px 8px', fontSize: '10px' }, disabled: !shotPromptLoaded, onClick: () => setShotPrompt(shotDefaultPrompt) }, '恢复镜头默认提示词')
-                ),
-                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '仅影响镜头精读；修改后点击“保存全部配置”才会生效。'),
-                shotPromptError && h('div', { role: 'alert', style: { fontSize: '11px', color: 'var(--dsw-alias-label-primary)' } }, shotPromptError,
-                  h('button', { type: 'button', style: buttonSecondaryStyle, onClick: loadShotAnalysisSettings }, '重试读取')),
-                h('textarea', { 'aria-label': '镜头深度分析提示词', rows: 8, value: shotPrompt, disabled: !shotPromptLoaded,
-                  onChange: e => setShotPrompt(e.target.value),
-                  style: { ...inputStyle, resize: 'vertical', lineHeight: '1.4', fontFamily: 'monospace', fontSize: '11px' } })
-              ),
-              h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--dsw-alias-border-l1)', paddingTop: '8px' } },
-                h('div', { style: { fontSize: '13px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, '5. 衍生缓存管理'),
-                h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } },
-                  cacheUsage ? `故事板 ${formatFileSize(cacheUsage.storyboards)} · 兼容预览 ${formatFileSize(cacheUsage.previews)} · 关键帧 ${formatFileSize(cacheUsage.keyframes)} · 音乐频谱 ${formatFileSize(cacheUsage.music_spectrograms)} · 合计 ${formatFileSize(cacheUsage.total)}` : '点击设置时统计缓存占用。'),
-                h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: () => clearPluginCache('previews') }, '仅清理兼容预览'),
-                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: () => clearPluginCache('all') }, '清理全部缓存'),
-                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: cacheBusy, onClick: loadCacheUsage }, '刷新占用'))
               )
             ),
-
-            // Modal Footer
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' } },
-              h('button', {
-                style: buttonSecondaryStyle,
-                onClick: () => setShowSettingsModal(false)
-              }, '取消'),
-              h('button', {
-                style: buttonPrimaryStyle,
-                onClick: handleSaveSettings
-              }, Icon.check({ size: 13 }), '保存全部配置')
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '12px 20px', borderTop: '1px solid var(--dsw-alias-border-l1)', flexShrink: 0 } },
+              h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setShowSettingsModal(false) }, '取消'),
+              h('button', { type: 'button', style: buttonPrimaryStyle, onClick: handleSaveSettings }, Icon.check({ size: 13 }), '保存全部配置')
             )
           )
         ),
