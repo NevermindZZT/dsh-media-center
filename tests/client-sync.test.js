@@ -18,6 +18,7 @@ function harness() {
     viewRef, requestVersions: versions, editingRef, sortRuleRef: { current: 'captured_at_desc' },
     parseSortRule: () => ({ sortBy: 'captured_at', sortDir: 'desc' }),
     setLoading: v => calls.loading.push(v), setVideos: v => calls.videos.push(v),
+    setVideoTotal: v => calls.total = v,
     setSelectedVideo: v => calls.selected.push(v),
     loadVideoDetail: id => { calls.details.push(id); viewRef.current.videoId = id; versions.current.detail++; },
     isMobile: false, encodeURIComponent, console,

@@ -1105,6 +1105,8 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = useState(null);
       const [folders, setFolders] = useState([]);
       const [videos, setVideos] = useState([]);
+      const [videoTotal, setVideoTotal] = useState(0);
+      const [loadingMoreVideos, setLoadingMoreVideos] = useState(false);
       const [selectedFolderId, setSelectedFolderId] = useState(null);
       const [selectedVideo, setSelectedVideo] = useState(null);
       const [previewInfo, setPreviewInfo] = useState(null);
@@ -1363,6 +1365,7 @@ window.__ModuleLoader__.load({
           const data = await res.json();
           if (data.success && version === requestVersions.current.videos) {
             setVideos(data.videos || []);
+            setVideoTotal(Number(data.total) || (data.videos || []).length);
             const currentId = viewRef.current.videoId;
             const missing = !currentId || !data.videos.some(v => v.id === currentId);
             if (missing && !editingRef.current && detailVersion === requestVersions.current.detail) {
@@ -1379,6 +1382,37 @@ window.__ModuleLoader__.load({
           console.error('Failed to load videos', e);
         } finally {
           if (version === requestVersions.current.videos) setLoading(false);
+        }
+      };
+
+      // 3.1 Load the next page of videos
+      const loadMoreVideos = async () => {
+        if (loadingMoreVideos || videos.length >= videoTotal) return;
+        const view = { ...viewRef.current };
+        const offset = videos.length;
+        const parsedSort = parseSortRule(sortRuleRef.current);
+        setLoadingMoreVideos(true);
+        try {
+          let url = `/api/media-center/videos?limit=200&offset=${offset}`;
+          if (view.folderId) url += `&folder_id=${encodeURIComponent(view.folderId)}`;
+          if (view.query) url += `&query=${encodeURIComponent(view.query)}`;
+          if (view.status) url += `&status=${encodeURIComponent(view.status)}`;
+          if (parsedSort.sortBy) url += `&sort_by=${encodeURIComponent(parsedSort.sortBy)}`;
+          if (parsedSort.sortDir) url += `&sort_dir=${encodeURIComponent(parsedSort.sortDir)}`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (view.folderId !== viewRef.current.folderId || view.query !== viewRef.current.query || view.status !== viewRef.current.status) return;
+          if (data.success) {
+            setVideoTotal(Number(data.total) || 0);
+            setVideos(current => {
+              const known = new Set(current.map(v => v.id));
+              return [...current, ...(data.videos || []).filter(v => !known.has(v.id))];
+            });
+          }
+        } catch (e) {
+          console.error('Failed to load more videos', e);
+        } finally {
+          setLoadingMoreVideos(false);
         }
       };
 
@@ -2719,13 +2753,13 @@ window.__ModuleLoader__.load({
             }),
         h(React.Fragment, null,
         activeLibrary === 'video' && renderLibrarySectionHeader({
-          icon: Icon.clapperboard, title: '视频素材库', description: `${videos.length} 条素材`,
+          icon: Icon.clapperboard, title: '视频素材库', description: `${videos.length < videoTotal ? `已加载 ${videos.length} / ${videoTotal}` : videoTotal} 条素材`,
           actions: h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => setShowExportModal(true) }, Icon.scissors({ size: 13 }), isMobile ? '导出' : '导出剪辑工程')
         }),
 
         activeLibrary === 'video' && renderMobilePanelNavigation({isMobile,active:mobileTab,onSelect:setMobileTab,labels:[
           {id:'folders',label:'分类目录',icon:Icon.folder({size:13})},
-          {id:'videos',label:`素材列表 (${videos.length})`,icon:Icon.grid({size:13})},
+          {id:'videos',label:`素材列表 (${videos.length}/${videoTotal})`,icon:Icon.grid({size:13})},
           {id:'detail',label:'视频详情',icon:Icon.film({size:13})}
         ]}),
 
@@ -2871,7 +2905,7 @@ window.__ModuleLoader__.load({
                   checked: videos.length > 0 && selectedVideoIds.size === videos.length,
                   onChange: toggleSelectAll
                 }),
-                h('span', null, `全选 (${selectedVideoIds.size}/${videos.length})`)
+                h('span', null, `全选已加载 (${selectedVideoIds.size}/${videos.length})`)
               ),
               selectedVideoIds.size > 0 && h('div', { style: { display: 'flex', gap: '6px' } },
                 h('button', {
@@ -3183,7 +3217,10 @@ window.__ModuleLoader__.load({
                     )
                   )
                 );
-              })
+              }),
+              videos.length < videoTotal && h('div', { style: { gridColumn: '1 / -1', display: 'flex', justifyContent: 'center', padding: '8px 0 4px' } },
+                h('button', { type: 'button', style: buttonSecondaryStyle, disabled: loadingMoreVideos, onClick: loadMoreVideos },
+                  loadingMoreVideos ? '正在加载…' : `加载更多（已加载 ${videos.length} / ${videoTotal}）`))
             )
           ),
 

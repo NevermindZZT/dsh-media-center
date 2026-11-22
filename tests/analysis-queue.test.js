@@ -20,6 +20,11 @@ function fixture() {
       if (options.status) rows = rows.filter(v => v.status === options.status);
       if (options.limit) rows = rows.slice(Number(options.offset || 0), Number(options.offset || 0) + Number(options.limit));
       return rows;
+    },
+    countVideos: options => {
+      let rows = [...videos.values()];
+      if (options.status) rows = rows.filter(v => v.status === options.status);
+      return rows.length;
     }
   };
   const analyzer = { getAiSettings: () => ({ concurrency: 1 }), analyzeVideo: id => { const d = defer(); work.push({id,...d}); return d.promise; } };

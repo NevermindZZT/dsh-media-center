@@ -730,6 +730,25 @@ export class VideoDatabase {
     });
   }
 
+  countVideos(options = {}) {
+    let sql = `SELECT COUNT(*) AS c FROM videos v WHERE 1=1`;
+    const params = [];
+    if (options.folder_id) {
+      const folderIds = this.getAllDescendantFolderIds(options.folder_id);
+      sql += folderIds.length === 1
+        ? ` AND v.folder_id = ?`
+        : ` AND v.folder_id IN (${folderIds.map(() => '?').join(',')})`;
+      params.push(...folderIds);
+    }
+    if (options.status) { sql += ` AND v.status = ?`; params.push(options.status); }
+    if (options.query) {
+      sql += ` AND (v.file_name LIKE ? OR v.summary LIKE ? OR v.user_notes LIKE ?)`;
+      const q = `%${options.query}%`; params.push(q, q, q);
+    }
+    if (options.tag) { sql += ` AND v.tags LIKE ?`; params.push(`%"${options.tag}"%`); }
+    return this.db.prepare(sql).get(...params).c;
+  }
+
   deleteVideo(videoId) {
     const video = this.getVideoById(videoId);
     if (!video) return false;

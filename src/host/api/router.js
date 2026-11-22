@@ -453,13 +453,12 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
         const options = { folder_id: folderId, query, tag, sort_by: sortBy, sort_dir: sortDir };
         // Stored status cannot be filtered before applying the runtime overlay.
         // Filter first, then page, so queued/running items are not lost at page boundaries.
-        const videos = status
-          ? db.queryVideos(options).filter(v => analysisQueue.overlay(v).status === status ||
-                (status === 'imported' && analysisQueue.active.has(v.id)))
-              .map(v => analysisQueue.overlay(v))
-              .slice(Math.max(0, Number(offset) || 0), Math.max(0, Number(offset) || 0) + Math.max(0, Number(limit) || 100))
+        const filtered = status ? db.queryVideos(options).map(v => analysisQueue.overlay(v)).filter(v => v.status === status || (status === 'imported' && analysisQueue.active.has(v.id))) : null;
+        const total = filtered ? filtered.length : db.countVideos(options);
+        const videos = filtered
+          ? filtered.slice(Math.max(0, Number(offset) || 0), Math.max(0, Number(offset) || 0) + Math.max(0, Number(limit) || 100))
           : db.queryVideos({ ...options, limit, offset }).map(v => analysisQueue.overlay(v));
-        return jsonResponse(res, { success: true, videos });
+        return jsonResponse(res, { success: true, total, videos });
       }
 
       // 8. Video Details: GET /api/media-center/videos/:id

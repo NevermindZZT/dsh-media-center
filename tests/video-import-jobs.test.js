@@ -61,6 +61,7 @@ test('import POST returns a queued pollable job, inserts rows before storyboards
   const importing=await until(async()=>{const r=await request(handler,'GET',`/api/media-center/import-jobs/${jobId}`);return r.body.job.inserted===2?r.body.job:null;});
   assert.equal(importing.status,'storyboarding');
   const listed=await request(handler,'GET','/api/media-center/videos?limit=20');
+  assert.equal(listed.body.total,2);
   assert.equal(listed.body.videos.length,2);
   assert.ok(listed.body.videos.every(video=>video.status==='imported'&&['pending','generating'].includes(video.storyboard_status)));
   assert.equal(listed.body.videos.some(video=>video.source_identity_json),false);

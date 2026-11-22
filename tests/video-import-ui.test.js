@@ -90,6 +90,14 @@ test('batch AI analysis offers unanalyzed-only and full selection scopes',()=>{
 });
 
 
+test('video list paginates instead of silently stopping at 200',()=>{
+  assert.match(source,/const \[videoTotal, setVideoTotal\]/);
+  assert.match(source,/loadMoreVideos/);
+  assert.match(source,/加载更多（已加载/);
+  assert.match(source,/setVideoTotal\(Number\(data\.total\)/);
+});
+
+
 test('video cards expose analyzed summary and separate storyboard state',()=>{
   assert.match(source,/role: 'tooltip'/);assert.match(source,/summaryVideoId === v\.id/);assert.match(source,/v\.storyboard_status === 'generating'/);
   assert.match(source,/showVideoSummary/);assert.match(source,/summaryAnchor/);assert.match(source,/position: 'fixed'/);
