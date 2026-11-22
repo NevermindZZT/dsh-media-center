@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {VideoDatabase} from '../src/host/db/database.js';
-import {EditingWorkflow} from '../src/host/edit/editing-workflow.js';
+import {EditingWorkflow,ProjectValidationError} from '../src/host/edit/editing-workflow.js';
 const exe=name=>process.platform==='win32'?path.join(os.homedir(),'.local','bin',`${name}.exe`):name;
 const hasFfmpeg=spawnSync(exe('ffmpeg'),['-version'],{stdio:'ignore'}).status===0&&spawnSync(exe('ffprobe'),['-version'],{stdio:'ignore'}).status===0;
 function fixture(t){
@@ -40,8 +40,58 @@ test('Agent-authored project is validated, normalized to catalog IDs, and saved 
  const saved=f.workflow.commitPreview({previewId:preview.preview_id,confirmed:true});
  assert.equal(saved.success,true);assert.equal(saved.record.project.title,'Agent 提案');assert.equal(saved.record.project.tracks.video[0].source.path,undefined);
  assert.equal(f.workflow.projects.list().length,1);assert.throws(()=>f.workflow.commitPreview({previewId:preview.preview_id,confirmed:true}),/过期/);
+ const summary=f.workflow.projects.list()[0];
+ assert.equal(summary.clip_count,1);assert.equal(summary.poster_video_id,f.video.id);assert.equal(summary.duration_seconds,3);
 });
 
+test('saved projects can be updated with revision control and deleted without touching media',{skip:!hasFfmpeg},async t=>{
+  const f=fixture(t),{project}=await projectFixture(f);
+  const preview=f.workflow.previewProject(project);
+  const saved=f.workflow.commitPreview({previewId:preview.preview_id,confirmed:true});
+  const record=saved.record;
+  const updated=structuredClone(record.project);updated.title='修改后的项目';
+  const changed=f.workflow.projects.save(updated,{id:record.id,expectedRevision:record.revision});
+  assert.equal(changed.success,true);assert.equal(changed.record.revision,record.revision+1);assert.equal(changed.record.project.title,'修改后的项目');
+  assert.equal(f.workflow.projects.save(updated,{id:record.id,expectedRevision:record.revision}).error,'CONFLICT_OR_NOT_FOUND');
+  assert.equal(f.workflow.projects.delete(record.id),true);
+  assert.equal(f.workflow.projects.get(record.id),null);
+  assert.equal(fs.existsSync(f.videoPath),true);assert.equal(fs.existsSync(f.audioPath),true);
+});
+
+test('a video clip can cover multiple contiguous shots and composeProject builds a valid timeline',{skip:!hasFfmpeg},async t=>{
+  const f=fixture(t),{music,project}=await projectFixture(f);
+  const shotIds=f.db.upsertShots(f.video.id,[
+    {id:'shot_first',start_time:0,end_time:3,subject:'第一个分镜'},
+    {id:'shot_second',start_time:3,end_time:5,subject:'第二个分镜'}
+  ]);
+  const first=shotIds[0],second=shotIds[1];
+  const multi=JSON.parse(JSON.stringify(project));
+  multi.duration_frames=150;
+  multi.tracks.video[0].source_in_seconds=0;
+  multi.tracks.video[0].source_out_seconds=5;
+  multi.tracks.video[0].timeline_end_frame=150;
+  multi.tracks.video[0].evidence={shot_ids:[first,second]};
+  multi.tracks.music[0].source_out_seconds=5;
+  multi.tracks.music[0].timeline_end_frame=150;
+  const preview=f.workflow.previewProject(multi);
+  assert.deepEqual(preview.project.tracks.video[0].evidence.shot_ids,[first,second]);
+
+  const composed=f.workflow.composeProject({title:'组合项目',rationale:'按分镜自动组装',shot_refs:[{shot_id:first},{shot_id:second}],music_id:music.id});
+  assert.equal(composed.project.tracks.video.length,2);
+  assert.equal(composed.project.duration_frames,150);
+  assert.deepEqual(composed.project.tracks.video[1].evidence.shot_ids,[second]);
+  assert.equal(composed.project.tracks.music[0].timeline_end_frame,150);
+});
+
+test('project validation failures expose structured paths instead of a generic error',{skip:!hasFfmpeg},async t=>{
+  const f=fixture(t),{project}=await projectFixture(f);
+  const gap=structuredClone(project);gap.tracks.video[0].timeline_start_frame=1;
+  assert.throws(()=>f.workflow.previewProject(gap),error=>{
+    assert.equal(error instanceof ProjectValidationError,true);
+    assert.equal(error.errors.some(item=>item.code==='TRACK_GAP'&&item.path),true);
+    return true;
+  });
+});
 test('project validation rejects arbitrary paths, forged assets, invalid shot bounds, and unconfirmed music',{skip:!hasFfmpeg},async t=>{
  const f=fixture(t),{project}=await projectFixture(f);
  const arbitrary=structuredClone(project);arbitrary.tracks.video[0].source.path=f.videoPath;

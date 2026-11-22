@@ -180,6 +180,10 @@ test('tools preview an Agent-created project and save only after explicit confir
   assert.equal(schema.properties.tracks.properties.music.minItems,1);assert.equal(schema.properties.tracks.properties.music.maxItems,1);
   assert.ok(schema.properties.tracks.properties.music.items.required.includes('rights'));
   assert.match(previewTool.description,/不调用模型/);
+  const compose=f.tool('media_center_edit_compose_project');
+  assert.ok(compose);
+  assert.deepEqual(compose.parameters.required,['title','rationale','shot_refs','music_id']);
+  assert.equal(compose.parameters.properties.shot_refs.items.properties.shot_id.type,'string');
   await save.execute({preview_id:PREVIEW,confirmed:true});
   assert.deepEqual(f.calls.at(-1),['commit',{previewId:PREVIEW,confirmed:true}]);
   assert.ok(f.defs.every(d=>d.parameters.additionalProperties===false));
@@ -203,6 +207,25 @@ test('plugin entry binds save to the exact server-held project preview',async t=
   const committed=await save.execute({preview_id:PREVIEW,confirmed:true});
   assert.equal(committed.success,true);assert.deepEqual(saved,project);
   assert.equal(await save.execute({preview_id:PREVIEW,confirmed:true}).then(r=>r.success),false);
+});
+
+test('structured project validation errors are passed through to HTTP and Agent tools',async()=>{
+  const f=fixture();
+  f.service.previewProject=()=>{
+    const error=new Error('剪辑项目校验失败');
+    error.name='ProjectValidationError';error.code='PROJECT_VALIDATION_FAILED';
+    error.errors=[{code:'TRACK_GAP',path:'$.tracks.video[1]',message:'timeline gap'}];
+    error.warnings=[];
+    throw error;
+  };
+  const response=await f.request('POST',`${base}/projects/preview`,{project:{schema_version:1}});
+  assert.equal(response.status,400);
+  assert.equal(response.body.error.code,'PROJECT_VALIDATION_FAILED');
+  assert.equal(response.body.error.errors[0].path,'$.tracks.video[1]');
+  const tool=f.tool('media_center_edit_preview_project');
+  const result=await tool.execute({project:{schema_version:1}});
+  assert.equal(result.success,false);
+  assert.equal(result.errors[0].code,'TRACK_GAP');
 });
 
 test('Jamendo tool never accepts or exposes client ID in schema or result',async()=>{

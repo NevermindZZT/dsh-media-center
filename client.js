@@ -387,7 +387,8 @@ window.__ModuleLoader__.load({
     const LIBRARY_TABS = [
       // Keep this registry data-driven so a future image library can join the same centered tab bar.
       { id: 'video', label: '视频库', shortLabel: '视频', icon: 'clapperboard' },
-      { id: 'music', label: '音乐库', shortLabel: '音乐', icon: 'music' }
+      { id: 'music', label: '音乐库', shortLabel: '音乐', icon: 'music' },
+      { id: 'projects', label: '项目库', shortLabel: '项目', icon: 'film' }
     ];
 
     function LibraryPageTabs({ active, onSelect, isMobile }) {
@@ -1088,6 +1089,265 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // --- Project Library (saved edit projects) ---
+    function ProjectLibraryWorkbench({ isMobile, styles, active }) {
+      const { inputStyle, buttonPrimaryStyle, buttonSecondaryStyle, modalOverlayStyle, modalCardStyle } = styles;
+      const [projects, setProjects] = useState([]);
+      const [selectedId, setSelectedId] = useState(null);
+      const [detail, setDetail] = useState(null);
+      const [draft, setDraft] = useState(null);
+      const [editing, setEditing] = useState(false);
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const [showExport, setShowExport] = useState(false);
+      const [exportFormat, setExportFormat] = useState('fcpxml');
+      const [includeSourceAudio, setIncludeSourceAudio] = useState(true);
+      const [exportResult, setExportResult] = useState(null);
+
+      const loadProjects = async () => {
+        try {
+          const res = await fetch('/api/media-center/editing/projects?limit=100');
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || '无法读取项目库');
+          setProjects(data.projects || []);
+          setError('');
+          if (!selectedId && data.projects?.length) setSelectedId(data.projects[0].id);
+        } catch (e) { setError(e.message); }
+      };
+      const loadDetail = async (id) => {
+        try {
+          const res = await fetch(`/api/media-center/editing/projects/${encodeURIComponent(id)}`);
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || '无法读取项目');
+          setDetail(data.project);
+          setDraft(JSON.parse(JSON.stringify(data.project.project)));
+          setEditing(false);
+        } catch (e) { setError(e.message); setDetail(null); }
+      };
+      useEffect(() => { if (active) loadProjects(); }, [active]);
+      useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId]);
+
+      const seconds = (frames, fps) => frames * fps.den / fps.num;
+      const formatSeconds = value => {
+        const total = Math.max(0, Math.round(Number(value) || 0));
+        return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+      };
+
+      const reflow = (project) => {
+        const fps = project.fps;
+        let cursor = 0;
+        for (const clip of project.tracks.video) {
+          const duration = Math.max(1, Math.round((Number(clip.source_out_seconds) - Number(clip.source_in_seconds)) * fps.num / fps.den));
+          clip.timeline_start_frame = cursor;
+          clip.timeline_end_frame = cursor + duration;
+          cursor += duration;
+        }
+        project.duration_frames = Math.max(1, cursor);
+        for (const clip of project.tracks.music) {
+          const requested = Math.max(1, Math.round((Number(clip.source_out_seconds) - Number(clip.source_in_seconds)) * fps.num / fps.den));
+          clip.timeline_start_frame = 0;
+          clip.timeline_end_frame = Math.min(project.duration_frames, requested);
+        }
+      };
+
+      const changeClip = (index, field, value) => {
+        setDraft(current => {
+          if (!current) return current;
+          const next = JSON.parse(JSON.stringify(current));
+          const clip = next.tracks.video[index];
+          const numeric = Number(value);
+          if (!Number.isFinite(numeric)) return current;
+          clip[field] = Math.max(0, numeric);
+          if (clip.source_out_seconds <= clip.source_in_seconds) clip.source_out_seconds = clip.source_in_seconds + 0.01;
+          reflow(next);
+          return next;
+        });
+      };
+      const moveClip = (index, delta) => {
+        setDraft(current => {
+          if (!current) return current;
+          const target = index + delta;
+          if (target < 0 || target >= current.tracks.video.length) return current;
+          const next = JSON.parse(JSON.stringify(current));
+          [next.tracks.video[index], next.tracks.video[target]] = [next.tracks.video[target], next.tracks.video[index]];
+          reflow(next);
+          return next;
+        });
+      };
+      const removeClip = index => {
+        setDraft(current => {
+          if (!current || current.tracks.video.length <= 1) return current;
+          const next = JSON.parse(JSON.stringify(current));
+          next.tracks.video.splice(index, 1);
+          reflow(next);
+          return next;
+        });
+      };
+      const changeMusic = (field, value) => {
+        setDraft(current => {
+          if (!current?.tracks?.music?.[0]) return current;
+          const next = JSON.parse(JSON.stringify(current));
+          const numeric = Number(value);
+          if (!Number.isFinite(numeric)) return current;
+          next.tracks.music[0][field] = Math.max(0, numeric);
+          if (next.tracks.music[0].source_out_seconds <= next.tracks.music[0].source_in_seconds) {
+            next.tracks.music[0].source_out_seconds = next.tracks.music[0].source_in_seconds + 0.01;
+          }
+          reflow(next);
+          return next;
+        });
+      };
+      const saveProject = async () => {
+        if (!detail || !draft) return;
+        setBusy(true); setError(''); setNotice('');
+        try {
+          const res = await fetch(`/api/media-center/editing/projects/${encodeURIComponent(detail.id)}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project: draft, expected_revision: detail.revision })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            const validation = Array.isArray(data.errors) && data.errors.length
+              ? data.errors.slice(0, 5).map(item => `${item.path || ''} ${item.message || ''}`.trim()).join('\n')
+              : '';
+            throw new Error(validation || data.error || '保存项目失败');
+          }
+          setNotice('项目已保存');
+          setEditing(false);
+          await loadProjects();
+          await loadDetail(detail.id);
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+      const removeProject = async () => {
+        if (!detail || !window.confirm(`删除项目“${detail.title}”？只删除项目记录，不删除任何媒体文件。`)) return;
+        try {
+          const res = await fetch(`/api/media-center/editing/projects/${encodeURIComponent(detail.id)}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || '删除项目失败');
+          setSelectedId(null); setDetail(null); setDraft(null);
+          await loadProjects();
+        } catch (e) { setError(e.message); }
+      };
+      const exportProject = async () => {
+        if (!detail) return;
+        setBusy(true); setError(''); setExportResult(null);
+        try {
+          const res = await fetch(`/api/media-center/editing/projects/${encodeURIComponent(detail.id)}/export`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ format: exportFormat, include_source_audio: includeSourceAudio })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || '导出项目失败');
+          setExportResult(data.export_result);
+          setShowExport(false);
+        } catch (e) { setError(e.message); }
+        finally { setBusy(false); }
+      };
+
+      const sourceName = (clip, video = true) => {
+        const source = video ? detail?.sources?.videos?.[clip.source?.id] : detail?.sources?.music?.[clip.source?.id];
+        return source?.file_name || source?.title || clip.source?.id || '未知素材';
+      };
+
+      const fieldStyle = { ...inputStyle, width: '100%' };
+      const smallButton = { ...buttonSecondaryStyle, padding: '2px 7px', fontSize: '11px' };
+
+      return h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '12px', padding: '12px', overflow: 'hidden' } },
+        h('aside', { style: { width: isMobile ? '100%' : '310px', flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '8px' } },
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            h('strong', { style: { fontSize: '14px' } }, `项目库 (${projects.length})`),
+            h('button', { type: 'button', style: smallButton, onClick: loadProjects }, '刷新')),
+          h('div', { style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' } },
+            projects.length === 0 && !error && h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, '还没有保存的剪辑项目。在 DSH 会话中编排并保存后会出现在这里。'),
+            projects.map(project => h('button', {
+              key: project.id, type: 'button', onClick: () => setSelectedId(project.id),
+              style: { display: 'flex', gap: '9px', textAlign: 'left', padding: '8px', borderRadius: '7px', cursor: 'pointer', border: `1px solid ${selectedId === project.id ? '#2563eb' : 'var(--dsw-alias-border-l1)'}`, backgroundColor: selectedId === project.id ? 'var(--dsw-alias-bg-layer-2)' : 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)' }
+            },
+              h('div', { style: { width: '86px', height: '52px', flexShrink: 0, borderRadius: '4px', overflow: 'hidden', backgroundColor: '#111' } },
+                project.poster_video_id && h('img', { src: `/api/media-center/videos/${encodeURIComponent(project.poster_video_id)}/storyboard`, alt: '', loading: 'lazy', style: { width: '100%', height: '100%', objectFit: 'cover' }, onError: e => { e.currentTarget.style.display = 'none'; } })),
+              h('div', { style: { minWidth: 0, flex: 1 } },
+                h('div', { style: { fontWeight: 600, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, project.title),
+                h('div', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)', marginTop: '3px' } }, `${formatSeconds(project.duration_seconds)} · ${project.clip_count} 段 · r${project.revision}`),
+                h('div', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)', marginTop: '2px' } }, new Date(project.updated_at).toLocaleString()))
+            ))
+          )
+        ),
+        h('section', { style: { flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' } },
+          error && h('div', { role: 'alert', style: { padding: '8px 10px', borderRadius: '6px', fontSize: '12px', color: 'var(--dsw-alias-state-error-primary)', border: '1px solid var(--dsw-alias-state-error-primary)' } }, error),
+          notice && h('div', { role: 'status', style: { padding: '8px 10px', borderRadius: '6px', fontSize: '12px', color: 'var(--dsw-alias-label-primary)', backgroundColor: 'var(--dsw-alias-bg-layer-2)' } }, notice),
+          exportResult && h('div', { role: 'status', style: { padding: '10px', borderRadius: '7px', border: '1px solid var(--dsw-alias-border-l2)', backgroundColor: 'var(--dsw-alias-bg-layer-1)', fontSize: '12px' } },
+            h('strong', null, '工程已导出'),
+            h('div', { style: { marginTop: '4px', overflowWrap: 'anywhere', color: 'var(--dsw-alias-label-secondary)' } }, exportResult.file_path),
+            (exportResult.warnings || []).map((warning, index) => h('div', { key: index, style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, `注意：${warning}`))),
+          !detail && h('div', { style: { padding: '20px', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, '选择左侧项目查看详情。'),
+          detail && h(React.Fragment, null,
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' } },
+              h('div', { style: { minWidth: 0 } },
+                editing ? h('input', { type: 'text', 'aria-label': '项目标题', value: draft.title, onChange: e => setDraft(current => ({ ...current, title: e.target.value })), style: { ...fieldStyle, fontSize: '16px', fontWeight: 600 } })
+                  : h('h3', { style: { margin: 0, fontSize: '18px', overflowWrap: 'anywhere' } }, detail.title),
+                h('div', { style: { marginTop: '4px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, `revision ${detail.revision} · ${formatSeconds(seconds(detail.project.duration_frames, detail.project.fps))} · ${detail.project.tracks.video.length} 段视频 · ${detail.project.canvas?.width || 1920}×${detail.project.canvas?.height || 1080} · ${detail.project.fps.num / detail.project.fps.den} fps`)),
+              h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+                editing ? h(React.Fragment, null,
+                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: busy, onClick: () => { setEditing(false); setDraft(JSON.parse(JSON.stringify(detail.project))); } }, '取消'),
+                  h('button', { type: 'button', style: buttonPrimaryStyle, disabled: busy, onClick: saveProject }, busy ? '保存中…' : '保存修改'))
+                  : h(React.Fragment, null,
+                    h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setEditing(true) }, Icon.edit({ size: 12 }), '编辑'),
+                    h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => { setShowExport(true); setExportResult(null); } }, Icon.scissors({ size: 12 }), '导出工程'),
+                    h('button', { type: 'button', style: { ...buttonSecondaryStyle, color: '#ef4444' }, onClick: removeProject }, Icon.trash({ size: 12 }), '删除')))),
+            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.55', padding: '10px', borderRadius: '7px', backgroundColor: 'var(--dsw-alias-bg-layer-2)' } }, detail.project.rationale),
+            h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '视频轨'),
+            editing
+              ? (draft?.tracks?.video || []).map((clip, index) => h('div', { key: clip.id, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '7px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '6px' } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' } },
+                  h('strong', { style: { fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${index + 1}. ${sourceName(clip)}`),
+                  h('div', { style: { display: 'flex', gap: '4px' } },
+                    h('button', { type: 'button', style: smallButton, disabled: index === 0, onClick: () => moveClip(index, -1) }, '上移'),
+                    h('button', { type: 'button', style: smallButton, disabled: index === draft.tracks.video.length - 1, onClick: () => moveClip(index, 1) }, '下移'),
+                    h('button', { type: 'button', style: { ...smallButton, color: '#ef4444' }, disabled: draft.tracks.video.length <= 1, onClick: () => removeClip(index) }, '删除'))),
+                h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' } },
+                  h('label', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, '入点（秒）',
+                    h('input', { type: 'number', min: 0, step: 0.01, value: clip.source_in_seconds, onChange: e => changeClip(index, 'source_in_seconds', e.target.value), style: { ...fieldStyle, marginTop: '3px' } })),
+                  h('label', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, '出点（秒）',
+                    h('input', { type: 'number', min: 0, step: 0.01, value: clip.source_out_seconds, onChange: e => changeClip(index, 'source_out_seconds', e.target.value), style: { ...fieldStyle, marginTop: '3px' } }))),
+                h('div', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, `时间线 ${formatSeconds(seconds(clip.timeline_start_frame, draft.fps))} → ${formatSeconds(seconds(clip.timeline_end_frame, draft.fps))}`)
+              ))
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, (detail.project.tracks.video || []).map((clip, index) => h('div', { key: clip.id, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '9px', fontSize: '12px' } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px' } },
+                  h('strong', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${index + 1}. ${sourceName(clip)}`),
+                  h('span', { style: { color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, `${formatSeconds(clip.source_in_seconds)} — ${formatSeconds(clip.source_out_seconds)}`)),
+                h('div', { style: { marginTop: '3px', fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, `时间线 ${formatSeconds(seconds(clip.timeline_start_frame, detail.project.fps))} → ${formatSeconds(seconds(clip.timeline_end_frame, detail.project.fps))}`)))),
+            h('div', { style: { fontSize: '13px', fontWeight: 600, marginTop: '2px' } }, '音乐轨'),
+            (detail.project.tracks.music || []).map(clip => h('div', { key: clip.id, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '9px', fontSize: '12px' } },
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px' } },
+                h('strong', null, sourceName(clip, false)),
+                h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, `${formatSeconds(clip.source_in_seconds)} — ${formatSeconds(clip.source_out_seconds)}`)),
+              editing && h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '6px' } },
+                h('label', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, '音乐入点',
+                  h('input', { type: 'number', min: 0, step: 0.01, value: draft.tracks.music[0].source_in_seconds, onChange: e => changeMusic('source_in_seconds', e.target.value), style: { ...fieldStyle, marginTop: '3px' } })),
+                h('label', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, '音乐出点',
+                  h('input', { type: 'number', min: 0, step: 0.01, value: draft.tracks.music[0].source_out_seconds, onChange: e => changeMusic('source_out_seconds', e.target.value), style: { ...fieldStyle, marginTop: '3px' } }))),
+              h('div', { style: { marginTop: '3px', fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, `权利声明：${clip.rights?.status || 'unknown'}`)))
+          )
+        ),
+        showExport && h('div', { style: modalOverlayStyle },
+          h('div', { role: 'dialog', 'aria-modal': true, 'aria-label': '导出剪辑项目', style: { ...modalCardStyle, width: isMobile ? '92vw' : '500px' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, Icon.scissors({ size: 18, color: '#3b82f6' }), h('h3', { style: { margin: 0, fontSize: '16px' } }, '导出工程')),
+            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, 'FCPXML 供剪映/Final Cut Pro 尝试导入；Premiere XML 供 Premiere Pro 导入。剪映兼容性需以实际版本为准。'),
+            h('label', { style: { fontSize: '12px' } }, '格式',
+              h('select', { value: exportFormat, onChange: e => setExportFormat(e.target.value), style: { ...fieldStyle, marginTop: '4px' } },
+                h('option', { value: 'fcpxml' }, 'FCPXML 1.9（.fcpxml）'),
+                h('option', { value: 'premiere_xml' }, 'Premiere Pro XML（.xml）'))),
+            h('label', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px' } },
+              h('input', { type: 'checkbox', checked: includeSourceAudio, onChange: e => setIncludeSourceAudio(e.target.checked) }), '保留视频片段原声'),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' } },
+              h('button', { type: 'button', style: buttonSecondaryStyle, disabled: busy, onClick: () => setShowExport(false) }, '取消'),
+              h('button', { type: 'button', style: buttonPrimaryStyle, disabled: busy, onClick: exportProject }, busy ? '导出中…' : '导出')))
+        )
+      );
+    }
+
     // --- Main Workbench View Component with Mobile Responsive Layout ---
     function MediaCenterWorkbench() {
       // Responsive state (mobile: < 840px)
@@ -1147,7 +1407,6 @@ window.__ModuleLoader__.load({
       const [activeLibrary,setActiveLibrary]=useState('video');
       const [showScanModal, setShowScanModal] = useState(false);
       const [showNewFolderModal, setShowNewFolderModal] = useState(false);
-      const [showExportModal, setShowExportModal] = useState(false);
 
       // Folder Action Popup state
       const [activeFolderMenuId, setActiveFolderMenuId] = useState(null);
@@ -1217,8 +1476,6 @@ window.__ModuleLoader__.load({
       const [scanDirPath, setScanDirPath] = useState('');
       const [newFolderName, setNewFolderName] = useState('');
       const [newFolderParentId, setNewFolderParentId] = useState('');
-      const [exportFormat, setExportFormat] = useState('jianying');
-      const [exportName, setExportName] = useState('初剪序列_01');
 
       // AI Settings form states
       const [aiBaseUrlInput, setAiBaseUrlInput] = useState('');
@@ -2295,39 +2552,6 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const handleExportProject = async () => {
-        if (!selectedVideo) return;
-        try {
-          const clips = (selectedVideo.shots || []).map(s => ({
-            video_id: selectedVideo.id,
-            in_point: s.start_time,
-            out_point: s.end_time,
-            description: s.visual_description
-          }));
-
-          const res = await fetch('/api/media-center/export', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sequence_name: exportName || 'My_Edit',
-              format: exportFormat,
-              clips: clips.length > 0 ? clips : [{ video_id: selectedVideo.id, in_point: 0, out_point: selectedVideo.duration }]
-            })
-          });
-          const data = await res.json();
-          if (data.success) {
-            alert(exportFormat === 'jianying'
-              ? `已生成实验性视频草稿文件：\n${data.export_result.draft_folder || data.export_result.file_path}\n\n此文件不含音乐轨，尚未验证能否在剪映 11.7.3 打开；不会自动安装到剪映。`
-              : `已生成工程文件（目标软件兼容性尚未验证）：\n${data.export_result.file_path || data.export_result.draft_folder}`);
-            setShowExportModal(false);
-          } else {
-            alert('导出失败: ' + data.error);
-          }
-        } catch (e) {
-          alert('导出异常: ' + e.message);
-        }
-      };
-
       const handleJumpToShot = (startTime) => {
         if (videoRef.current) {
           videoRef.current.currentTime = startTime;
@@ -2683,7 +2907,7 @@ window.__ModuleLoader__.load({
       return h('div', { ref: workbenchRef, style: workbenchStyle },
         renderMediaLibraryHeader({
           active: activeLibrary,
-          onSelect: tab => { setActiveLibrary(tab); setShowSettingsModal(false); setShowExportModal(false); setShowScanModal(false); setShowBatchMoveModal(false); setShowNewFolderModal(false); setShowBatchAiScopeModal(false); setRenamingFolder(null); },
+          onSelect: tab => { setActiveLibrary(tab); setShowSettingsModal(false); setShowScanModal(false); setShowBatchMoveModal(false); setShowNewFolderModal(false); setShowBatchAiScopeModal(false); setRenamingFolder(null); },
           isMobile, status,
           onSettings: () => { loadAiSettings(); loadShotAnalysisSettings(); loadCacheUsage(); setShowSettingsModal(true); },
           buttonStyle: buttonSecondaryStyle
@@ -2751,10 +2975,13 @@ window.__ModuleLoader__.load({
               styles: { inputStyle, buttonPrimaryStyle, buttonSecondaryStyle, modalOverlayStyle, modalCardStyle },
               onResizeStart: e => { isDraggingRef.current = true; document.body.style.userSelect = 'none'; e.preventDefault(); }
             }),
+        activeLibrary === 'projects' && h(ProjectLibraryWorkbench, {
+              active: true, isMobile,
+              styles: { inputStyle, buttonPrimaryStyle, buttonSecondaryStyle, modalOverlayStyle, modalCardStyle }
+            }),
         h(React.Fragment, null,
         activeLibrary === 'video' && renderLibrarySectionHeader({
-          icon: Icon.clapperboard, title: '视频素材库', description: `${videos.length < videoTotal ? `已加载 ${videos.length} / ${videoTotal}` : videoTotal} 条素材`,
-          actions: h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => setShowExportModal(true) }, Icon.scissors({ size: 13 }), isMobile ? '导出' : '导出剪辑工程')
+          icon: Icon.clapperboard, title: '视频素材库', description: `${videos.length < videoTotal ? `已加载 ${videos.length} / ${videoTotal}` : videoTotal} 条素材`
         }),
 
         activeLibrary === 'video' && renderMobilePanelNavigation({isMobile,active:mobileTab,onSelect:setMobileTab,labels:[
@@ -4584,46 +4811,7 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        // 6. Export Modal
-        showExportModal && h('div', { style: modalOverlayStyle },
-          h('div', { style: { ...modalCardStyle, width: isMobile ? '92vw' : '460px' } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-              Icon.scissors({ size: 18, color: '#3b82f6' }),
-              h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '导出剪辑软件工程')
-            ),
-            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } },
-              '将当前视频分镜时间线一键导出为工程文件，直接在剪辑软件中打开。'
-            ),
-            h('label', { style: { fontSize: '12px' } }, '工程/草稿名称:'),
-            h('input', {
-              type: 'text',
-              value: exportName,
-              onChange: (e) => setExportName(e.target.value),
-              style: inputStyle
-            }),
-            h('label', { style: { fontSize: '12px' } }, '目标剪辑软件格式:'),
-            h('select', {
-              value: exportFormat,
-              onChange: (e) => setExportFormat(e.target.value),
-              style: inputStyle
-            },
-              h('option', { value: 'jianying' }, '剪映电脑版本地草稿 (JianYing Draft)'),
-              h('option', { value: 'fcpxml' }, 'Final Cut Pro / Premiere XML (FCPXML)'),
-              h('option', { value: 'edl' }, '通用 EDL (CMX 3600)')
-            ),
-            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' } },
-              h('button', {
-                style: buttonSecondaryStyle,
-                onClick: () => setShowExportModal(false)
-              }, '取消'),
-              h('button', {
-                style: buttonPrimaryStyle,
-                onClick: handleExportProject
-              }, Icon.scissors({ size: 13 }), '立即导出')
-            )
-          )
-        ),
-          )
+        )
       );
     }
 

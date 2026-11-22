@@ -20,7 +20,7 @@
 - **[核心架构设计原则与红线](docs/ARCHITECTURE.md#2-核心架构设计原则与红线)**：物理源文件绝对只读 (Zero-Data-Loss)、Node 24 原生 ESM + 内置 node:sqlite 零编译依赖、4x4 故事板雪碧图节约 90%+ 视觉 Token、双轨驱动架构。
 - **[分层系统架构](docs/ARCHITECTURE.md#3-分层系统架构)**：Host 端（API/MediaEngine/AI/DB/Exporter）与 Client 端（React 响应式三栏工作台）深度协同。
 - **[核心数据模型与存储规范](docs/ARCHITECTURE.md#4-核心数据模型与存储规范)**：SQLite Schema、多级目录树、AI 分析耗时/Token 审计字段。
-- **[关键业务流水线设计](docs/ARCHITECTURE.md#5-关键业务流水线设计)**：素材镜像导入、视听特征提取、直驱多模态分析、Agent 剪辑召回、剪映/FCPXML/EDL 工程导出。
+- **[关键业务流水线设计](docs/ARCHITECTURE.md#5-关键业务流水线设计)**：素材镜像导入、视听特征提取、直驱多模态分析、Agent 剪辑召回、项目库管理与 FCPXML/Premiere XML 工程导出。
 - **[Web 工作台与响应式设计](docs/ARCHITECTURE.md#6-web-工作台-client-ui-架构与响应式设计)**：桌面端 Resizable Splitter 调宽算法、移动端小屏断点（`< 840px`）单栏流式分段。
 
 ---
@@ -43,8 +43,10 @@
   支持多选勾选素材，一键【批量移动到分类】、【批量移出素材库】；在【导入素材/目录】的图形化浏览器中可多选当前目录下的子文件夹，递归导入其中视频并镜像为当前选中分类的子分类。
 - ↕️ **多维双向排序体系**：
   中栏支持按 **拍摄时间**（最新/最早）、**导入时间**（最新/最早）、**文件名**（A ➔ Z / Z ➔ A）、**视频时长**（长到短/短到长）进行实时动态排序。上次选择保存在当前浏览器，下次打开自动恢复。拍摄时间只读取媒体容器/视频流的录制时间标签（如 `creation_time`、QuickTime 创建日期），带时区的时间按浏览器本地时区显示；没有时区的标签保留相机墙上时间。没有有效标签时显示“拍摄时间未知”，不使用文件创建时间、修改时间或导入时间冒充。旧素材会在首次加载列表时只读重探测，保留导入时间、分镜和 AI 标注；未知拍摄时间在升降序中均排在末尾。
-- **剪辑工程导出（实验性）**：
-  现有导出器可生成简化剪映草稿、FCPXML 或 EDL 文件；兼容性尚未在剪映 11.7.3 等目标软件中完成验证。当前剪映导出仅包含视频轨道，不含音乐；请不要将生成文件视为已能在剪映中打开的成品。
+- **剪辑项目库**：
+  独立“项目库”页签展示 Agent 保存的剪辑项目，包含封面、时长、片段数、画幅、版本号和时间线；支持项目改名、片段排序/删除、视频与音乐入出点微调，并按 revision 乐观锁保存，避免覆盖他人修改。
+- **工程导出**：
+  项目库中可导出 **FCPXML 1.9**（剪映 / Final Cut Pro 优先尝试）和 **Premiere Pro XML（xmeml）**。导出按素材库 ID 解析真实路径，保留视频原声与音乐轨；只写工程文件，不修改源媒体。剪映对具体导入格式的支持仍需以实际版本验证。
 - 🔍 **分镜多维与自然语言语义检索**：
   基于 SQLite FTS5 与多维分词打权算法，输入如 *“晨光照耀雪山日落金山”*，毫秒级跨视频精准召回最匹配的分镜片段与毫秒级入出点。
 - 🎨 **DSH 官方主题 100% 自适应**：
@@ -54,7 +56,7 @@
 
 ---
 
-## 面向 AI Agent 的专属工具集（28 个）
+## 面向 AI Agent 的专属工具集（31 个）
 
 插件安装后，系统运行时会自动向 AI Agent 暴露以下标准化工具：
 
@@ -71,7 +73,8 @@
 | `media_center_update_audio_info` | 写入或校正语音转录字幕时间轴、BGM 情绪/BPM、音效（SFX）打点 | `{ video_id, transcripts?, bgm_mood?, bpm?, sfx_cues? }` |
 | `media_center_update_video` | 更新视频全局摘要（summary）、业务标签（tags）与人工备注 | `{ video_id, summary?, tags?, user_notes?, status? }` |
 | `media_center_search_shots` | 跨视频进行分镜语义检索，根据自然语言召回最契合的镜头及其入出点 | `{ query, shot_type?, camera_movement?, min_duration?, limit? }` |
-| `media_center_export_project` | 生成实验性工程文件（剪映草稿/FCPXML/EDL；未验证目标软件兼容，剪映格式不含音乐） | `{ sequence_name, format, clips: [{ video_id, in_point, out_point }] }` |
+| `media_center_edit_update_project` | 按项目 ID 和 revision 更新已保存的剪辑时间线 | `{ project_id, expected_revision, project }` |
+| `media_center_export_project` | 将已保存项目导出为 FCPXML 或 Premiere XML | `{ project_id, format, include_source_audio? }` |
 | `media_center_analyze_shot` | 仅生成单片段精读候选，不覆盖原标注 | `{ video_id, shot_id }` |
 | `media_center_get_shot_analysis` | 查询片段精读记录、候选和用量 | `{ video_id, shot_id, limit? }` |
 | `media_center_apply_shot_analysis` | 经用户明确授权后应用指定候选字段 | `{ run_id, fields, confirmed: true }` |
@@ -86,6 +89,7 @@
 | `media_center_edit_music_confirm_beats` | 用户试听并明确确认后，保存候选拍点子集 | `{ music_id, analysis_id, beats[], confirmed:true }` |
 | `media_center_edit_music_set_styles` | 用户明确批准后保存 DSH Agent 的视频风格建议及理由 | `{ music_id, analysis_id, style_tags[], rationale, confirmed:true }` |
 | `media_center_edit_jamendo_search` | 搜索 Jamendo 曲目元数据；不下载、不验证使用许可 | `{ query, limit?, offset? }` |
+| `media_center_edit_compose_project` | 按有序分镜引用自动查询边界、计算帧时间线、截取音乐并返回项目预览 | `{ title, rationale, shot_refs[], music_id, canvas?, fps? }` |
 | `media_center_edit_preview_project` | 校验 DSH Agent 在会话中迭代形成的结构化时间线；不调用第二个模型或保存 | `{ project: EditProjectV1 }` |
 | `media_center_edit_save_project` | 用户明确同意后保存当前服务端预览 ID | `{ preview_id, confirmed: true }` |
 | `media_center_edit_projects` | 列出或读取本机已保存的剪辑项目 | `{ project_id?, limit?, offset? }` |
@@ -110,18 +114,13 @@
    Agent ➔ media_center_update_audio_info({ video_id: "vid_xxx", transcripts: [...], bpm: 120 })
    Agent ➔ media_center_update_video({ video_id: "vid_xxx", summary: "...", tags: ["航拍", "日落"], status: "analyzed" })
 
-5. 需求检索与智能剪辑成片
+5. 项目编排与工程导出
    用户提问: "帮我找一段带有日照金山的开篇大远景，接一段藏寨炊烟中景"
    Agent ➔ media_center_search_shots({ query: "日照金山 大远景" })
-   Agent ➔ media_center_export_project({
-     format: "jianying",
-     sequence_name: "扎尕那风光初剪",
-     clips: [
-       { video_id: "vid_01", in_point: 0, out_point: 4.5 },
-       { video_id: "vid_02", in_point: 6.2, out_point: 10.0 }
-     ]
-   })
-   当前导出为实验性简化草稿；不包含音乐轨道，目标版本兼容性未验证。
+   Agent ➔ media_center_edit_preview_project({ project: { ... } })
+   用户确认后 ➔ media_center_edit_save_project({ preview_id, confirmed: true })
+   项目库查看/编辑 ➔ media_center_export_project({ project_id, format: "fcpxml" })
+   可导出 FCPXML（剪映/FCP 优先尝试）或 Premiere XML；剪映实际导入兼容性仍需验证。
 ```
 
 ---
@@ -146,7 +145,7 @@
 
 当用户要求预览时，`media_center_edit_preview_project` 只校验 project v1、素材库 ID、分镜范围、时间线帧边界、音乐库成员、源文件可用性和授权状态，不调用模型、不写数据库、不修改或复制源素材。预览会返回规范化项目与服务端 30 分钟预览 ID；素材文件以 realpath 与文件系统属性弱指纹进行前后检查（非内容哈希），分镜更新后旧预览会失效。
 
-用户查看完整预览并明确要求保存后，Agent 可调用 `media_center_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果可通过 DSH 会话工具 `media_center_edit_projects` 查询；插件不提供剪辑项目浏览按钮。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。插件的剪映草稿导出仍是实验性简化版本，不含音乐轨，Windows 剪映 11.7.3 尚未验证可打开。
+用户查看完整预览并明确要求保存后，Agent 可调用 `media_center_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果可在“项目库”页签查看、编辑和导出，也可通过 `media_center_edit_projects` 查询。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。FCPXML / Premiere XML 的剪映导入兼容性仍需以实际版本验证。
 
 ---
 

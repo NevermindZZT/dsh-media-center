@@ -15,7 +15,7 @@ function harness(){
  const values=[],refs=[],effectDeps=[],pendingEffects=[],calls=[],responses=[],confirmMessages=[];
  let stateCursor=0,refCursor=0,effectCursor=0,tree;
  const React={Fragment:'fragment'};
- const Icon={music:props=>({type:'music-icon',props,children:[]}),clapperboard:props=>({type:'video-icon',props,children:[]}),upload:props=>({type:'upload-icon',props,children:[]}),folder:props=>({type:'folder-icon',props,children:[]}),grid:props=>({type:'grid-icon',props,children:[]}),hardDrive:props=>({type:'disk-icon',props,children:[]}),arrowUp:props=>({type:'up-icon',props,children:[]}),chevronRight:props=>({type:'right-icon',props,children:[]}),chevronDown:props=>({type:'down-icon',props,children:[]}),compass:props=>({type:'compass-icon',props,children:[]}),edit:props=>({type:'edit-icon',props,children:[]}),sparkles:props=>({type:'sparkles-icon',props,children:[]})};
+ const Icon={music:props=>({type:'music-icon',props,children:[]}),clapperboard:props=>({type:'video-icon',props,children:[]}),film:props=>({type:'film-icon',props,children:[]}),upload:props=>({type:'upload-icon',props,children:[]}),folder:props=>({type:'folder-icon',props,children:[]}),grid:props=>({type:'grid-icon',props,children:[]}),hardDrive:props=>({type:'disk-icon',props,children:[]}),arrowUp:props=>({type:'up-icon',props,children:[]}),chevronRight:props=>({type:'right-icon',props,children:[]}),chevronDown:props=>({type:'down-icon',props,children:[]}),compass:props=>({type:'compass-icon',props,children:[]}),edit:props=>({type:'edit-icon',props,children:[]}),sparkles:props=>({type:'sparkles-icon',props,children:[]})};
  const windowStub={confirm:message=>{confirmMessages.push(message);return true;}};
  const context=vm.createContext({React,Icon,window:windowStub,console,URLSearchParams,Number,Array,Set,Math,JSON,MAX_MUSIC_ANALYSIS_SECONDS:600,MAX_MUSIC_IMPORT_BATCH:50,
    useState(initial){const index=stateCursor++;if(!(index in values))values[index]=typeof initial==='function'?initial():initial;return [values[index],next=>{values[index]=typeof next==='function'?next(values[index]):next;}];},
@@ -47,17 +47,19 @@ function goodProfile(overrides={}){return {analysis_id:'analysis_1',status:'ok',
   assert.equal(f.tree.props['aria-label'],'音乐库页面');assert.equal(f.tree.props.role,undefined);assert.equal(f.tree.props.style.position,undefined);
   let selected='';
   const tabs=f.context.Tabs({active:'music',isMobile:false,onSelect:tab=>{selected=tab;}});assert.equal(tabs.props.role,'tablist');
-  const tabButtons=tabs.children.filter(node=>node?.props?.role==='tab');assert.equal(tabButtons.length,2);assert.equal(tabButtons.find(node=>node.props['aria-label']==='切换到音乐库').props['aria-selected'],true);
+  const tabButtons=tabs.children.filter(node=>node?.props?.role==='tab');assert.equal(tabButtons.length,3);assert.equal(tabButtons.find(node=>node.props['aria-label']==='切换到音乐库').props['aria-selected'],true);
   tabButtons.find(node=>node.props['aria-label']==='切换到视频库').props.onClick();assert.equal(selected,'video');
+  tabButtons.find(node=>node.props['aria-label']==='切换到项目库').props.onClick();assert.equal(selected,'projects');
      assert.equal((source.match(/function LibraryPageTabs/g)||[]).length,1);
    assert.match(mainSource,/activeLibrary === 'music'/);assert.match(mainSource,/renderMediaLibraryHeader/);assert.match(mainSource,/renderLibrarySectionHeader/);assert.match(mainSource,/showScanModal && renderAssetImportDialog/);
    assert.match(panelSource,/gridTemplateColumns: 'minmax\(0, 1fr\) auto minmax\(0, 1fr\)'/);assert.match(panelSource,/renderLibraryColumnLayout/);assert.match(panelSource,/renderAssetImportDialog/);
    assert.match(panelSource,/来源目录/);assert.match(panelSource,/音乐内容区/);assert.match(panelSource,/音乐详情/);
+   assert.match(mainSource,/ProjectLibraryWorkbench/);assert.match(mainSource,/activeLibrary === 'projects'/);
+   assert.match(panelSource,/项目库/);assert.match(panelSource,/FCPXML/);assert.match(panelSource,/Premiere Pro XML/);
+   assert.doesNotMatch(mainSource,/导出剪辑工程/);
 
-  assert.doesNotMatch(panelSource,/剪辑项目|media_center_edit_projects|\/projects/);
   assert.doesNotMatch(panelSource,/ai-settings|ai-analyze|chat\/completions|music-recommendations|\/styles/);
   assert.equal(f.find('input','本地音频绝对路径'),undefined);assert.ok(f.find('button','导入音乐'));
-  assert.doesNotMatch(panelSource,/剪辑项目|media_center_edit_projects|\/projects/);
   assert.doesNotMatch(panelSource,/ai-settings|ai-analyze|chat\/completions|music-recommendations|\/styles/);
  });
 

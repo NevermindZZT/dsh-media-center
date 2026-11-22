@@ -161,11 +161,8 @@
 │       ├── storyboards/           # 4x4 故事板雪碧图 ({video_id}_storyboard.jpg)
 │       ├── keyframes/             # 分镜代表性关键帧图片 ({video_id}_shot_{idx}.jpg)
 │       └── exports/               # 导出的剪辑工程目录及文件
-│           ├── jianying_草稿名_时间戳/
-│           │   ├── draft_content.json
-│           │   └── draft_meta_info.json
-│           ├── 序列名_时间戳.fcpxml
-│           └── 序列名_时间戳.edl
+│           ├── 项目名_时间戳.fcpxml
+│           └── 项目名_时间戳.xml
 ```
 
 ### 4.2 数据库 Schema 深度设计
@@ -426,7 +423,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 2. 音乐通过本地引用目录试听和有界 PCM 测量；Jamendo 仅搜索元数据，不下载或核发许可。瞬态不等于节拍/强拍，插件会将节奏关系标注为未核验；自由文本也不能当作证据。
 3. 项目预览仅保存在服务器内存 30 分钟，不写入数据库；源文件以 realpath、dev/ino、size、mtime_ns 弱指纹及分镜字段快照检查（不是密码学内容哈希）。保存前会复核源及分镜是否变化。
 4. 用户在 DSH 会话明确确认后，Agent 调用保存工具；插件只接受服务端预览 ID 并将结构化项目写入 SQLite。之后用 `media_center_edit_projects` 在会话中查询项目。
-5. 项目保存目前不生成或打开剪映工程。现有实验性剪映导出仅有视频轨道，Windows 剪映 11.7.3 尚未验证兼容。
+5. 保存后的项目出现在“项目库”页签，可查看时间线、编辑标题/片段顺序/入出点并导出 FCPXML 或 Premiere XML；剪辑软件兼容性仍需实际导入验证。
 
 ---
 
@@ -439,17 +436,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 1. Agent 在 DSH 对话中理解需求，调用 `media_center_search_videos` / `media_center_search_shots` 找素材，用 `media_center_get_video` 查看现有分镜与范围；必要时触发故事板或精读。
 2. Agent 调用音乐库 list/analyze/detail 工具读取完整音轨（最多600秒）的BPM估计与DSP拍点候选；原始 onset 列表不保存、不返回。用户可在音乐库 UI 主动请求当前配置的图像模型解读派生频谱图；`media_center_edit_music_analysis_detail` 返回近似速度/相对节奏提示、场景与风格标签、模型来源及用户编辑/确认。模型时间提示是粗略视觉估计，不能冒充DSP测量或精确节拍；用户确认模型点会与DSP `user_confirmed_beats` 分开。选曲和最终剪辑编排仍由 DSH 会话 Agent 负责。
 3. Agent 在会话中提出并迭代 EditProject v1；调用 `media_center_edit_preview_project` 后向用户展示规范化项目及警告。插件只校验素材 ID、分镜边界、时长、轨道、文件属性和权利声明。
-4. 用户明确要求保存后，Agent 调用 `media_center_edit_save_project`；保存项目可通过 `media_center_edit_projects` 查看。保存记录仅是数据库项目，不等于已生成剪映草稿。
+4. 用户明确要求保存后，Agent 调用 `media_center_edit_save_project`；保存项目会出现在项目库，可通过 `media_center_edit_projects` 查询、`media_center_edit_update_project` 修订，或 `media_center_export_project` 按项目 ID 导出工程。
 
-### 5.7 主流剪辑软件工程导出流水线（实验性，目标软件兼容性未验证）
+### 5.7 项目库与工程导出流水线
 
-当前导出器生成简化工程文件，未建立剪映版本 fixture 自动验收。
+项目库以 `editing_projects` 为唯一数据源，项目只保存素材库 ID 和帧时间线；导出时由 Host 重新解析视频/音乐路径并检查文件存在性。
 
-| 格式名称 | 适用软件 | 核心技术要点 |
+| 格式 | 适用软件 | 说明 |
 |---|---|---|
-| **实验性简化剪映草稿** | Windows 11.7.3 未验证 | • 输出 draft JSON；当前仅有视频轨、不含音乐；• 不写入剪映目录，须用户手动测试 |
-| **Final Cut Pro XML (FCPXML v1.9)** | Final Cut Pro X, Premiere Pro, 达芬奇 | • 标准 XML 骨架，输出 `<spine>` 视音频脊线\u003cbr>• 换算为标准有理数时间单位 `${frames}/${fps}\text{s}`\u003cbr>• 挂载 `<format>` 规格与素材资源库 `<resources>` |
-| **CMX 3600 EDL** | 通用全平台非编剪辑软件 | • 生成标准 8 栏 EDL 文本时间线\u003cbr>• 计算精准时间码格式 `HH:MM:SS:FF` (帧数基于帧率取整对齐) |
+| **FCPXML 1.9（.fcpxml）** | Final Cut Pro、剪映（需实测） | `<resources>` 资源、`<spine>` 视频/音频轨、有理数帧时间、`media-rep` 文件引用；保留视频原声和音乐轨 |
+| **Premiere Pro XML（.xml）** | Premiere Pro、DaVinci Resolve | xmeml version 4；视频轨 + 音频轨；`file://localhost/` 路径；剪映兼容性未验证 |
+
+旧版剪映 Draft JSON 与 EDL 导出入口已移除；视频库右上角的一次性“导出剪辑工程”按钮也已移除。导出只写 `cache/exports/`，不修改或复制源媒体。
 
 ---
 
@@ -530,13 +528,15 @@ Host 端在 `/api/media-center` 前缀下注册以下 HTTP 接口：
 | `POST` | `/storyboard/:id` | 强制重新生成当前视频故事板 | - |
 | `GET` | `/storyboard/:id` | 获取 4x4 故事板大图 JPEG | - |
 | `GET` | `/keyframe/:id/:idx` | 获取分镜关键帧 JPEG | - |
-| `POST` | `/export` | 导出剪辑工程 (剪映/FCPXML/EDL) | `{ format, sequence_name, clips }` |
+| `GET` | `/editing/projects` | 项目库摘要列表 | `limit`, `offset` |
+| `GET/PUT/DELETE` | `/editing/projects/:id` | 读取、按 revision 更新或删除项目 | `{ project, expected_revision }` |
+| `POST` | `/editing/projects/:id/export` | 按项目 ID 导出 FCPXML / Premiere XML | `{ format, include_source_audio? }` |
 | `GET/POST`| `/settings` | 读取或更新全局配置 (FFmpeg等) | `{ ffmpeg_path, ffprobe_path }` |
 | `GET/POST`| `/ai-settings` | 读取或更新 AI 模型与提示词模板 | `{ ai_model, ai_prompt_template, ... }` |
 
 ### 7.2 Model-Facing Agent Tools 契约一览
 
-向 DSH 运行时注册的 11 个工具，均遵循输入参数严谨、输出紧凑原则：
+向 DSH 运行时注册的 31 个工具，均遵循输入参数严谨、输出紧凑原则。核心工程工具包括：
 
 1. `media_center_list_folders`：列出资产库多级目录树与统计。
 2. `media_center_scan_directory`：扫描本地物理文件夹镜像导入。
@@ -548,8 +548,12 @@ Host 端在 `/api/media-center` 前缀下注册以下 HTTP 接口：
 8. `media_center_update_audio_info`：回写音频、字幕与情绪打点。
 9. `media_center_update_video`：更新视频全局摘要、标签与状态。
 10. `media_center_search_shots`：跨素材分镜自然语言语义检索。
-11. `media_center_export_project`：一键导出剪映草稿/FCPXML/EDL 工程。
+11. `media_center_export_project`：按项目 ID 导出 FCPXML / Premiere XML 工程。
 12. `media_center_configure_ffmpeg`：查看或动态配置 FFmpeg 路径。
+13. `media_center_edit_preview_project`：校验并预览 Agent 编排的 EditProject。
+14. `media_center_edit_compose_project`：按有序分镜自动组装时间线并返回预览。
+15. `media_center_edit_save_project`：用户确认后保存服务端预览。
+16. `media_center_edit_update_project`：按 revision 修订已保存项目。
 
 ---
 

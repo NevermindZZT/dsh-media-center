@@ -274,10 +274,54 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
           const projectMatch=pathname.match(/^\/api\/media-center\/editing\/projects\/(edit_[0-9a-f]{32})$/);
           if (projectMatch && method === 'GET') {
             const project=editingWorkflow.projects.get(projectMatch[1]);
-            return project ? jsonResponse(res,{success:true,project}) : jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
+            if (!project) return jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
+            const videoSources={}; const musicSources={};
+            for (const clip of project.project?.tracks?.video || []) {
+              const id=clip.source?.id;
+              if (!id || videoSources[id]) continue;
+              const video=db.getVideoById(id);
+              if (video) videoSources[id]={id,file_name:video.file_name,width:video.width,height:video.height,duration:video.duration,storyboard_status:video.storyboard_status};
+            }
+            for (const clip of project.project?.tracks?.music || []) {
+              const id=clip.source?.id;
+              if (!id || musicSources[id]) continue;
+              const music=db.db.prepare('SELECT id,title,file_name,duration FROM local_music_catalog WHERE id = ?').get(id);
+              if (music) musicSources[id]=music;
+            }
+            return jsonResponse(res,{success:true,project:{...project,sources:{videos:videoSources,music:musicSources}}});
+          }
+          if (projectMatch && method === 'PUT') {
+            const body=await parseJsonBody(req);
+            if (!Number.isSafeInteger(body.expected_revision) || body.expected_revision < 1) return jsonResponse(res,{success:false,error:'expected_revision 无效'},400);
+            const result=editingWorkflow.projects.save(body.project,{id:projectMatch[1],expectedRevision:body.expected_revision});
+            return jsonResponse(res,result,result.success?200:409);
+          }
+          if (projectMatch && method === 'DELETE') {
+            const removed=editingWorkflow.projects.delete(projectMatch[1]);
+            return removed ? jsonResponse(res,{success:true}) : jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
+          }
+          const projectExportMatch=pathname.match(/^\/api\/media-center\/editing\/projects\/(edit_[0-9a-f]{32})\/export$/);
+          if (projectExportMatch && method === 'POST') {
+            const body=await parseJsonBody(req);
+            const project=editingWorkflow.projects.get(projectExportMatch[1]);
+            if (!project) return jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
+            if (!projectExporter?.exportProject) return jsonResponse(res,{success:false,error:'工程导出不可用'},503);
+            const result=projectExporter.exportProject(project.project,{format:body.format || 'fcpxml',includeSourceAudio:body.include_source_audio !== false});
+            return jsonResponse(res,{success:true,export_result:result});
           }
           return jsonResponse(res,{success:false,error:'未知剪辑工作流操作'},404);
         } catch (error) {
+          if (error?.name === 'ProjectValidationError' || Array.isArray(error?.errors)) {
+            return jsonResponse(res, {
+              success: false,
+              error: {
+                code: error.code || 'PROJECT_VALIDATION_FAILED',
+                message: error.message || '剪辑项目校验失败',
+                errors: error.errors || [],
+                warnings: error.warnings || []
+              }
+            }, 400);
+          }
           const safeMessages = new Set([
             '项目预览已过期，请重新预览','分镜已删除或重建，请重新生成预览','分镜描述已修改，请重新生成预览',
             '剪辑项目至少需要一个视频片段','所引用的视频素材不存在','所引用的素材库分镜不存在',
@@ -742,34 +786,6 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
 
         const results = shotSearchService.search(q, { shot_type: shotType, camera_movement: movement, limit });
         return jsonResponse(res, { success: true, count: results.length, shots: results });
-      }
-
-      // 18. Export Project: POST /api/media-center/export
-      if (pathname === '/api/media-center/export' && method === 'POST') {
-        const body = await parseJsonBody(req);
-        const { sequence_name = 'My_Edit', format = 'jianying', clips = [], fps = 30 } = body;
-
-        const filledClips = [];
-        for (const c of clips) {
-          let v = null;
-          if (c.video_id) v = db.getVideoById(c.video_id);
-          else if (c.file_path) v = db.getVideoByPath(c.file_path);
-          filledClips.push({
-            ...c,
-            file_path: c.file_path || (v ? v.file_path : ''),
-            file_name: v ? v.file_name : (c.file_path ? path.basename(c.file_path) : 'clip'),
-            file_duration: v ? v.duration : 3600,
-            width: v ? v.width : 1920,
-            height: v ? v.height : 1080
-          });
-        }
-
-        let result;
-        if (format === 'edl') result = projectExporter.exportEDL(sequence_name, filledClips, { fps });
-        else if (format === 'fcpxml') result = projectExporter.exportFCPXML(sequence_name, filledClips, { fps });
-        else result = projectExporter.exportJianYingDraft(sequence_name, filledClips, { fps });
-
-        return jsonResponse(res, { success: true, export_result: result });
       }
 
       // Unmatched route

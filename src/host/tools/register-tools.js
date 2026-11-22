@@ -29,7 +29,13 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
     name, description, parameters:{type:'object',properties,required,additionalProperties:false},
     async execute(args, context) {
       if (!editingWorkflow) return {success:false,error:'剪辑工作流不可用'};
-      try { return await execute(args || {}, context); } catch { return editingFailure(); }
+      try { return await execute(args || {}, context); }
+      catch (error) {
+        if (error?.name === 'ProjectValidationError' || Array.isArray(error?.errors)) {
+          return { success:false, error:error.message, code:error.code || 'PROJECT_VALIDATION_FAILED', errors:error.errors || [], warnings:error.warnings || [] };
+        }
+        return editingFailure();
+      }
     }
   });
   const musicId = {type:'string',description:'本地音乐库记录 ID（mus_…）。'};
@@ -87,12 +93,16 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
       return {success:true,...result};
     });
   const editSourceSchema={type:'object',properties:{id:{type:'string',minLength:1,maxLength:200,description:'素材库视频 ID（vid_…）或本地音乐库 ID（mus_…）；禁止 path 字段。'},duration_seconds:{type:'number',minimum:0.001}},required:['id','duration_seconds'],additionalProperties:false};
-  const editClipSchema={type:'object',properties:{id:{type:'string',minLength:1,maxLength:200},source:editSourceSchema,source_in_seconds:{type:'number',minimum:0},source_out_seconds:{type:'number',exclusiveMinimum:0},timeline_start_frame:{type:'integer',minimum:0},timeline_end_frame:{type:'integer',minimum:1},rationale:{type:'string',maxLength:500},evidence:{type:'object',properties:{shot_id:{type:'string',minLength:1},purpose:{type:'string',maxLength:300},beat_relation:{type:'string',maxLength:300}},required:['shot_id'],additionalProperties:false},rights:{type:'object',properties:{status:{type:'string',enum:['confirmed','restricted','unknown']},scope:{type:'string',maxLength:100},note:{type:'string',maxLength:2000}},required:['status'],additionalProperties:false}},required:['id','source','source_in_seconds','source_out_seconds','timeline_start_frame','timeline_end_frame'],additionalProperties:false};
+  const editClipSchema={type:'object',properties:{id:{type:'string',minLength:1,maxLength:200},source:editSourceSchema,source_in_seconds:{type:'number',minimum:0},source_out_seconds:{type:'number',exclusiveMinimum:0},timeline_start_frame:{type:'integer',minimum:0},timeline_end_frame:{type:'integer',minimum:1},rationale:{type:'string',maxLength:500},evidence:{type:'object',properties:{shot_id:{type:'string',minLength:1},shot_ids:{type:'array',minItems:1,maxItems:40,items:{type:'string',minLength:1}},purpose:{type:'string',maxLength:300},beat_relation:{type:'string',maxLength:300}},additionalProperties:false},rights:{type:'object',properties:{status:{type:'string',enum:['confirmed','restricted','unknown']},scope:{type:'string',maxLength:100},note:{type:'string',maxLength:2000}},required:['status'],additionalProperties:false}},required:['id','source','source_in_seconds','source_out_seconds','timeline_start_frame','timeline_end_frame'],additionalProperties:false};
   const musicClipSchema={...editClipSchema,required:[...editClipSchema.required,'rights']};
   const editProjectSchema={type:'object',description:'版本化非线性剪辑时间线。由当前 DSH 会话 Agent 根据用户需求设计创意与时序；插件仅校验素材/范围、规范化并预览/保存，不调用另一个 AI 代替 Agent。来源仅引用素材库 ID，不传本地路径。tracks.music 恰有一条音乐片段，必须填写授权状态声明；用户声明不等于版权核验。',properties:{schema_version:{type:'integer',const:1},title:{type:'string',minLength:1,maxLength:300},rationale:{type:'string',minLength:1,maxLength:10000},fps:{type:'object',properties:{num:{type:'integer',minimum:1},den:{type:'integer',minimum:1}},required:['num','den'],additionalProperties:false},canvas:{type:'object',properties:{width:{type:'integer',minimum:1},height:{type:'integer',minimum:1},aspect:{type:'string',enum:['16:9','9:16']}},required:['width','height','aspect'],additionalProperties:false},duration_frames:{type:'integer',minimum:1},tracks:{type:'object',properties:{video:{type:'array',minItems:1,maxItems:40,items:editClipSchema},music:{type:'array',minItems:1,maxItems:1,items:musicClipSchema}},required:['video','music'],additionalProperties:false},evidence:{type:'object',properties:{story_arc:{type:'array',maxItems:20,items:{type:'object',properties:{label:{type:'string',maxLength:200},rationale:{type:'string',maxLength:1000}},required:['label','rationale'],additionalProperties:false}},uncertainties:{type:'array',maxItems:30,items:{type:'string',maxLength:1000}},notice:{type:'string',maxLength:2000},beat_evidence:{type:'string',maxLength:2000}},additionalProperties:false}},required:['schema_version','title','rationale','fps','duration_frames','tracks'],additionalProperties:false};
   editTool('media_center_edit_preview_project','预览并校验当前 DSH 会话 Agent 自行编排的结构化剪辑项目。插件不调用模型、不解码/复制/修改媒体；会做只读文件属性检查，并核验素材库 ID、分镜范围、轨道、音视频时长和项目帧边界。输入只含素材库 ID，禁止客户端绝对路径。音乐分析仅返回 BPM 估计与瞬态候选，不提供已确认拍点；不要把瞬态写成 beats 或声称准确卡点。预览不落库；将完整规范化项目与警告展示给用户，依据反馈留在 DSH 会话中继续迭代。',
     {project:editProjectSchema}, ['project'],
     args => editingWorkflow.previewProject(args.project));
+  editTool('media_center_edit_compose_project','按有序分镜引用自动组装剪辑工程：自动查询分镜边界、计算帧时间线、消除视频轨空隙并截取音乐，返回可继续预览/保存的 preview。只负责机械组装，创意选镜仍由 Agent 决定。',
+    {title:{type:'string',minLength:1,maxLength:300},rationale:{type:'string',minLength:1,maxLength:10000},shot_refs:{type:'array',minItems:1,maxItems:40,items:{type:'object',properties:{shot_id:{type:'string',minLength:1},source_in_seconds:{type:'number',minimum:0},source_out_seconds:{type:'number',exclusiveMinimum:0}},required:['shot_id'],additionalProperties:false}},music_id:{type:'string',description:'本地音乐库 ID（mus_…）。'},canvas:{type:'object',properties:{width:{type:'integer',minimum:1},height:{type:'integer',minimum:1},aspect:{type:'string',enum:['16:9','9:16']}},required:['width','height','aspect'],additionalProperties:false},fps:{type:'object',properties:{num:{type:'integer',minimum:1},den:{type:'integer',minimum:1}},required:['num','den'],additionalProperties:false}},
+    ['title','rationale','shot_refs','music_id'],
+    args => editingWorkflow.composeProject(args));
   editTool('media_center_edit_save_project','仅在用户已看到完整规范化预览并明确授权后保存该预览；只提交服务端预览 ID，客户端不能替换方案内容。confirmed=true 必须对应本轮用户明确确认。',
     {preview_id:{type:'string',description:'尚未过期的服务端剪辑方案预览 ID。'},confirmed:{type:'boolean',description:'仅当用户已查看完整预览并明确授权保存时为 true。'}}, ['preview_id','confirmed'],
     args => {
@@ -661,78 +671,34 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
     }
   });
 
-  // 10. media_center_export_project
+  // 10. media_center_edit_update_project
+  editTool('media_center_edit_update_project','按项目 ID 和当前 revision 更新已保存的剪辑项目；会重新校验时间线与素材引用。',
+    {project_id:{type:'string',description:'项目 ID（edit_...）。'},expected_revision:{type:'integer',minimum:1,description:'当前 revision，用于乐观锁。'},project:editProjectSchema}, ['project_id','expected_revision','project'],
+    args => {
+      if (!/^edit_[a-f0-9]{32}$/.test(args.project_id)) return {success:false,error:'项目 ID 无效'};
+      return editingWorkflow.projects.save(args.project,{id:args.project_id,expectedRevision:args.expected_revision});
+    });
+
+  // 11. media_center_export_project
   addTool({
     name: 'media_center_export_project',
-    description: '生成实验性剪辑工程文件（jianying、fcpxml、edl）；剪映仅包含视频轨道、不含音乐，也未经 11.7.3 打开验证，不会自动安装草稿。',
+    description: '将已保存的剪辑项目导出为 FCPXML（剪映/Final Cut Pro）或 Premiere XML（xmeml）。只按项目 ID 读取素材库，不接受客户端路径；导出只写工程文件，不修改源媒体。',
     parameters: {
       type: 'object',
       properties: {
-        sequence_name: {
-          type: 'string',
-          description: '剪辑序列/草稿名称，如“甘南风光初剪第一版”。'
-        },
-        format: {
-          type: 'string',
-          enum: ['jianying', 'fcpxml', 'edl'],
-          description: '导出工程格式：jianying=剪映本地草稿，fcpxml=Premiere/Final Cut Pro XML，edl=通用EDL。'
-        },
-        clips: {
-          type: 'array',
-          description: '时间线上的镜头片段列表（按播放顺序排列）。',
-          items: {
-            type: 'object',
-            properties: {
-              video_id: { type: 'string', description: '视频 ID。' },
-              file_path: { type: 'string', description: '视频文件物理绝对路径（可选，缺省时自动根据 video_id 查找）。' },
-              in_point: { type: 'number', description: '素材入点（秒）。' },
-              out_point: { type: 'number', description: '素材出点（秒）。' },
-              description: { type: 'string', description: '该片段的剪辑备注。' }
-            },
-            required: ['in_point', 'out_point']
-          }
-        },
-        fps: {
-          type: 'integer',
-          description: '工程时间线帧率，默认为 30。'
-        }
+        project_id: { type: 'string', description: '项目 ID（edit_...）。' },
+        format: { type: 'string', enum: ['fcpxml', 'premiere_xml'], description: 'fcpxml=Final Cut Pro / 剪映优先尝试；premiere_xml=Premiere Pro XML（剪映兼容性待验证）。' },
+        include_source_audio: { type: 'boolean', description: '是否保留视频片段原声，默认 true。' }
       },
-      required: ['sequence_name', 'format', 'clips'],
+      required: ['project_id', 'format'],
       additionalProperties: false
     },
     async execute(args) {
-      const filledClips = [];
-      for (const c of args.clips) {
-        let v = null;
-        if (c.video_id) {
-          v = db.getVideoById(c.video_id);
-        } else if (c.file_path) {
-          v = db.getVideoByPath(c.file_path);
-        }
-        filledClips.push({
-          ...c,
-          file_path: c.file_path || (v ? v.file_path : ''),
-          file_name: v ? v.file_name : (c.file_path ? path.basename(c.file_path) : 'clip'),
-          file_duration: v ? v.duration : 3600,
-          width: v ? v.width : 1920,
-          height: v ? v.height : 1080
-        });
-      }
-
-      let result;
-      if (args.format === 'edl') {
-        result = projectExporter.exportEDL(args.sequence_name, filledClips, { fps: args.fps });
-      } else if (args.format === 'fcpxml') {
-        result = projectExporter.exportFCPXML(args.sequence_name, filledClips, { fps: args.fps });
-      } else {
-        result = projectExporter.exportJianYingDraft(args.sequence_name, filledClips, { fps: args.fps });
-      }
-
-      return {
-        success: true,
-        message: `已生成实验性工程文件（兼容性未验证；剪映格式不含音乐）：${result.file_path || result.draft_folder}`,
-        export_result: result
-      };
+      if (!/^edit_[a-f0-9]{32}$/.test(args.project_id)) return { success:false, error:'项目 ID 无效' };
+      const record = editingWorkflow.projects.get(args.project_id);
+      if (!record) return { success:false, error:'剪辑项目不存在' };
+      const result = projectExporter.exportProject(record.project, { format: args.format, includeSourceAudio: args.include_source_audio !== false });
+      return { success:true, message:`已生成工程文件：${result.file_name}`, export_result:result };
     }
   });
 

@@ -89,8 +89,8 @@
    - Jamendo 只搜索元数据；它不是授权验证或自动下载。只有用户明确确认个人用途后，才能用 `media_center_edit_music_confirm_personal` 记录其声明。
 3. **会话内反复编排**：
    - Agent 在对话中根据用户创作需求、候选镜头、真实音乐元数据/测量摘要提出想法；展示后接受反馈并修改。此阶段不调用插件内的 AI 规划器，因为该规划器已移除。
-   - 形成 EditProject v1 时，视频与音乐 source 只引用素材库 ID（不传绝对路径）；时间线使用项目整数帧，视频片段必须提供现有 `shot_id` 证据，音乐必须为一条且含权利状态声明。未确认拍点时不填写 beats。
+   - 形成 EditProject v1 时，视频与音乐 source 只引用素材库 ID（不传绝对路径）；时间线使用项目整数帧，视频片段必须提供现有 `shot_id` 或连续 `shot_ids` 证据，音乐必须为一条且含权利状态声明。未确认拍点时不填写 beats。可用 `media_center_edit_compose_project` 按有序分镜自动计算时间线和帧边界，减少手工帧计算。
 4. **预览与用户授权保存**：
    - 调用 `media_center_edit_preview_project({ project })` 让插件核验工程结构、来源 ID、分镜范围、音乐成员、文件可用性和预览时源/标注快照。项目暂不持久化；工具返回规范化项目、警告和预览 ID。
    - 在 DSH 会话中向用户展示完整规范化项目和警告；只有用户明确要求保存后，才调用 `media_center_edit_save_project({ preview_id, confirmed:true })`。保存只能提交该服务端预览 ID，不能替换内容。
-   - 保存后的项目可用 `media_center_edit_projects` 查询。剪映导出仍为实验性视频轨简化格式，不包含音乐，也未在 Windows 剪映 11.7.3 验证；不得承诺用户可直接打开。
+   - 保存后的项目会出现在“项目库”，可用 `media_center_edit_projects` 查询、`media_center_edit_update_project` 修订，或用 `media_center_export_project` 按项目 ID 导出 FCPXML / Premiere XML。剪映对导入格式的实际兼容性仍需用户验证，不得承诺直接打开。
