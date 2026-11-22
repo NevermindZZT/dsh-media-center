@@ -687,8 +687,9 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
       type: 'object',
       properties: {
         project_id: { type: 'string', description: '项目 ID（edit_...）。' },
-        format: { type: 'string', enum: ['fcpxml', 'premiere_xml'], description: 'fcpxml=Final Cut Pro / 剪映优先尝试；premiere_xml=Premiere Pro XML（剪映兼容性待验证）。' },
-        include_source_audio: { type: 'boolean', description: '是否保留视频片段原声，默认 true。' }
+        format: { type: 'string', enum: ['fcpxml', 'premiere_xml', 'prproj'], description: 'fcpxml=Final Cut Pro / 剪映优先尝试；premiere_xml=Premiere Pro XML；prproj=原生 Premiere 工程（需本机 Python + py-premiere）。' },
+        include_source_audio: { type: 'boolean', description: '是否保留视频片段原声，默认 true。' },
+        destination_dir: { type: 'string', description: '本机绝对导出目录；省略时写入插件 cache/exports。' }
       },
       required: ['project_id', 'format'],
       additionalProperties: false
@@ -697,7 +698,10 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
       if (!/^edit_[a-f0-9]{32}$/.test(args.project_id)) return { success:false, error:'项目 ID 无效' };
       const record = editingWorkflow.projects.get(args.project_id);
       if (!record) return { success:false, error:'剪辑项目不存在' };
-      const result = projectExporter.exportProject(record.project, { format: args.format, includeSourceAudio: args.include_source_audio !== false });
+      const options = { includeSourceAudio: args.include_source_audio !== false, destinationDir: args.destination_dir };
+      const result = args.format === 'prproj'
+        ? await projectExporter.exportPRProj(record.project, options)
+        : projectExporter.exportProject(record.project, { ...options, format: args.format });
       return { success:true, message:`已生成工程文件：${result.file_name}`, export_result:result };
     }
   });

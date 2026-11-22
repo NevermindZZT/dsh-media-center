@@ -31,6 +31,7 @@
 2. **零外部运行依赖 (Zero-Runtime-Dependency)**：
    - Host 端完全基于 Node 24 原生 ESM。
    - Client 端直接利用 DSH 宿主环境通过 `window.__ModuleLoader__` 注入的 `React`，不引入多余臃肿的外部 runtime，秒速加载，即装即用。
+   - 唯一例外是 Windows 剪映需要的原生 `.prproj` 导出桥：可选依赖本机 Python 3 + `py-premiere`，缺失时必须明确提示，不得影响 FCPXML / Premiere XML 等 Node 原生导出。
 3. **数据存储路径规范**：
    - 数据库默认文件：`<WorkspaceRoot>/.dsh-media-center/media_center.db`。从旧版 `.dsh-video-manager/` 升级时首次启动自动迁移数据与缓存，并更新缓存路径；旧目录保留备份。
    - 衍生缓存默认目录：`<WorkspaceRoot>/.dsh-media-center/cache/`。
@@ -93,4 +94,4 @@
 4. **预览与用户授权保存**：
    - 调用 `media_center_edit_preview_project({ project })` 让插件核验工程结构、来源 ID、分镜范围、音乐成员、文件可用性和预览时源/标注快照。项目暂不持久化；工具返回规范化项目、警告和预览 ID。
    - 在 DSH 会话中向用户展示完整规范化项目和警告；只有用户明确要求保存后，才调用 `media_center_edit_save_project({ preview_id, confirmed:true })`。保存只能提交该服务端预览 ID，不能替换内容。
-   - 保存后的项目会出现在“项目库”，可用 `media_center_edit_projects` 查询、`media_center_edit_update_project` 修订，或用 `media_center_export_project` 按项目 ID 导出 FCPXML / Premiere XML。剪映对导入格式的实际兼容性仍需用户验证，不得承诺直接打开。
+   - 保存后的项目会出现在“项目库”，可用 `media_center_edit_projects` 查询、`media_center_edit_update_project` 修订，或用 `media_center_export_project` 按项目 ID 导出 `.prproj` / FCPXML / Premiere XML，并可指定本机绝对导出目录。`.prproj` 依赖本机 Python 3 + `py-premiere`；剪映对导入格式的实际兼容性仍需用户验证，不得承诺直接打开。

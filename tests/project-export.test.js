@@ -34,10 +34,20 @@ function fixture(t) {
   return { db, exporter: new ProjectExporter(db), project, videoFile, musicFile };
 }
 
+test('network shares are rewritten to the mapped drive letter for .prproj compatibility', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t);
+  f.exporter.networkDrives = [{ drive: 'Z', remote: '\\\\media-host\\share' }];
+  assert.equal(f.exporter.normalizeSourcePath('\\\\media-host\\share\\Music\\track.mp3'), 'Z:\\Music\\track.mp3');
+  assert.equal(f.exporter.normalizeSourcePath('C:\\Media\\clip.mp4'), 'C:\\Media\\clip.mp4');
+});
+
 test('project export resolves catalog sources and writes FCPXML with audio', t => {
   const f = fixture(t);
-  const result = f.exporter.exportProject(f.project, { format: 'fcpxml' });
+  const destination = fs.mkdtempSync(path.join(os.tmpdir(), 'media-center-destination-'));
+  t.after(() => fs.rmSync(destination, { recursive: true, force: true }));
+  const result = f.exporter.exportProject(f.project, { format: 'fcpxml', destinationDir: destination });
   const xml = fs.readFileSync(result.file_path, 'utf8');
+  assert.equal(path.dirname(result.file_path), destination);
   assert.match(xml, /<fcpxml version="1.9">/);
   assert.match(xml, /<media-rep kind="original-media" src="file:\/\/\//);
   assert.match(xml, /<audio ref="r\d+"/);
@@ -56,6 +66,11 @@ test('project export writes Premiere XML with video and audio tracks', t => {
   assert.match(xml, /<clipitem id="clipitem-a-m1">/);
   assert.match(xml, /<pathurl>file:\/\/localhost\//);
   assert.equal(result.file_name.endsWith('.xml'), true);
+});
+
+test('project export rejects a relative destination directory', t => {
+  const f = fixture(t);
+  assert.throws(() => f.exporter.exportProject(f.project, { format: 'fcpxml', destinationDir: 'relative-output' }), /绝对路径/);
 });
 
 test('project export rejects missing media without writing a document', t => {

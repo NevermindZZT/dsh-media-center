@@ -20,7 +20,7 @@
 - **[核心架构设计原则与红线](docs/ARCHITECTURE.md#2-核心架构设计原则与红线)**：物理源文件绝对只读 (Zero-Data-Loss)、Node 24 原生 ESM + 内置 node:sqlite 零编译依赖、4x4 故事板雪碧图节约 90%+ 视觉 Token、双轨驱动架构。
 - **[分层系统架构](docs/ARCHITECTURE.md#3-分层系统架构)**：Host 端（API/MediaEngine/AI/DB/Exporter）与 Client 端（React 响应式三栏工作台）深度协同。
 - **[核心数据模型与存储规范](docs/ARCHITECTURE.md#4-核心数据模型与存储规范)**：SQLite Schema、多级目录树、AI 分析耗时/Token 审计字段。
-- **[关键业务流水线设计](docs/ARCHITECTURE.md#5-关键业务流水线设计)**：素材镜像导入、视听特征提取、直驱多模态分析、Agent 剪辑召回、项目库管理与 FCPXML/Premiere XML 工程导出。
+- **[关键业务流水线设计](docs/ARCHITECTURE.md#5-关键业务流水线设计)**：素材镜像导入、视听特征提取、直驱多模态分析、Agent 剪辑召回、项目库管理与 `.prproj`/FCPXML/Premiere XML 工程导出。
 - **[Web 工作台与响应式设计](docs/ARCHITECTURE.md#6-web-工作台-client-ui-架构与响应式设计)**：桌面端 Resizable Splitter 调宽算法、移动端小屏断点（`< 840px`）单栏流式分段。
 
 ---
@@ -46,7 +46,7 @@
 - **剪辑项目库**：
   独立“项目库”页签展示 Agent 保存的剪辑项目，包含封面、时长、片段数、画幅、版本号和时间线；支持项目改名、片段排序/删除、视频与音乐入出点微调，并按 revision 乐观锁保存，避免覆盖他人修改。
 - **工程导出**：
-  项目库中可导出 **FCPXML 1.9**（剪映 / Final Cut Pro 优先尝试）和 **Premiere Pro XML（xmeml）**。导出按素材库 ID 解析真实路径，保留视频原声与音乐轨；只写工程文件，不修改源媒体。剪映对具体导入格式的支持仍需以实际版本验证。
+  项目库中可导出 **原生 Premiere Pro `.prproj`**（Windows 剪映导入所需；通过本机 Python + `py-premiere` 生成）、**FCPXML 1.9** 和 **Premiere Pro XML（xmeml）**。导出时可选择本机绝对导出目录，按素材库 ID 解析真实路径，保留视频原声与音乐轨；网络硬盘素材保留映射盘符（如 `Z:\...`），不会改写成 UNC 路径。只写工程文件，不修改源媒体。`.prproj` 的实际剪映导入兼容性仍建议用目标版本验证。
 - 🔍 **分镜多维与自然语言语义检索**：
   基于 SQLite FTS5 与多维分词打权算法，输入如 *“晨光照耀雪山日落金山”*，毫秒级跨视频精准召回最匹配的分镜片段与毫秒级入出点。
 - 🎨 **DSH 官方主题 100% 自适应**：
@@ -74,7 +74,7 @@
 | `media_center_update_video` | 更新视频全局摘要（summary）、业务标签（tags）与人工备注 | `{ video_id, summary?, tags?, user_notes?, status? }` |
 | `media_center_search_shots` | 跨视频进行分镜语义检索，根据自然语言召回最契合的镜头及其入出点 | `{ query, shot_type?, camera_movement?, min_duration?, limit? }` |
 | `media_center_edit_update_project` | 按项目 ID 和 revision 更新已保存的剪辑时间线 | `{ project_id, expected_revision, project }` |
-| `media_center_export_project` | 将已保存项目导出为 FCPXML 或 Premiere XML | `{ project_id, format, include_source_audio? }` |
+| `media_center_export_project` | 将已保存项目导出为 `.prproj`、FCPXML 或 Premiere XML，并可指定导出目录 | `{ project_id, format, include_source_audio?, destination_dir? }` |
 | `media_center_analyze_shot` | 仅生成单片段精读候选，不覆盖原标注 | `{ video_id, shot_id }` |
 | `media_center_get_shot_analysis` | 查询片段精读记录、候选和用量 | `{ video_id, shot_id, limit? }` |
 | `media_center_apply_shot_analysis` | 经用户明确授权后应用指定候选字段 | `{ run_id, fields, confirmed: true }` |
@@ -119,8 +119,8 @@
    Agent ➔ media_center_search_shots({ query: "日照金山 大远景" })
    Agent ➔ media_center_edit_preview_project({ project: { ... } })
    用户确认后 ➔ media_center_edit_save_project({ preview_id, confirmed: true })
-   项目库查看/编辑 ➔ media_center_export_project({ project_id, format: "fcpxml" })
-   可导出 FCPXML（剪映/FCP 优先尝试）或 Premiere XML；剪映实际导入兼容性仍需验证。
+   项目库查看/编辑 ➔ media_center_export_project({ project_id, format: "prproj", destination_dir: "D:\\Exports" })
+   可导出原生 .prproj（Windows 剪映）、FCPXML 或 Premiere XML；剪映实际导入兼容性仍需验证。
 ```
 
 ---
@@ -133,7 +133,7 @@
   - `keyframes/`：代表性关键帧图片
   - `previews/`：浏览器兼容预览缓存
   - `music-spectrograms/`：音乐频谱图缓存
-  - `exports/`：导出的剪映本地草稿目录、FCPXML 与 EDL 文件
+  - `exports/`：默认导出的 `.prproj`、FCPXML 与 Premiere XML 工程文件；也可选择其他本机绝对目录
 - 从旧版 `dsh-video-manager` 升级时，首次启动会自动把 `.dsh-video-manager/` 的数据和缓存迁移到 `.dsh-media-center/`，并更新数据库中的缓存路径；旧目录保留作为备份，可确认无误后手动删除。
 - 插件会自动更新工作区的 `.gitignore`，忽略新旧数据目录，避免意外将二进制大缓存提交至 Git。
 
@@ -145,7 +145,7 @@
 
 当用户要求预览时，`media_center_edit_preview_project` 只校验 project v1、素材库 ID、分镜范围、时间线帧边界、音乐库成员、源文件可用性和授权状态，不调用模型、不写数据库、不修改或复制源素材。预览会返回规范化项目与服务端 30 分钟预览 ID；素材文件以 realpath 与文件系统属性弱指纹进行前后检查（非内容哈希），分镜更新后旧预览会失效。
 
-用户查看完整预览并明确要求保存后，Agent 可调用 `media_center_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果可在“项目库”页签查看、编辑和导出，也可通过 `media_center_edit_projects` 查询。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。FCPXML / Premiere XML 的剪映导入兼容性仍需以实际版本验证。
+用户查看完整预览并明确要求保存后，Agent 可调用 `media_center_edit_save_project`，只提交服务端预览 ID，不接受客户端替换工程内容。保存结果可在“项目库”页签查看、编辑和导出，也可通过 `media_center_edit_projects` 查询。Agent 应将瞬态称为候选，不能伪称强拍/精确卡点；音乐许可状态是用户声明，未经独立验证。`.prproj` 依赖本机 Python 3 与 `py-premiere`（`pip install py-premiere`）；FCPXML / Premiere XML 不依赖 Python。剪映对具体导入格式的支持仍需以实际版本验证。
 
 ---
 
@@ -185,3 +185,13 @@ plugin_manager({
 ```
 
 安装完成后刷新 Web GUI，在左侧导航栏即可看到全新的 **“媒体中心”** 入口！
+
+### 可选：启用原生 `.prproj` 导出
+
+Windows 剪映工程导入需要原生 `.prproj`。插件通过本机 Python 调用 MIT 许可的 `py-premiere` 生成：
+
+```powershell
+python -m pip install py-premiere
+```
+
+未安装时 FCPXML / Premiere XML 仍可正常导出，`.prproj` 会返回明确的安装提示。

@@ -1101,8 +1101,12 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('');
       const [notice, setNotice] = useState('');
       const [showExport, setShowExport] = useState(false);
-      const [exportFormat, setExportFormat] = useState('fcpxml');
+      const [exportFormat, setExportFormat] = useState('prproj');
       const [includeSourceAudio, setIncludeSourceAudio] = useState(true);
+      const [destinationDir, setDestinationDir] = useState('');
+      const [showDirPicker, setShowDirPicker] = useState(false);
+      const [dirBrowser, setDirBrowser] = useState(null);
+      const [dirLoading, setDirLoading] = useState(false);
       const [exportResult, setExportResult] = useState(null);
 
       const loadProjects = async () => {
@@ -1230,13 +1234,23 @@ window.__ModuleLoader__.load({
           await loadProjects();
         } catch (e) { setError(e.message); }
       };
+      const browseExportDir = async (dir = '') => {
+        setDirLoading(true);
+        try {
+          const url = dir ? `/api/media-center/fs/browse?dir=${encodeURIComponent(dir)}` : '/api/media-center/fs/browse';
+          const data = await (await fetch(url)).json();
+          if (data.success) { setDirBrowser(data); setShowDirPicker(true); }
+          else setError(data.error || '无法浏览目录');
+        } catch (e) { setError(e.message); }
+        finally { setDirLoading(false); }
+      };
       const exportProject = async () => {
         if (!detail) return;
         setBusy(true); setError(''); setExportResult(null);
         try {
           const res = await fetch(`/api/media-center/editing/projects/${encodeURIComponent(detail.id)}/export`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ format: exportFormat, include_source_audio: includeSourceAudio })
+            body: JSON.stringify({ format: exportFormat, include_source_audio: includeSourceAudio, destination_dir: destinationDir.trim() || undefined })
           });
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || '导出项目失败');
@@ -1332,18 +1346,39 @@ window.__ModuleLoader__.load({
           )
         ),
         showExport && h('div', { style: modalOverlayStyle },
-          h('div', { role: 'dialog', 'aria-modal': true, 'aria-label': '导出剪辑项目', style: { ...modalCardStyle, width: isMobile ? '92vw' : '500px' } },
+          h('div', { role: 'dialog', 'aria-modal': true, 'aria-label': '导出剪辑项目', style: { ...modalCardStyle, width: isMobile ? '92vw' : '540px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, Icon.scissors({ size: 18, color: '#3b82f6' }), h('h3', { style: { margin: 0, fontSize: '16px' } }, '导出工程')),
-            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)' } }, 'FCPXML 供剪映/Final Cut Pro 尝试导入；Premiere XML 供 Premiere Pro 导入。剪映兼容性需以实际版本为准。'),
+            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.5' } }, '剪映 Windows 目前仅支持原生 .prproj 工程导入；FCPXML / Premiere XML 可继续用于 Final Cut Pro / Premiere。'),
             h('label', { style: { fontSize: '12px' } }, '格式',
               h('select', { value: exportFormat, onChange: e => setExportFormat(e.target.value), style: { ...fieldStyle, marginTop: '4px' } },
+                h('option', { value: 'prproj' }, 'Premiere Pro 原生工程（.prproj，需本机 Python + py-premiere）'),
                 h('option', { value: 'fcpxml' }, 'FCPXML 1.9（.fcpxml）'),
                 h('option', { value: 'premiere_xml' }, 'Premiere Pro XML（.xml）'))),
+            exportFormat === 'prproj' && h('div', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '原生 .prproj 由本机 Python 生成，导出时会读取源文件元数据；若未安装 py-premiere 会提示安装命令。'),
             h('label', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px' } },
               h('input', { type: 'checkbox', checked: includeSourceAudio, onChange: e => setIncludeSourceAudio(e.target.checked) }), '保留视频片段原声'),
+            h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+              h('div', { style: { fontSize: '12px' } }, '导出目录'),
+              h('div', { style: { display: 'flex', gap: '6px' } },
+                h('input', { type: 'text', value: destinationDir, onChange: e => setDestinationDir(e.target.value), placeholder: '留空使用插件 cache/exports', style: { ...fieldStyle, flex: 1 } }),
+                h('button', { type: 'button', style: buttonSecondaryStyle, disabled: dirLoading, onClick: () => browseExportDir(destinationDir) }, '选择目录')),
+              h('div', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, '选择目录后仍可手动修改绝对路径。')),
             h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px' } },
               h('button', { type: 'button', style: buttonSecondaryStyle, disabled: busy, onClick: () => setShowExport(false) }, '取消'),
               h('button', { type: 'button', style: buttonPrimaryStyle, disabled: busy, onClick: exportProject }, busy ? '导出中…' : '导出')))
+        ),
+        showDirPicker && h('div', { style: modalOverlayStyle },
+          h('div', { role: 'dialog', 'aria-modal': true, 'aria-label': '选择导出目录', style: { ...modalCardStyle, width: isMobile ? '92vw' : '540px', maxHeight: '75vh' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' } },
+              h('div', { style: { fontSize: '16px', fontWeight: 600 } }, '选择导出目录'),
+              h('button', { type: 'button', style: smallButton, disabled: dirLoading, onClick: () => browseExportDir(dirBrowser?.parent_path || '') }, '上一级')),
+            h('div', { title: dirBrowser?.current_path, style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, dirBrowser?.current_path || '正在读取…'),
+            h('div', { style: { minHeight: '160px', maxHeight: '300px', overflowY: 'auto', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '3px' } },
+              (dirBrowser?.folders || []).map(folder => h('button', { key: folder.path, type: 'button', style: { ...buttonSecondaryStyle, justifyContent: 'flex-start', textAlign: 'left', width: '100%' }, onClick: () => browseExportDir(folder.path) }, Icon.folder({ size: 12 }), folder.name)),
+              dirBrowser && !(dirBrowser.folders || []).length && h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', padding: '8px' } }, '当前目录没有子目录。')),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px' } },
+              h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setShowDirPicker(false) }, '取消'),
+              h('button', { type: 'button', style: buttonPrimaryStyle, disabled: dirLoading || !dirBrowser?.current_path, onClick: () => { setDestinationDir(dirBrowser.current_path); setShowDirPicker(false); } }, '选择当前目录')))
         )
       );
     }

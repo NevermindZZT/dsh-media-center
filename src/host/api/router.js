@@ -306,7 +306,11 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
             const project=editingWorkflow.projects.get(projectExportMatch[1]);
             if (!project) return jsonResponse(res,{success:false,error:'剪辑项目不存在'},404);
             if (!projectExporter?.exportProject) return jsonResponse(res,{success:false,error:'工程导出不可用'},503);
-            const result=projectExporter.exportProject(project.project,{format:body.format || 'fcpxml',includeSourceAudio:body.include_source_audio !== false});
+            const format=body.format || 'fcpxml';
+            const options={ includeSourceAudio:body.include_source_audio !== false, destinationDir:body.destination_dir };
+            const result = format === 'prproj'
+              ? await projectExporter.exportPRProj(project.project, options)
+              : projectExporter.exportProject(project.project,{...options, format});
             return jsonResponse(res,{success:true,export_result:result});
           }
           return jsonResponse(res,{success:false,error:'未知剪辑工作流操作'},404);
@@ -336,7 +340,7 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
             '所选 DSH 模型不支持图片输入','无法获取所选 DSH 模型的推理能力，请刷新模型列表','请为所选 DSH 模型明确选择推理档位',
             '所选推理档位不受当前 DSH 模型支持','所选 DSH 模型未声明推理档位，请清空推理档位'
           ]);
-          const safeProjectPrefixes = ['剪辑项目无效：','视频源文件不可用：','视频源文件已变化：','音乐源文件不可用：','音乐源文件已变化：','当前项目限制为'];
+          const safeProjectPrefixes = ['剪辑项目无效：','视频源文件不可用：','视频源文件已变化：','音乐源文件不可用：','音乐源文件已变化：','当前项目限制为','PRPROJ_EXPORTER_UNAVAILABLE','.prproj 生成失败：'];
           const safeMusicPrefixes = ['无法生成音频频谱图','频谱图生成失败','DSH 模型请求未成功完成','自定义 AI 服务请求失败'];
           const message=String(error?.message||'');
           const safe=safeMessages.has(message)||safeProjectPrefixes.some(prefix=>message.startsWith(prefix))||safeMusicPrefixes.some(prefix=>message.startsWith(prefix));

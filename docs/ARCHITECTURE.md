@@ -444,10 +444,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 
 | 格式 | 适用软件 | 说明 |
 |---|---|---|
+| **Premiere Pro 原生工程（.prproj）** | Windows 剪映导入、Premiere Pro | 由本机 Python + `py-premiere` 生成原生 gzip XML 工程；保留视频原声、音乐轨和项目入出点；网络硬盘使用映射盘符（如 `Z:\...`），不展开为 UNC；需要安装 Python 3 与 `pip install py-premiere` |
 | **FCPXML 1.9（.fcpxml）** | Final Cut Pro、剪映（需实测） | `<resources>` 资源、`<spine>` 视频/音频轨、有理数帧时间、`media-rep` 文件引用；保留视频原声和音乐轨 |
 | **Premiere Pro XML（.xml）** | Premiere Pro、DaVinci Resolve | xmeml version 4；视频轨 + 音频轨；`file://localhost/` 路径；剪映兼容性未验证 |
 
-旧版剪映 Draft JSON 与 EDL 导出入口已移除；视频库右上角的一次性“导出剪辑工程”按钮也已移除。导出只写 `cache/exports/`，不修改或复制源媒体。
+导出目录可选本机任意绝对路径，默认写入 `cache/exports/`。旧版剪映 Draft JSON 与 EDL 导出入口已移除；视频库右上角的一次性“导出剪辑工程”按钮也已移除。导出只写工程文件，不修改或复制源媒体。
 
 ---
 
@@ -530,7 +531,7 @@ Host 端在 `/api/media-center` 前缀下注册以下 HTTP 接口：
 | `GET` | `/keyframe/:id/:idx` | 获取分镜关键帧 JPEG | - |
 | `GET` | `/editing/projects` | 项目库摘要列表 | `limit`, `offset` |
 | `GET/PUT/DELETE` | `/editing/projects/:id` | 读取、按 revision 更新或删除项目 | `{ project, expected_revision }` |
-| `POST` | `/editing/projects/:id/export` | 按项目 ID 导出 FCPXML / Premiere XML | `{ format, include_source_audio? }` |
+| `POST` | `/editing/projects/:id/export` | 按项目 ID 导出 `.prproj` / FCPXML / Premiere XML | `{ format, include_source_audio?, destination_dir? }` |
 | `GET/POST`| `/settings` | 读取或更新全局配置 (FFmpeg等) | `{ ffmpeg_path, ffprobe_path }` |
 | `GET/POST`| `/ai-settings` | 读取或更新 AI 模型与提示词模板 | `{ ai_model, ai_prompt_template, ... }` |
 
@@ -548,7 +549,7 @@ Host 端在 `/api/media-center` 前缀下注册以下 HTTP 接口：
 8. `media_center_update_audio_info`：回写音频、字幕与情绪打点。
 9. `media_center_update_video`：更新视频全局摘要、标签与状态。
 10. `media_center_search_shots`：跨素材分镜自然语言语义检索。
-11. `media_center_export_project`：按项目 ID 导出 FCPXML / Premiere XML 工程。
+11. `media_center_export_project`：按项目 ID 导出 `.prproj` / FCPXML / Premiere XML 工程，可选择导出目录。
 12. `media_center_configure_ffmpeg`：查看或动态配置 FFmpeg 路径。
 13. `media_center_edit_preview_project`：校验并预览 Agent 编排的 EditProject。
 14. `media_center_edit_compose_project`：按有序分镜自动组装时间线并返回预览。

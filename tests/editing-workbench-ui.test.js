@@ -56,6 +56,7 @@ function goodProfile(overrides={}){return {analysis_id:'analysis_1',status:'ok',
    assert.match(panelSource,/来源目录/);assert.match(panelSource,/音乐内容区/);assert.match(panelSource,/音乐详情/);
    assert.match(mainSource,/ProjectLibraryWorkbench/);assert.match(mainSource,/activeLibrary === 'projects'/);
    assert.match(panelSource,/项目库/);assert.match(panelSource,/FCPXML/);assert.match(panelSource,/Premiere Pro XML/);
+   assert.match(panelSource,/\.prproj/);assert.match(panelSource,/选择导出目录/);assert.match(panelSource,/destination_dir/);
    assert.doesNotMatch(mainSource,/导出剪辑工程/);
 
   assert.doesNotMatch(panelSource,/ai-settings|ai-analyze|chat\/completions|music-recommendations|\/styles/);
