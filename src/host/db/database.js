@@ -139,6 +139,7 @@ export class VideoDatabase {
         ai_total_tokens INTEGER DEFAULT 0,
         ai_latency_ms INTEGER DEFAULT 0,
         ai_analyzed_at TEXT,
+        ai_error TEXT,
         captured_at TEXT,
         captured_at_source TEXT,
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
@@ -161,6 +162,7 @@ export class VideoDatabase {
       if (!videoCols.includes('ai_total_tokens')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_total_tokens INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_latency_ms')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_latency_ms INTEGER DEFAULT 0;");
       if (!videoCols.includes('ai_analyzed_at')) this.db.exec("ALTER TABLE videos ADD COLUMN ai_analyzed_at TEXT;");
+      if (!videoCols.includes('ai_error')) this.db.exec('ALTER TABLE videos ADD COLUMN ai_error TEXT;');
       if (!videoCols.includes('captured_at')) {
         this.db.exec("ALTER TABLE videos ADD COLUMN captured_at TEXT;");
       }
@@ -463,6 +465,7 @@ export class VideoDatabase {
           ai_total_tokens = COALESCE(?, ai_total_tokens),
           ai_latency_ms = COALESCE(?, ai_latency_ms),
           ai_analyzed_at = COALESCE(?, ai_analyzed_at),
+          ai_error = CASE WHEN ? THEN ? ELSE ai_error END,
           captured_at = CASE WHEN ? THEN ? ELSE captured_at END,
           captured_at_source = COALESCE(?, captured_at_source),
           updated_at = ?
@@ -494,6 +497,8 @@ export class VideoDatabase {
         videoData.ai_total_tokens ?? null,
         videoData.ai_latency_ms ?? null,
         videoData.ai_analyzed_at ?? null,
+        Object.hasOwn(videoData, 'ai_error') ? 1 : 0,
+        videoData.ai_error ?? null,
         Object.hasOwn(videoData, 'captured_at') ? 1 : 0,
         videoData.captured_at ?? null,
         videoData.captured_at_source ?? null,
@@ -507,9 +512,9 @@ export class VideoDatabase {
           id, folder_id, file_name, file_path, source_identity_json, file_size, duration,
           width, height, fps, codec, bitrate, audio_channels, sample_rate,
           status, summary, user_notes, tags, storyboard_path, storyboard_status, storyboard_error,
-          ai_model, ai_prompt_tokens, ai_completion_tokens, ai_total_tokens, ai_latency_ms, ai_analyzed_at,
+          ai_model, ai_prompt_tokens, ai_completion_tokens, ai_total_tokens, ai_latency_ms, ai_analyzed_at, ai_error,
           captured_at, captured_at_source, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id,
         videoData.folder_id ?? null,
@@ -538,6 +543,7 @@ export class VideoDatabase {
         videoData.ai_total_tokens ?? 0,
         videoData.ai_latency_ms ?? 0,
         videoData.ai_analyzed_at ?? null,
+        videoData.ai_error ?? null,
         videoData.captured_at ?? null,
         videoData.captured_at_source ?? null,
         now,

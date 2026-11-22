@@ -6,14 +6,29 @@ import { AnalysisQueue } from '../ai/analysis-queue.js';
 export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, shotSearchService, videoAiAnalyzer, shotAnalysisService, editingWorkflow }) {
   const analysisQueue = new AnalysisQueue(db);
   if (shotAnalysisService?.store) shotAnalysisService.store.isVideoBusy = id => analysisQueue.active.has(id);
-  const recordAnalysisFailure = (id) => {
+  const recordAnalysisFailure = (id, message = '') => {
     // A video may have been removed while the analyzer was awaiting a remote model.
     // Never insert a replacement row when marking a failure.
     try {
       const video = db.getVideoById(id);
-      if (video && video.status !== 'analyzed') db.upsertVideo({ id, status: 'error' });
+      if (!video) return;
+      const reason = String(message || 'AI 分析失败').replace(/[\r\n]+/g, ' ').slice(0, 500);
+      db.upsertVideo({ id, ...(video.status !== 'analyzed' ? { status: 'error' } : {}), ai_error: reason });
     }
     catch (error) { console.error('[ai-analyze] Unable to save failure status:', error); }
+  };
+  const analyzeWithRetry = async (id) => {
+    const settings = videoAiAnalyzer.getAiSettings?.() || {};
+    const retries = Math.max(0, Math.min(3, Number(settings.retry_count) || 0));
+    let lastError;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try { return await videoAiAnalyzer.analyzeVideo(id); }
+      catch (error) {
+        lastError = error;
+        if (attempt < retries) await new Promise(resolve => setTimeout(resolve, 800 * (attempt + 1)));
+      }
+    }
+    throw lastError;
   };
   const jsonResponse = (res, data, status = 200) => {
     const body = Buffer.from(JSON.stringify(data));
@@ -517,11 +532,11 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
         if (!reservation.ok) return jsonResponse(res, { success: false, error: reservation.error, video_ids: reservation.video_ids }, reservation.status);
         try {
           analysisQueue.start(videoId, reservation.token);
-          const result = await videoAiAnalyzer.analyzeVideo(videoId);
+          const result = await analyzeWithRetry(videoId);
           if (result?.success === false) throw new Error(result.error || 'AI analysis failed');
           return jsonResponse(res, result);
         } catch (e) {
-          recordAnalysisFailure(videoId);
+          recordAnalysisFailure(videoId, e.message);
           console.error('[ai-analyze] Error:', e);
           return jsonResponse(res, { success: false, error: e.message }, 500);
         } finally {
@@ -547,12 +562,12 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
                 analysisQueue.start(vid, reservation.token);
                 // A queued video can be removed while other videos are processing.
                 if (!db.getVideoById(vid)) throw new Error('Video not found');
-                const r = await videoAiAnalyzer.analyzeVideo(vid);
+                const r = await analyzeWithRetry(vid);
                 if (r?.success === false) throw new Error(r.error || 'AI analysis failed');
                 results[index] = { video_id: vid, success: true, audit: r.audit };
                 succeeded++;
               } catch (e) {
-                recordAnalysisFailure(vid);
+                recordAnalysisFailure(vid, e.message);
                 results[index] = { video_id: vid, success: false, error: e.message };
               } finally {
                 analysisQueue.release(vid, reservation.token);
@@ -565,6 +580,7 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
             total: body.video_ids.length,
             succeeded,
             concurrency: requested,
+            retry_count: Math.max(0, Math.min(3, Number(videoAiAnalyzer.getAiSettings?.().retry_count) || 0)),
             results
           });
         } finally {

@@ -130,7 +130,6 @@ export class ShotAnalyzer {
           model: config.model,
           messages: [{ role: 'user', content: [{ type: 'text', text: promptSnapshot }, { type: 'image', attachment: image }] }],
           temperature: 0.3,
-          maxTokens: 4096,
           ...(config.reasoning_effort ? { reasoningEffort: config.reasoning_effort } : {})
         };
         for await (const chunk of analyzer.llm.stream(options)) {
@@ -160,7 +159,7 @@ export class ShotAnalyzer {
           body: JSON.stringify({ model: config.model, messages: [{ role: 'user', content: [
             { type: 'text', text: promptSnapshot },
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBytes.toString('base64')}` } }
-          ] }], temperature: 0.3, max_tokens: 4096 })
+          ] }], temperature: 0.3 })
         });
       } catch { throw new Error('自定义 AI 服务请求失败，请检查连接'); }
       if (!response.ok) throw new Error('自定义 AI 服务请求失败');

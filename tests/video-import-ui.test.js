@@ -77,6 +77,14 @@ test('HEVC preview and storyboard regeneration are exposed in the UI',()=>{
   assert.match(source,/重新生成故事板/);assert.match(source,/videos\/.*\/storyboard`,\s*\{ method: 'POST' \}/);
   assert.match(source,/用系统播放器打开/);assert.match(source,/\/open`, \{ method: 'POST' \}/);
 });
+test('batch AI analysis offers unanalyzed-only and full selection scopes',()=>{
+  assert.match(source,/仅分析未分析过的视频/);
+  assert.match(source,/分析全部所选视频/);
+  assert.match(source,/v\.status === 'analyzed'/);
+  assert.match(source,/handleBatchAiAnalyze\(batchAiScope\)/);
+});
+
+
 test('video cards expose analyzed summary and separate storyboard state',()=>{
   assert.match(source,/role: 'tooltip'/);assert.match(source,/summaryVideoId === v\.id/);assert.match(source,/v\.storyboard_status === 'generating'/);
 });
@@ -86,5 +94,8 @@ test('settings use grouped navigation and expose AI concurrency',()=>{
   assert.match(source,/aria-label': '设置分类'/);
   assert.match(source,/settingsSection === 'ai'/);
   assert.match(source,/AI 分析最大并发/);
+  assert.match(source,/AI 分析失败重试次数/);
   assert.match(source,/清理全部缓存/);
+  assert.match(source,/失败原因：/);
+  assert.match(source,/重试 AI 深度分析/);
 });

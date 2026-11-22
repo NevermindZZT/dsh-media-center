@@ -1160,6 +1160,8 @@ window.__ModuleLoader__.load({
       // AI Analysis Running States
       const [aiAnalyzingId, setAiAnalyzingId] = useState(null);
       const [isBatchAiAnalyzing, setIsBatchAiAnalyzing] = useState(false);
+      const [showBatchAiScopeModal, setShowBatchAiScopeModal] = useState(false);
+      const [batchAiScope, setBatchAiScope] = useState('unanalyzed');
 
       // Editing states for Right Panel
       const [isEditingShots, setIsEditingShots] = useState(false);
@@ -1204,6 +1206,7 @@ window.__ModuleLoader__.load({
       const [aiModelInput, setAiModelInput] = useState('');
       const [aiReasoningInput, setAiReasoningInput] = useState('');
       const [aiConcurrency, setAiConcurrency] = useState(3);
+      const [aiRetryCount, setAiRetryCount] = useState(1);
       const [settingsSection, setSettingsSection] = useState('general');
       const [aiMode, setAiMode] = useState('dsh');
       const [aiProviderInput, setAiProviderInput] = useState('');
@@ -1504,6 +1507,7 @@ window.__ModuleLoader__.load({
             setAiModelInput(data.model || '');
             setAiReasoningInput(data.reasoning_effort || '');
             setAiConcurrency(Number(data.concurrency) || 3);
+            setAiRetryCount(data.retry_count == null ? 1 : Number(data.retry_count));
             setAiPromptTemplate(data.custom_prompt || data.default_prompt || '');
             setDefaultPromptText(data.default_prompt || '');
           }
@@ -1796,16 +1800,30 @@ window.__ModuleLoader__.load({
       };
 
       // Batch AI Video Analysis
-      const handleBatchAiAnalyze = async () => {
+      const openBatchAiScope = () => {
         const ids = Array.from(selectedVideoIds);
         if (ids.length === 0 || isBatchAiAnalyzing) return;
         if (videos.some(v => ids.includes(v.id) && (v.status === 'queued' || v.status === 'analyzing'))) {
           alert('所选素材中包含排队中或分析中的视频，请勿重复提交。');
           return;
         }
-        if (!confirm(`确定要对选中的 ${ids.length} 个视频依次发起多模态 AI 深度分析吗？\n（将自动生成故事板大图并调用视觉模型切分分镜与提取内容）`)) {
+        setBatchAiScope('unanalyzed');
+        setShowBatchAiScopeModal(true);
+      };
+      const handleBatchAiAnalyze = async (scope = 'unanalyzed') => {
+        const selected = Array.from(selectedVideoIds);
+        if (selected.length === 0 || isBatchAiAnalyzing) return;
+        if (videos.some(v => selected.includes(v.id) && (v.status === 'queued' || v.status === 'analyzing'))) {
+          alert('所选素材中包含排队中或分析中的视频，请勿重复提交。');
           return;
         }
+        const analyzed = new Set(videos.filter(v => selected.includes(v.id) && v.status === 'analyzed').map(v => v.id));
+        const ids = scope === 'all' ? selected : selected.filter(id => !analyzed.has(id));
+        if (ids.length === 0) {
+          alert('所选素材均已分析完成；如需重新分析，请选择“分析全部”。');
+          return;
+        }
+        setShowBatchAiScopeModal(false);
         setIsBatchAiAnalyzing(true);
         setVideos(current => current.map(v => ids.includes(v.id) ? { ...v, status: 'queued' } : v));
         setSelectedVideo(current => current && ids.includes(current.id) ? { ...current, status: 'queued' } : current);
@@ -1847,6 +1865,7 @@ window.__ModuleLoader__.load({
               model: aiModelInput,
               reasoning_effort: aiMode === 'dsh' ? aiReasoningInput : undefined,
               concurrency: Number(aiConcurrency),
+              retry_count: Number(aiRetryCount),
               prompt_template: aiPromptTemplate
             })
           });
@@ -2570,10 +2589,13 @@ window.__ModuleLoader__.load({
         );
       };
 
+      const selectedAnalyzedCount = videos.filter(v => selectedVideoIds.has(v.id) && v.status === 'analyzed').length;
+      const selectedAnalyzeableCount = Math.max(0, selectedVideoIds.size - selectedAnalyzedCount);
+
       return h('div', { ref: workbenchRef, style: workbenchStyle },
         renderMediaLibraryHeader({
           active: activeLibrary,
-          onSelect: tab => { setActiveLibrary(tab); setShowSettingsModal(false); setShowExportModal(false); setShowScanModal(false); setShowBatchMoveModal(false); setShowNewFolderModal(false); setRenamingFolder(null); },
+          onSelect: tab => { setActiveLibrary(tab); setShowSettingsModal(false); setShowExportModal(false); setShowScanModal(false); setShowBatchMoveModal(false); setShowNewFolderModal(false); setShowBatchAiScopeModal(false); setRenamingFolder(null); },
           isMobile, status,
           onSettings: () => { loadAiSettings(); loadShotAnalysisSettings(); loadCacheUsage(); setShowSettingsModal(true); },
           buttonStyle: buttonSecondaryStyle
@@ -2801,7 +2823,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   style: buttonPrimaryStyle,
                   disabled: isBatchAiAnalyzing,
-                  onClick: handleBatchAiAnalyze
+                  onClick: openBatchAiScope
                 }, Icon.sparkles({ size: 12 }), isBatchAiAnalyzing ? '分析中...' : `批量 AI 分析 (${selectedVideoIds.size})`),
                 h('button', {
                   style: buttonSecondaryStyle,
@@ -2916,6 +2938,7 @@ window.__ModuleLoader__.load({
                     }, formatDuration(v.duration)),
                     // Status Badge (High-contrast on any thumbnail in both light & dark themes)
                     h('span', {
+                      title: v.status === 'error' ? (v.ai_error || 'AI 分析失败') : undefined,
                       style: {
                         position: 'absolute',
                         bottom: '4px',
@@ -2960,7 +2983,7 @@ window.__ModuleLoader__.load({
                         setActiveVideoMenuId(null);
                         handleAiAnalyze(v.id);
                       }
-                    }, Icon.sparkles({ size: 12, color: '#3b82f6' }), isQueued ? '排队中' : isCurrentAnalyzing ? '分析中...' : '直接 AI 深度分析'),
+                    }, Icon.sparkles({ size: 12, color: '#3b82f6' }), isQueued ? '排队中' : isCurrentAnalyzing ? '分析中...' : v.status === 'error' ? '重试 AI 深度分析' : '直接 AI 深度分析'),
                     h('div', {
                       style: { ...contextMenuItemStyle, opacity: v.storyboard_status === 'generating' ? 0.5 : 1, cursor: v.storyboard_status === 'generating' ? 'not-allowed' : 'pointer' },
                       onMouseEnter: (e) => e.currentTarget.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)',
@@ -3084,6 +3107,10 @@ window.__ModuleLoader__.load({
                       '·',
                       v.ai_model
                     ),
+                    (v.status === 'error' || v.ai_error) && h('div', {
+                      title: v.ai_error || '旧版本未记录失败原因，可重试分析',
+                      style: { fontSize: '10px', color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }
+                    }, `失败原因：${v.ai_error || '旧版本未记录，可重试'}`),
                     v.folder_path && h('div', {
                       style: {
                         fontSize: '11px',
@@ -3993,6 +4020,33 @@ window.__ModuleLoader__.load({
           )
         ),
 
+        showBatchAiScopeModal && h('div', { style: modalOverlayStyle },
+          h('div', { role: 'dialog', 'aria-modal': true, 'aria-label': '选择批量 AI 分析范围', style: { ...modalCardStyle, width: isMobile ? '92vw' : '480px' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+              Icon.sparkles({ size: 18, color: '#3b82f6' }),
+              h('h3', { style: { margin: 0, fontSize: '16px', fontWeight: 600 } }, '批量 AI 分析')
+            ),
+            h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.6' } },
+              `已选择 ${selectedVideoIds.size} 个视频：其中 ${selectedAnalyzedCount} 个已分析，${selectedAnalyzeableCount} 个未分析。`),
+            h('label', { style: { display: 'flex', alignItems: 'flex-start', gap: '9px', padding: '10px', border: `1px solid ${batchAiScope === 'unanalyzed' ? 'var(--dsw-alias-border-l2)' : 'var(--dsw-alias-border-l1)'}`, borderRadius: '7px', cursor: 'pointer', backgroundColor: batchAiScope === 'unanalyzed' ? 'var(--dsw-alias-bg-layer-2)' : 'transparent' } },
+              h('input', { type: 'radio', name: 'batch-ai-scope', checked: batchAiScope === 'unanalyzed', onChange: () => setBatchAiScope('unanalyzed'), style: { marginTop: '2px' } }),
+              h('span', null, h('strong', { style: { display: 'block', fontSize: '13px' } }, `仅分析未分析过的视频 (${selectedAnalyzeableCount})`), h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '跳过已有分析结果的视频，适合导入后补齐分析。'))
+            ),
+            h('label', { style: { display: 'flex', alignItems: 'flex-start', gap: '9px', padding: '10px', border: `1px solid ${batchAiScope === 'all' ? 'var(--dsw-alias-border-l2)' : 'var(--dsw-alias-border-l1)'}`, borderRadius: '7px', cursor: 'pointer', backgroundColor: batchAiScope === 'all' ? 'var(--dsw-alias-bg-layer-2)' : 'transparent' } },
+              h('input', { type: 'radio', name: 'batch-ai-scope', checked: batchAiScope === 'all', onChange: () => setBatchAiScope('all'), style: { marginTop: '2px' } }),
+              h('span', null, h('strong', { style: { display: 'block', fontSize: '13px' } }, `分析全部所选视频 (${selectedVideoIds.size})`), h('span', { style: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, '包括已分析视频；会重新生成候选并覆盖已有 AI 分析结果。'))
+            ),
+            h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '4px' } },
+              h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setShowBatchAiScopeModal(false) }, '取消'),
+              h('button', {
+                type: 'button', style: buttonPrimaryStyle,
+                disabled: isBatchAiAnalyzing || (batchAiScope === 'unanalyzed' ? selectedAnalyzeableCount === 0 : selectedVideoIds.size === 0),
+                onClick: () => handleBatchAiAnalyze(batchAiScope)
+              }, Icon.sparkles({ size: 13 }), batchAiScope === 'all' ? `分析全部 ${selectedVideoIds.size} 个` : `分析未分析 ${selectedAnalyzeableCount} 个`)
+            )
+          )
+        ),
+
         // 3. Upgraded Import Modal with Parent Folder Display & Loading Feedback
         showScanModal && renderAssetImportDialog({
           isMobile, overlayStyle: modalOverlayStyle, cardStyle: modalCardStyle, ariaLabel: '导入视频素材',
@@ -4354,6 +4408,15 @@ window.__ModuleLoader__.load({
                     h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' } }, '最大并发',
                       h('input', { type: 'number', 'aria-label': 'AI 分析最大并发', min: 1, max: 8, step: 1, value: aiConcurrency, onChange: e => setAiConcurrency(e.target.value), style: { ...inputStyle, width: '90px' } }),
                       h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '1–8'))
+                  ),
+                  h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '8px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' } },
+                    h('div', { style: { maxWidth: '560px' } },
+                      h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '失败自动重试'),
+                      h('div', { style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.55' } }, '单条视频分析失败后自动重试的次数。重试仍失败时，卡片会保留最终失败原因。')
+                    ),
+                    h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' } }, '重试次数',
+                      h('input', { type: 'number', 'aria-label': 'AI 分析失败重试次数', min: 0, max: 3, step: 1, value: aiRetryCount, onChange: e => setAiRetryCount(e.target.value), style: { ...inputStyle, width: '90px' } }),
+                      h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '0–3'))
                   )
                 ),
                 settingsSection === 'prompts' && h('div', { style: { display: 'flex', flexDirection: 'column', gap: '16px' } },

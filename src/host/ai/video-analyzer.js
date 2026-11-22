@@ -31,6 +31,7 @@ export class VideoAiAnalyzer {
       custom_model: this.db.getSetting('ai_model') || '',
       reasoning_effort: this.db.getSetting('ai_reasoning_effort') || '',
       concurrency: Math.max(1, Math.min(8, Number(this.db.getSetting('ai_concurrency')) || 3)),
+      retry_count: this.db.getSetting('ai_retry_count') == null ? 1 : Math.max(0, Math.min(3, Number(this.db.getSetting('ai_retry_count')) || 0)),
       model: (mode === 'custom'
         ? this.db.getSetting('ai_model') : this.db.getSetting('ai_dsh_model')) || '',
       base_url: this.safeBaseUrl(this.db.getSetting('ai_base_url') || ''),
@@ -104,7 +105,7 @@ export class VideoAiAnalyzer {
     return info;
   }
 
-  async analyzeImagePrompt({ imagePath, promptText, maxTokens = 2048, temperature = 0.2 } = {}) {
+  async analyzeImagePrompt({ imagePath, promptText, temperature = 0.2 } = {}) {
     const config=this.getAiSettings();
     if(config.mode==='dsh')await this.validateDshRoute(config.provider,config.model,config.reasoning_effort);
     else if(config.mode==='custom'){
@@ -124,7 +125,7 @@ export class VideoAiAnalyzer {
         for await(const chunk of this.llm.stream({
           provider:config.provider,model:config.model,
           messages:[{role:'user',content:[{type:'text',text:promptText},{type:'image',attachment:image}]}],
-          temperature,maxTokens,...(config.reasoning_effort?{reasoningEffort:config.reasoning_effort}:{})
+          temperature,...(config.reasoning_effort?{reasoningEffort:config.reasoning_effort}:{})
         })){
           if(chunk.type==='text-delta')content+=chunk.text;
           if(chunk.type==='usage'){
@@ -144,7 +145,7 @@ export class VideoAiAnalyzer {
       let response;
       try{
         response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
-          body:JSON.stringify({model:config.model,messages:[{role:'user',content:[{type:'text',text:promptText},{type:'image_url',image_url:{url:`data:image/png;base64,${imageBuffer.toString('base64')}`}}]}],temperature,max_tokens:maxTokens})});
+          body:JSON.stringify({model:config.model,messages:[{role:'user',content:[{type:'text',text:promptText},{type:'image_url',image_url:{url:`data:image/png;base64,${imageBuffer.toString('base64')}`}}]}],temperature})});
       }catch{throw new Error('自定义 AI 服务请求失败，请检查连接');}
       if(!response.ok)throw new Error(`自定义 AI 服务请求失败 (${response.status})`);
       let data;try{data=await response.json();}catch{throw new Error('自定义 AI 服务返回了无效 JSON');}
@@ -172,7 +173,9 @@ export class VideoAiAnalyzer {
       (mode === 'custom' ? this.db.getSetting('ai_model') : this.db.getSetting('ai_dsh_model'))) ?? '';
     const reasoningEffort = Object.hasOwn(patch, 'reasoning_effort') ? patch.reasoning_effort : current.reasoning_effort;
     const concurrency = Object.hasOwn(patch, 'concurrency') ? Number(patch.concurrency) : current.concurrency;
+    const retryCount = Object.hasOwn(patch, 'retry_count') ? Number(patch.retry_count) : current.retry_count;
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error('AI 并发数必须为 1–8 的整数');
+    if (!Number.isInteger(retryCount) || retryCount < 0 || retryCount > 3) throw new Error('失败重试次数必须为 0–3 的整数');
     if (mode === 'dsh') await this.validateDshRoute(provider, model, reasoningEffort);
     if (mode === 'custom') {
       const baseUrl = patch.base_url ?? current.base_url;
@@ -195,6 +198,7 @@ export class VideoAiAnalyzer {
     }
     if (patch.prompt_template !== undefined) this.db.setSetting('ai_prompt_template', patch.prompt_template);
     this.db.setSetting('ai_concurrency', String(concurrency));
+    this.db.setSetting('ai_retry_count', String(retryCount));
     return this.getAiSettings();
   }
 
@@ -298,7 +302,7 @@ export class VideoAiAnalyzer {
             messages: [{ role: 'user', content: [
               { type: 'text', text: promptText }, { type: 'image', attachment: image }
             ] }],
-            temperature: 0.3, maxTokens: 4096,
+            temperature: 0.3,
             ...(reasoningEffort ? { reasoningEffort } : {})
           };
           for await (const chunk of this.llm.stream(options)) {
@@ -338,7 +342,7 @@ export class VideoAiAnalyzer {
           ['missing_content', /missing[^\n]{0,80}content|content[^\n]{0,80}missing/i],
           ['reasoning_model', /reasoning[^\n]{0,80}model|model[^\n]{0,80}reasoning/i]
         ].filter(([, pattern]) => pattern.test(message)).map(([label]) => label);
-        throw new Error(`DSH 模型请求未成功完成 (${finish?.kind || '无结束信号'}${code ? `, ${code}` : ''}${status ? `, HTTP ${status}` : ''}${hints.length ? `, 参数线索: ${hints.join('/')}` : ''})`);
+        throw new Error(`DSH 模型请求未成功完成 (${finish?.kind === 'max-tokens' ? '模型输出达到长度上限 max-tokens' : finish?.kind || '无结束信号'}${code ? `, ${code}` : ''}${status ? `, HTTP ${status}` : ''}${hints.length ? `, 参数线索: ${hints.join('/')}` : ''})`);
       }
     } else {
       const apiKey = this.db.getSetting('ai_api_key');
@@ -354,8 +358,7 @@ export class VideoAiAnalyzer {
               { type: 'text', text: promptText },
               { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBuffer.toString('base64')}` } }
             ] }],
-            temperature: 0.3,
-            max_tokens: 4096
+            temperature: 0.3
           })
         });
       } catch { throw new Error('自定义 AI 服务请求失败，请检查连接'); }
@@ -426,7 +429,8 @@ export class VideoAiAnalyzer {
       ai_completion_tokens: completionTokens,
       ai_total_tokens: totalTokens,
       ai_latency_ms: latencyMs,
-      ai_analyzed_at: nowIso
+      ai_analyzed_at: nowIso,
+      ai_error: null
     });
 
     if (sqlite) sqlite.exec('COMMIT');

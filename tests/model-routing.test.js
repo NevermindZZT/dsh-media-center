@@ -228,3 +228,12 @@ test('AI concurrency is configurable and validated between 1 and 8', async t => 
   await assert.rejects(f.analyzer.saveAiSettings({ concurrency: 9 }), /1–8/);
   await assert.rejects(f.analyzer.saveAiSettings({ concurrency: 1.5 }), /1–8/);
 });
+
+test('AI failure retry count is configurable and validated between 0 and 3', async t => {
+  const f = fixture(t, { ai_mode:'dsh', ai_provider:'p1', ai_dsh_model:'vision' });
+  assert.equal(f.analyzer.getAiSettings().retry_count,1);
+  const saved = await f.analyzer.saveAiSettings({ retry_count: 2 });
+  assert.equal(saved.retry_count,2);
+  assert.equal(f.settings.get('ai_retry_count'),'2');
+  await assert.rejects(f.analyzer.saveAiSettings({ retry_count: 4 }), /0–3/);
+});

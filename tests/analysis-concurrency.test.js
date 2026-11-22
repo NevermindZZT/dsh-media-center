@@ -52,3 +52,22 @@ test('batch AI analysis handles one failure without stopping other workers', asy
   assert.equal(response.body.results.find(item => item.video_id === 'vid_b').success, false);
   assert.equal(response.body.results.filter(item => item.success).length, 3);
 });
+
+test('failed analysis retries and persists the final failure reason', async () => {
+  let calls = 0;
+  const patches = [];
+  const videoAiAnalyzer = {
+    getAiSettings: () => ({ concurrency: 1, retry_count: 2 }),
+    analyzeVideo: async () => { calls++; throw new Error('模型输出达到上限 (max-tokens)'); }
+  };
+  const db = {
+    getVideoById: () => ({ id: 'vid_a', status: 'imported' }),
+    upsertVideo: patch => { patches.push(patch); return patch; }
+  };
+  const handler = createMediaCenterApiHandler({ db, mediaEngine: {}, videoAiAnalyzer });
+  const response = await request(handler, 'POST', '/api/media-center/videos/vid_a/ai-analyze');
+  assert.equal(response.status, 500);
+  assert.equal(calls, 3);
+  assert.equal(patches.at(-1).status, 'error');
+  assert.match(patches.at(-1).ai_error, /max-tokens/);
+});

@@ -161,7 +161,7 @@ export class EditingWorkflow {
         '{"summary":"...","rhythm_character":"...","energy_arc":"...","tempo_hypotheses":[{"bpm":96,"confidence":"low","reason":"..."}],"beat_time_hypotheses":[{"time_fraction":0.25,"confidence":"low","reason":"..."}],"scene_suggestions":[{"scene":"...","reason":"...","fit":"medium"}],"style_tags":["..."],"uncertainties":["..."]}',
         'scene_suggestions 最多 6 条；style_tags 最多 12 个简短标签；fit/confidence 只允许 low、medium 或 high；没有可靠依据时返回空数组。'
       ].join('\n');
-      const result=await this.videoAiAnalyzer.analyzeImagePrompt({imagePath:spectrogramPath,promptText,maxTokens:2048,temperature:0.2});
+      const result=await this.videoAiAnalyzer.analyzeImagePrompt({imagePath:spectrogramPath,promptText,temperature:0.2});
       if(!sameFingerprint(before,statFingerprint(music.file_path,'音乐')))throw new Error(`音乐源文件已变化：${sourceName(music.file_path)}`);
       const saved=this.musicAnalyses.saveModelInterpretation(analysisId,identity,result.interpretation,result.audit);
       return {analysis_id:analysisId,model_interpretation:saved.model_interpretation,model_interpretation_provenance:saved.model_interpretation_provenance,
