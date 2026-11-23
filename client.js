@@ -2718,7 +2718,11 @@ window.__ModuleLoader__.load({
         color: 'var(--dsw-alias-label-primary)',
         borderRadius: '5px',
         fontSize: '12px',
-        outline: 'none'
+        outline: 'none',
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box'
       };
 
       const modalOverlayStyle = {

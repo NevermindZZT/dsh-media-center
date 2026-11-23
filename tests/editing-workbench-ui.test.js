@@ -11,6 +11,11 @@ assert.ok(tabsStart>=0&&start>=0&&end>start,'MusicLibraryWorkbench and navigatio
 const panelSource=source.slice(Math.min(tabsStart,start),end);
 const mainSource=source.slice(source.indexOf('    function MediaCenterWorkbench('));
 
+test('shared input style prevents two-column fields from overlapping',()=>{
+  assert.match(source,/const inputStyle = \{[\s\S]*?minWidth: 0[\s\S]*?boxSizing: 'border-box'/);
+  assert.match(source,/const fieldStyle = \{ \.\.\.inputStyle, width: '100%' \}/);
+});
+
 function harness(){
  const values=[],refs=[],effectDeps=[],pendingEffects=[],calls=[],responses=[],confirmMessages=[];
  let stateCursor=0,refCursor=0,effectCursor=0,tree;
