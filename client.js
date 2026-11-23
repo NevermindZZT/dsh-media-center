@@ -1267,6 +1267,8 @@ window.__ModuleLoader__.load({
 
       const fieldStyle = { ...inputStyle, width: '100%' };
       const smallButton = { ...buttonSecondaryStyle, padding: '2px 7px', fontSize: '11px' };
+      const projectCardStyle = { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '9px', padding: '12px', backgroundColor: 'var(--dsw-alias-bg-layer-1)' };
+      const posterVideoId = detail?.project?.tracks?.video?.[0]?.source?.id;
 
       return h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '12px', padding: '12px', overflow: 'hidden' } },
         h('aside', { style: { width: isMobile ? '100%' : '310px', flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '8px' } },
@@ -1297,19 +1299,24 @@ window.__ModuleLoader__.load({
             (exportResult.warnings || []).map((warning, index) => h('div', { key: index, style: { marginTop: '3px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, `注意：${warning}`))),
           !detail && h('div', { style: { padding: '20px', fontSize: '13px', color: 'var(--dsw-alias-label-secondary)' } }, '选择左侧项目查看详情。'),
           detail && h(React.Fragment, null,
-            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' } },
-              h('div', { style: { minWidth: 0 } },
-                editing ? h('input', { type: 'text', 'aria-label': '项目标题', value: draft.title, onChange: e => setDraft(current => ({ ...current, title: e.target.value })), style: { ...fieldStyle, fontSize: '16px', fontWeight: 600 } })
-                  : h('h3', { style: { margin: 0, fontSize: '18px', overflowWrap: 'anywhere' } }, detail.title),
-                h('div', { style: { marginTop: '4px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, `revision ${detail.revision} · ${formatSeconds(seconds(detail.project.duration_frames, detail.project.fps))} · ${detail.project.tracks.video.length} 段视频 · ${detail.project.canvas?.width || 1920}×${detail.project.canvas?.height || 1080} · ${detail.project.fps.num / detail.project.fps.den} fps`)),
-              h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
-                editing ? h(React.Fragment, null,
-                  h('button', { type: 'button', style: buttonSecondaryStyle, disabled: busy, onClick: () => { setEditing(false); setDraft(JSON.parse(JSON.stringify(detail.project))); } }, '取消'),
-                  h('button', { type: 'button', style: buttonPrimaryStyle, disabled: busy, onClick: saveProject }, busy ? '保存中…' : '保存修改'))
-                  : h(React.Fragment, null,
-                    h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setEditing(true) }, Icon.edit({ size: 12 }), '编辑'),
-                    h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => { setShowExport(true); setExportResult(null); } }, Icon.scissors({ size: 12 }), '导出工程'),
-                    h('button', { type: 'button', style: { ...buttonSecondaryStyle, color: '#ef4444' }, onClick: removeProject }, Icon.trash({ size: 12 }), '删除')))),
+            h('div', { style: { ...projectCardStyle, display: 'flex', gap: '14px', alignItems: 'stretch', flexWrap: 'wrap' } },
+              h('div', { style: { width: isMobile ? '100%' : '180px', height: isMobile ? '120px' : '104px', flexShrink: 0, borderRadius: '6px', overflow: 'hidden', backgroundColor: '#111' } },
+                posterVideoId && h('img', { src: `/api/media-center/videos/${encodeURIComponent(posterVideoId)}/storyboard`, alt: '', loading: 'lazy', style: { width: '100%', height: '100%', objectFit: 'cover' }, onError: e => { e.currentTarget.style.display = 'none'; } })),
+              h('div', { style: { flex: 1, minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '5px' } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' } },
+                  h('div', { style: { minWidth: 0 } },
+                    editing ? h('input', { type: 'text', 'aria-label': '项目标题', value: draft.title, onChange: e => setDraft(current => ({ ...current, title: e.target.value })), style: { ...fieldStyle, fontSize: '16px', fontWeight: 600 } })
+                      : h('h3', { style: { margin: 0, fontSize: '18px', overflowWrap: 'anywhere' } }, detail.title),
+                    h('div', { style: { marginTop: '4px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' } }, `revision ${detail.revision} · ${formatSeconds(seconds(detail.project.duration_frames, detail.project.fps))} · ${detail.project.tracks.video.length} 段视频 · ${detail.project.canvas?.width || 1920}×${detail.project.canvas?.height || 1080} · ${detail.project.fps.num / detail.project.fps.den} fps`)),
+                  h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+                    editing ? h(React.Fragment, null,
+                      h('button', { type: 'button', style: buttonSecondaryStyle, disabled: busy, onClick: () => { setEditing(false); setDraft(JSON.parse(JSON.stringify(detail.project))); } }, '取消'),
+                      h('button', { type: 'button', style: buttonPrimaryStyle, disabled: busy, onClick: saveProject }, busy ? '保存中…' : '保存修改'))
+                      : h(React.Fragment, null,
+                        h('button', { type: 'button', style: buttonSecondaryStyle, onClick: () => setEditing(true) }, Icon.edit({ size: 12 }), '编辑'),
+                        h('button', { type: 'button', style: buttonPrimaryStyle, onClick: () => { setShowExport(true); setExportResult(null); } }, Icon.scissors({ size: 12 }), '导出工程'),
+                        h('button', { type: 'button', style: { ...buttonSecondaryStyle, color: '#ef4444' }, onClick: removeProject }, Icon.trash({ size: 12 }), '删除')))),
+              )),
             h('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary)', lineHeight: '1.55', padding: '10px', borderRadius: '7px', backgroundColor: 'var(--dsw-alias-bg-layer-2)' } }, detail.project.rationale),
             h('div', { style: { fontSize: '13px', fontWeight: 600 } }, '视频轨'),
             editing
@@ -1327,7 +1334,7 @@ window.__ModuleLoader__.load({
                     h('input', { type: 'number', min: 0, step: 0.01, value: clip.source_out_seconds, onChange: e => changeClip(index, 'source_out_seconds', e.target.value), style: { ...fieldStyle, marginTop: '3px' } }))),
                 h('div', { style: { fontSize: '10px', color: 'var(--dsw-alias-label-secondary)' } }, `时间线 ${formatSeconds(seconds(clip.timeline_start_frame, draft.fps))} → ${formatSeconds(seconds(clip.timeline_end_frame, draft.fps))}`)
               ))
-              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, (detail.project.tracks.video || []).map((clip, index) => h('div', { key: clip.id, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '9px', fontSize: '12px' } },
+              : h('div', { style: { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))', gap: '8px' } }, (detail.project.tracks.video || []).map((clip, index) => h('div', { key: clip.id, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: '6px', padding: '9px', fontSize: '12px', minWidth: 0, backgroundColor: 'var(--dsw-alias-bg-base)' } },
                 h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px' } },
                   h('strong', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${index + 1}. ${sourceName(clip)}`),
                   h('span', { style: { color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' } }, `${formatSeconds(clip.source_in_seconds)} — ${formatSeconds(clip.source_out_seconds)}`)),
