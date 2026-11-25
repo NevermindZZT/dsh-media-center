@@ -557,8 +557,10 @@ window.__ModuleLoader__.load({
       const [features,setFeatures]=useState(null);
       const [timelineView,setTimelineView]=useState({start:0,duration:0});
       const [cutMode,setCutMode]=useState('standard');
+      const [overlay,setOverlay]=useState('cuts');
       const [playhead,setPlayhead]=useState(0);
       const canvasRef=useRef(null),audioRef=useRef(null),timelineDragRef=useRef(null);
+      const stripsRef=useRef(null),evidenceRef=useRef({onsets:[]}),viewRef=useRef({start:0,duration:0}),wheelFrameRef=useRef(0);
       const [analysisId,setAnalysisId]=useState('');
       const [loading,setLoading]=useState(false);
       const [busy,setBusy]=useState('');
@@ -774,26 +776,12 @@ window.__ModuleLoader__.load({
       const busyLabel=busy==='import'?`正在导入 ${importProgress.completed}/${importProgress.total}`:{browse:'正在浏览',rights:'正在记录声明',analyze:'正在测量',remove:'正在移除'}[busy];
       const clock=value=>{const total=Math.max(0,Math.floor(Number(value)||0));return `${Math.floor(total/60)}:${String(total%60).padStart(2,'0')}`;};
       const analysisAudio=selected&&sourceCurrent?h('audio',{ref:audioRef,controls:true,preload:'metadata','aria-label':`试听 ${selected.title||selected.file_name}`,src:`/api/media-center/editing/music/${encodeURIComponent(selected.id)}/stream`,onTimeUpdate:e=>setPlayhead(e.currentTarget.currentTime||0),style:{width:'100%'}}):null;
-      const cutSpacing={slow:4,standard:2,fast:0.8,extreme:0.4}[cutMode]||2;
-      const visibleCuts=(()=>{
-        const source=[...(Array.isArray(analysis?.cut_candidates)?analysis.cut_candidates:[])];
-        if(analysis){
-          const existing=new Set(source.map(cut=>Math.round(cut.time*100)));
-          for(const time of (analysis.beats?.times||[])){
-            if(!existing.has(Math.round(time*100))){source.push({time,type:'beat',score:0.62,section_id:null});existing.add(Math.round(time*100));}
-          }
-          for(const section of (analysis.sections||[])){
-            if(!existing.has(Math.round(section.start*100))){source.push({time:section.start,type:'section_boundary',score:0.95,section_id:section.id});existing.add(Math.round(section.start*100));}
-          }
-          source.sort((a,b)=>a.time-b.time||b.score-a.score);
-        }
-        const kept=[];
-        for(const cut of source){
-          const last=kept[kept.length-1];
-          if(last&&cut.time-last.time<cutSpacing){if(cut.score>last.score)kept[kept.length-1]=cut;continue;}
-          kept.push(cut);
-        }
-        return kept;
+      const cutScoreFloor={slow:0.82,standard:0.66,fast:0.5,extreme:0}[cutMode]||0.66;
+      const editingCuts=(()=>{
+        const points=(analysis?.cut_candidates||[]).filter(cut=>cut.type==='change');
+        const filtered=points.length?points.filter(point=>point.score>=cutScoreFloor):[];
+        const source=filtered.length?filtered:(analysis?.sections||[]).slice(1).map(section=>({time:section.start}));
+        return source.map((point,index)=>({time:point.time,index:index+1}));
       })();
       const seekTo=time=>{
         const target=Math.max(0,Math.min(Number(selected?.duration)||Infinity,Number(time)||0));
@@ -802,7 +790,9 @@ window.__ModuleLoader__.load({
       };
       const drawTimeline=()=>{
         const canvas=canvasRef.current;if(!canvas)return;
-        const width=Math.max(320,canvas.clientWidth||800),height=160,dpr=Math.min(2,window.devicePixelRatio||1);
+        const width=Math.max(320,canvas.clientWidth||800);
+        const height=Math.max(120,Math.round(canvas.clientHeight||150));
+        const dpr=Math.min(2,window.devicePixelRatio||1);
         if(canvas.width!==Math.round(width*dpr)||canvas.height!==Math.round(height*dpr)){canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);}
         const ctx=canvas.getContext('2d');if(!ctx)return;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,width,height);
         const style=getComputedStyle(canvas);const background=style.getPropertyValue('--dsw-alias-bg-base').trim()||'#0f1115';
@@ -812,88 +802,142 @@ window.__ModuleLoader__.load({
         const viewStart=Math.max(0,Math.min(total-1,timelineView.start||0));
         const viewDuration=Math.max(1,Math.min(total-viewStart,timelineView.duration||total));
         const xOf=time=>(time-viewStart)/viewDuration*width;
-        const yRibbon=6,yWave=28,ySpec=78,yRuler=146;
+        canvas.dataset.viewStart=String(Number(viewStart.toFixed(3)));canvas.dataset.viewDuration=String(Number(viewDuration.toFixed(3)));
+        canvas.dataset.beats=String((analysis?.beats?.times||[]).length);canvas.dataset.downbeats=String((analysis?.beats?.downbeats||[]).length);
+        const yRibbon=4,ribbonHeight=18,yWave=26,waveHeight=32,ySpec=64,yRuler=height-12,specHeight=Math.max(36,Math.round(yRuler-4-ySpec));
         const sectionColors={low:'#0f766e',medium:'#475569',high:'#2563eb'};
         const sections=analysis?.sections||[];
         for(const section of sections){
           const x1=Math.max(0,xOf(section.start)),x2=Math.min(width,xOf(section.end));
-          if(x2<=x1)continue;ctx.fillStyle=sectionColors[section.energy]||sectionColors.medium;ctx.globalAlpha=0.7;ctx.fillRect(x1,yRibbon,Math.max(1,x2-x1),18);ctx.globalAlpha=1;
+          if(x2<=x1)continue;ctx.fillStyle=sectionColors[section.energy]||sectionColors.medium;ctx.globalAlpha=0.7;ctx.fillRect(x1,yRibbon,Math.max(1,x2-x1),ribbonHeight);ctx.globalAlpha=1;
           if(x2-x1>44){ctx.fillStyle='#fff';ctx.font='10px sans-serif';ctx.fillText(section.label,x1+5,yRibbon+12);}
         }
-        if(features?.data?.length){
-          const featureBytes=features.columns*features.bands;
-          if(features.columns&&features.bands){
-            const image=ctx.createImageData(width,64);
-            for(let x=0;x<width;x++){
-              const time=viewStart+x/width*viewDuration;
-              const column=Math.max(0,Math.min(features.columns-1,Math.floor(time*20)));
-              for(let band=0;band<64;band++){
-                const value=features.data[column*features.bands+Math.min(features.bands-1,Math.floor(band/64*features.bands))]/255;
-                const index=(x+band*width)*4;
-                image.data[index]=Math.round(12+230*value*value);image.data[index+1]=Math.round(35+185*value);image.data[index+2]=Math.round(110+130*(1-value));image.data[index+3]=235;
-              }
-            }
-            ctx.putImageData(image,0,ySpec);
-          }
-          const wave=new Int8Array(features.data.buffer,features.data.byteOffset+featureBytes,features.data.length-featureBytes);
-          const buckets=features.waveformBuckets||Math.floor(wave.length/2);
-          if(buckets){
-            ctx.strokeStyle='#93c5fd';ctx.beginPath();
-            for(let x=0;x<width;x++){
-              const time=viewStart+x/width*viewDuration,bucket=Math.min(buckets-1,Math.max(0,Math.floor(time/total*buckets)));
-              const min=wave[bucket*2]/128,max=wave[bucket*2+1]/128;
-              ctx.moveTo(x+0.5,yWave+22+min*15);ctx.lineTo(x+0.5,yWave+22+max*15);
-            }
-            ctx.stroke();
-          }
-        }else{
-          ctx.fillStyle=text;ctx.font='11px sans-serif';ctx.fillText(analysis?'特征数据尚未加载':'运行分析后显示波形与频谱',12,yWave+34);
+        const strips=stripsRef.current;
+        if(strips&&strips.spec){
+          const fps=strips.fps;
+          const sx=Math.max(0,Math.min(strips.columns-1,viewStart*fps));
+          const sw=Math.max(1,Math.min(strips.columns-sx,viewDuration*fps));
+          ctx.drawImage(strips.spec,sx,0,sw,strips.bands,0,ySpec,width,specHeight);
+          const wsx=Math.max(0,Math.min(strips.buckets-1,viewStart/total*strips.buckets));
+          const wsw=Math.max(1,Math.min(strips.buckets-wsx,viewDuration/total*strips.buckets));
+          ctx.drawImage(strips.wave,wsx,0,wsw,strips.wave.height,0,yWave,width,waveHeight);
+        }else if(!features?.data?.length){
+          ctx.fillStyle=text;ctx.font='11px sans-serif';ctx.fillText(analysis?'特征数据尚未加载':'运行分析后显示波形与频谱',12,yWave+waveHeight-4);
         }
         const beats=analysis?.beats||{};
-        for(const time of (beats.quarter_times||[])){
-          if(time<viewStart||time>viewStart+viewDuration)continue;const x=xOf(time);ctx.strokeStyle='rgba(148,163,184,0.18)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,ySpec);ctx.lineTo(x,yRuler);ctx.stroke();
+        const onsets=evidenceRef.current.onsets;
+        const bars=beats.downbeats||[];
+        if(overlay!=='cuts'&&bars.length){
+          ctx.strokeStyle='rgba(245,158,11,0.22)';ctx.lineWidth=1;ctx.beginPath();
+          for(const time of bars){
+            if(time<viewStart||time>viewStart+viewDuration)continue;const x=xOf(time);
+            ctx.moveTo(x,ySpec);ctx.lineTo(x,yRuler);
+          }
+          ctx.stroke();
         }
-        for(const time of (beats.times||[])){
-          if(time<viewStart||time>viewStart+viewDuration)continue;const x=xOf(time);ctx.strokeStyle='rgba(226,232,240,0.35)';ctx.beginPath();ctx.moveTo(x,ySpec);ctx.lineTo(x,yRuler);ctx.stroke();
+        if(overlay==='all'&&onsets.length){
+          ctx.strokeStyle='rgba(103,232,249,0.16)';ctx.lineWidth=1;ctx.beginPath();
+          for(const time of onsets){
+            if(time<viewStart||time>viewStart+viewDuration)continue;const x=xOf(time);
+            ctx.moveTo(x,ySpec);ctx.lineTo(x,yRuler);
+          }
+          ctx.stroke();
         }
-        ctx.strokeStyle='#f59e0b';ctx.lineWidth=1.5;
-        for(const time of (beats.downbeats||[])){
-          if(time<viewStart||time>viewStart+viewDuration)continue;const x=xOf(time);ctx.beginPath();ctx.moveTo(x,ySpec);ctx.lineTo(x,yRuler);ctx.stroke();
-        }
-        ctx.strokeStyle='#22d3ee';ctx.lineWidth=1;
-        for(const cut of visibleCuts){
-          if(cut.time<viewStart||cut.time>viewStart+viewDuration)continue;const x=xOf(cut.time);ctx.beginPath();ctx.moveTo(x,ySpec-4);ctx.lineTo(x-3,ySpec-10);ctx.lineTo(x+3,ySpec-10);ctx.closePath();ctx.fillStyle='#22d3ee';ctx.fill();
+        const cutsInView=editingCuts.filter(cut=>cut.time>=viewStart&&cut.time<=viewStart+viewDuration);
+        const cutStepPx=cutsInView.length>1?(cutsInView[1].time-cutsInView[0].time)/viewDuration*width:width;
+        ctx.strokeStyle='rgba(34,211,238,0.9)';ctx.lineWidth=1.5;ctx.beginPath();
+        for(const cut of cutsInView){const x=xOf(cut.time);ctx.moveTo(x,yWave);ctx.lineTo(x,yRuler);}
+        ctx.stroke();
+        ctx.fillStyle='#22d3ee';
+        for(const cut of cutsInView){const x=xOf(cut.time);ctx.beginPath();ctx.moveTo(x,ySpec-2);ctx.lineTo(x-3.5,ySpec-9);ctx.lineTo(x+3.5,ySpec-9);ctx.closePath();ctx.fill();}
+        if(cutStepPx>=26){
+          ctx.font='9px sans-serif';
+          for(const cut of cutsInView){
+            const x=xOf(cut.time);const label=String(cut.index);const labelWidth=ctx.measureText(label).width;
+            ctx.fillStyle='rgba(2,6,23,0.72)';ctx.fillRect(x+2,ySpec+1,labelWidth+6,12);
+            ctx.fillStyle='#a5f3fc';ctx.fillText(label,x+5,ySpec+10);
+          }
         }
         ctx.strokeStyle='rgba(226,232,240,0.25)';ctx.beginPath();ctx.moveTo(0,yRuler);ctx.lineTo(width,yRuler);ctx.stroke();
         ctx.fillStyle=text;ctx.font='10px sans-serif';
-        for(let i=0;i<=4;i++){const time=viewStart+viewDuration*i/4;ctx.fillText(clock(time),Math.min(width-34,i/4*width+2),yRuler+14);}
+        for(let i=0;i<=4;i++){const time=viewStart+viewDuration*i/4;ctx.fillText(clock(time),Math.min(width-34,i/4*width+2),Math.min(height-2,yRuler+12));}
         const playX=xOf(playhead);
         if(playX>=0&&playX<=width){ctx.strokeStyle='#ef4444';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(playX,yRibbon);ctx.lineTo(playX,yRuler);ctx.stroke();}
       };
-      useEffect(()=>{drawTimeline();},[analysis,features,timelineView,playhead,cutMode]);
-      useEffect(()=>{const canvas=canvasRef.current;if(!canvas)return;const observer=new ResizeObserver(()=>drawTimeline());observer.observe(canvas);return()=>observer.disconnect();},[analysis,features,timelineView,playhead,cutMode]);
+      useEffect(()=>{viewRef.current=timelineView;},[timelineView]);
+      useEffect(()=>{
+        if(!features?.data?.length||!features.columns||!features.bands){stripsRef.current=null;return;}
+        const columns=features.columns,bands=features.bands,featureBytes=columns*bands;
+        const spec=document.createElement('canvas');spec.width=columns;spec.height=bands;
+        const sctx=spec.getContext('2d');
+        if(!sctx){stripsRef.current=null;return;}
+        const image=sctx.createImageData(columns,bands);
+        const lows=new Uint8Array(bands),highs=new Uint8Array(bands);
+        for(let band=0;band<bands;band++){
+          const histogram=new Uint32Array(256);
+          for(let column=0;column<columns;column++)histogram[features.data[column*bands+band]]++;
+          let seen=0,low=0,high=255;
+          const lowTarget=columns*0.08,highTarget=columns*0.92;
+          for(let value=0;value<256;value++){seen+=histogram[value];if(seen>=lowTarget){low=value;break;}}
+          seen=0;
+          for(let value=0;value<256;value++){seen+=histogram[value];if(seen>=highTarget){high=value;break;}}
+          lows[band]=low;highs[band]=Math.max(low+8,high);
+        }
+        for(let column=0;column<columns;column++){
+          for(let band=0;band<bands;band++){
+            const raw=features.data[column*bands+band];
+            const value=Math.max(0,Math.min(1,(raw-lows[band])/(highs[band]-lows[band])));
+            const index=(column+(bands-1-band)*columns)*4;
+            image.data[index]=Math.round(8+235*value*value);
+            image.data[index+1]=Math.round(24+200*value);
+            image.data[index+2]=Math.round(96+150*(1-value));
+            image.data[index+3]=255;
+          }
+        }
+        sctx.putImageData(image,0,0);
+        const wave=new Int8Array(features.data.buffer,features.data.byteOffset+featureBytes,features.data.length-featureBytes);
+        const buckets=features.waveformBuckets||Math.max(1,Math.floor(wave.length/2));
+        const waveCanvas=document.createElement('canvas');waveCanvas.width=Math.max(1,buckets);waveCanvas.height=64;
+        const wctx=waveCanvas.getContext('2d');
+        if(wctx){
+          wctx.fillStyle='#93c5fd';
+          for(let bucket=0;bucket<buckets;bucket++){
+            const min=Math.max(-1,Math.min(1,wave[bucket*2]/128)),max=Math.max(-1,Math.min(1,wave[bucket*2+1]/128));
+            const y1=32-min*31,y2=32-max*31;
+            wctx.fillRect(bucket,Math.min(y1,y2),1,Math.max(1,Math.abs(y2-y1)));
+          }
+        }
+        stripsRef.current={spec,wave:waveCanvas,buckets,bands,columns,fps:features.fps||20};
+      },[features]);
+      useEffect(()=>{evidenceRef.current.onsets=(analysis?.cut_candidates||[]).filter(cut=>cut.type==='onset').map(cut=>cut.time);},[analysis]);
+      useEffect(()=>{drawTimeline();},[analysis,features,timelineView,playhead,cutMode,overlay]);
+      useEffect(()=>{const canvas=canvasRef.current;if(!canvas)return;const observer=new ResizeObserver(()=>drawTimeline());observer.observe(canvas);return()=>observer.disconnect();},[analysis,features,timelineView,playhead,cutMode,overlay]);
       useEffect(()=>{
         const canvas=canvasRef.current;if(!canvas)return;
         const onWheel=event=>{
           event.preventDefault();
-          const total=Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||timelineView.duration||1;
-          const view=Math.max(1,Math.min(total,timelineView.duration||total));
+          const total=Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||1;
+          const view=viewRef.current;
+          const current=Math.max(1,Math.min(total,view.duration||total));
           const rect=canvas.getBoundingClientRect();
           const ratio=Math.max(0,Math.min(1,(event.clientX-rect.left)/(rect.width||1)));
+          let next;
           if(!event.ctrlKey&&Math.abs(event.deltaX)>Math.abs(event.deltaY)){
-            const delta=event.deltaX/(rect.width||1)*view;
-            setTimelineView(current=>({...current,start:Math.max(0,Math.min(total-(current.duration||total),(current.start||0)+delta))}));
-            return;
+            const delta=event.deltaX/(rect.width||1)*current;
+            next={start:Math.max(0,Math.min(total-current,(view.start||0)+delta)),duration:current};
+          }else{
+            const factor=event.deltaY>0?1.25:0.8;
+            const duration=Math.max(1.5,Math.min(total,current*factor));
+            if(Math.abs(duration-current)<0.01)return;
+            const anchor=(view.start||0)+ratio*current;
+            next={start:Math.max(0,Math.min(total-duration,anchor-ratio*duration)),duration};
           }
-          const factor=event.deltaY>0?1.25:0.8;
-          const next=Math.max(2,Math.min(total,view*factor));
-          if(Math.abs(next-view)<0.01)return;
-          const anchor=(timelineView.start||0)+ratio*view;
-          setTimelineView({start:Math.max(0,Math.min(total-next,anchor-ratio*next)),duration:next});
+          viewRef.current=next;
+          if(!wheelFrameRef.current)wheelFrameRef.current=requestAnimationFrame(()=>{wheelFrameRef.current=0;setTimelineView(viewRef.current);});
         };
         canvas.addEventListener('wheel',onWheel,{passive:false});
-        return ()=>canvas.removeEventListener('wheel',onWheel);
-      },[analysis,selected,timelineView.start,timelineView.duration]);
+        return ()=>{canvas.removeEventListener('wheel',onWheel);if(wheelFrameRef.current){cancelAnimationFrame(wheelFrameRef.current);wheelFrameRef.current=0;}};
+      },[analysis,selected]);
       const musicBodyStyle={...(layout?.bodyStyle||{display:'flex',flex:1,minHeight:0,overflow:'hidden',position:'relative'}),flexDirection:'column',flexWrap:'nowrap',alignContent:'stretch'};
       const musicTopRowStyle={display:'flex',flexDirection:isMobile?'column':'row',flex:isMobile?'0 0 auto':'1 1 auto',minHeight:isMobile?'0':'180px',minWidth:0,overflow:isMobile?'visible':'hidden'};
       const musicLeftStyle={...(layout?.leftColStyle||{width:isMobile?'100%':'220px',minWidth:isMobile?'100%':'170px',display:'flex',flexDirection:'column',backgroundColor:'var(--dsw-alias-bg-layer-1)',overflowY:'auto',overflowX:'hidden'}),flexShrink:0,minHeight:0,height:isMobile?'auto':'100%'};
@@ -1033,18 +1077,19 @@ window.__ModuleLoader__.load({
                   h('button',{type:'button',style:smallButton,onClick:()=>{const total=Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||1;const next=Math.max(2,Math.min(total,(timelineView.duration||total)*0.7));const center=(timelineView.start||0)+(timelineView.duration||total)/2;setTimelineView({start:Math.max(0,Math.min(total-next,center-next/2)),duration:next});}},'放大'),
                   h('button',{type:'button',style:smallButton,onClick:()=>{const total=Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||1;const next=Math.min(total,(timelineView.duration||total)*1.4);const center=(timelineView.start||0)+(timelineView.duration||total)/2;setTimelineView({start:Math.max(0,Math.min(total-next,center-next/2)),duration:next});}},'缩小'),
                   h('button',{type:'button',style:smallButton,onClick:()=>setTimelineView({start:0,duration:Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||1})},'显示全曲'),
-                  h('select',{'aria-label':'切点密度',value:cutMode,onChange:e=>setCutMode(e.target.value),style:{...fieldStyle,width:'110px'}},h('option',{value:'slow'},'慢速切点'),h('option',{value:'standard'},'标准切点'),h('option',{value:'fast'},'快速切点'),h('option',{value:'extreme'},'极快切点')))),
+                  h('select',{'aria-label':'叠加信息',value:overlay,onChange:e=>setOverlay(e.target.value),style:{...fieldStyle,width:'150px'}},h('option',{value:'cuts'},'只显示卡点'),h('option',{value:'bars'},'卡点 + 小节'),h('option',{value:'all'},'卡点 + 小节 + 起音')),
+                  h('select',{'aria-label':'切点密度',value:cutMode,onChange:e=>setCutMode(e.target.value),style:{...fieldStyle,width:'120px'}},h('option',{value:'slow'},'少（强变化）'),h('option',{value:'standard'},'中'),h('option',{value:'fast'},'多'),h('option',{value:'extreme'},'全部变化点')))),
               !sourceCurrent&&h('div',{role:'alert',style:{fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},'源文件缺失或身份已变化；请重新导入后再分析。'),
               !activeRights&&h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap',fontSize:'11px',color:'var(--dsw-alias-label-secondary)'}},
                 h('span',null,'当前只有授权未知状态。'),
                 h('button',{type:'button',style:secondary,disabled:!!busy||!sourceCurrent,onClick:confirmPersonal},'确认个人使用权限')),
               h('canvas',{ref:canvasRef,'aria-label':'音乐波形、频谱、段落与拍点时间轴',style:{width:'100%',height:isMobile?'132px':'150px',display:'block',border:'1px solid var(--dsw-alias-border-l1)',borderRadius:'8px',cursor:'grab',touchAction:'none'},
-                onMouseDown:e=>{timelineDragRef.current={x:e.clientX,start:timelineView.start||0,moved:false};},
-                onMouseMove:e=>{const drag=timelineDragRef.current;if(!drag)return;const width=e.currentTarget.clientWidth||1;const total=Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||1;const delta=(e.clientX-drag.x)/width*(timelineView.duration||total);if(Math.abs(e.clientX-drag.x)>3)drag.moved=true;setTimelineView(current=>({...current,start:Math.max(0,Math.min(total-(current.duration||total),drag.start-delta))}));},
-                onMouseUp:e=>{const drag=timelineDragRef.current;timelineDragRef.current=null;if(drag&&!drag.moved){const rect=e.currentTarget.getBoundingClientRect();const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));seekTo((timelineView.start||0)+ratio*(timelineView.duration||Number(analysis?.analysis_window?.duration_seconds)||0));}},
+                onMouseDown:e=>{timelineDragRef.current={x:e.clientX,start:viewRef.current.start||0,moved:false};},
+                onMouseMove:e=>{const drag=timelineDragRef.current;if(!drag)return;const width=e.currentTarget.clientWidth||1;const total=Number(analysis?.analysis_window?.duration_seconds)||Number(selected?.duration)||1;const view=viewRef.current;const duration=view.duration||total;const delta=(e.clientX-drag.x)/width*duration;if(Math.abs(e.clientX-drag.x)>3)drag.moved=true;const next={start:Math.max(0,Math.min(total-duration,drag.start-delta)),duration};viewRef.current=next;setTimelineView(next);},
+                onMouseUp:e=>{const drag=timelineDragRef.current;timelineDragRef.current=null;if(drag&&!drag.moved){const rect=e.currentTarget.getBoundingClientRect();const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));const view=viewRef.current;const span=view.duration||Number(analysis?.analysis_window?.duration_seconds)||0;const target=(view.start||0)+ratio*span;const tolerance=6/(rect.width||1)*span;let snapped=target;for(const cut of editingCuts){if(Math.abs(cut.time-target)<=tolerance){snapped=cut.time;break;}}seekTo(snapped);}},
                 onMouseLeave:()=>{timelineDragRef.current=null;}}),
               analysis&&h('div',{style:{display:'flex',alignItems:'center',gap:'12px',flexWrap:'wrap',fontSize:'10px',color:'var(--dsw-alias-label-secondary)'}},
-                h('span',null,'色带 = 段落结构'),h('span',null,'黄线 = 小节强拍'),h('span',null,'青色三角 = 切点'),h('span',null,'主滚轮缩放 · 侧滚平移 · 拖动平移'),h('span',null,`${analysis.beats.downbeats.length} 个强拍`))
+                h('span',null,'色带 = 段落结构'),h('span',null,'青色竖线 + 编号 = 建议卡点（段落切换 / 能量跃迁 / 强起音，已吸附拍点）'),h('span',null,`共 ${editingCuts.length} 个卡点`),h('span',null,'主滚轮缩放 · 侧滚平移 · 拖动平移'))
           ))),
           importDialog
       );

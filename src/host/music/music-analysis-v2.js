@@ -12,8 +12,8 @@ export const WAVEFORM_BUCKETS = 3000;
 const SAMPLE_RATE = 22050;
 const FFT_SIZE = 1024;
 const HOP_SIZE = 512;
-const MIN_SECTION_SECONDS = 4;
-const MAX_SECTIONS = 8;
+const MIN_SECTION_SECONDS = 8;
+const MAX_SECTIONS = 10;
 const MIN_ONSET_GAP_SECONDS = 0.08;
 const MAX_CUT_CANDIDATES = 6000;
 
@@ -139,7 +139,7 @@ function detectOnsets(features) {
   for (let i = 2; i < features.count - 2; i++) {
     let local = 0, n = 0;
     for (let j = Math.max(0, i - window); j < i; j++) { local += env[j]; n++; }
-    const threshold = Math.max(average * 0.45, deviation * 0.35, n ? local / n * 1.35 : 0);
+    const threshold = Math.max(average * 0.3, deviation * 0.22, n ? local / n * 1.15 : 0);
     if (env[i] <= threshold || env[i] < env[i - 1] || env[i] <= env[i + 1]) continue;
     const time = i / features.frameRate;
     const last = onsets[onsets.length - 1];
@@ -251,6 +251,84 @@ function beatGrid(features, start, end, tempo) {
   return { times, strengths, quarterTimes, quarterStrengths, period, confidence };
 }
 
+// Dynamic-programming beat tracker: the onset envelope picks each beat where the music actually
+// accents, while a tempo penalty keeps the grid near the global period, so local tempo drift is
+// followed instead of being averaged into one rigid grid for the whole song.
+function trackBeats(features, primary, duration) {
+  if (!primary) return null;
+  const fps = features.frameRate;
+  const frames = features.count;
+  const periodFrames = (60 / primary.bpm) * fps;
+  if (!(periodFrames > 2)) return null;
+  const minGap = Math.max(2, Math.round(periodFrames * 0.7));
+  const maxGap = Math.max(minGap + 1, Math.round(periodFrames * 1.4));
+  const peak = percentile([...features.envelope], 0.95) || 1;
+  const prefix = new Float64Array(frames + 1);
+  for (let i = 0; i < frames; i++) prefix[i + 1] = prefix[i] + features.envelope[i];
+  const half = Math.max(2, Math.round(fps * 0.4));
+  const onset = new Float32Array(frames);
+  for (let i = 0; i < frames; i++) {
+    const from = Math.max(0, i - half), to = Math.min(frames, i + half + 1);
+    const local = (prefix[to] - prefix[from]) / (to - from);
+    onset[i] = Math.max(0, features.envelope[i] - local) / peak;
+  }
+  const tightness = 1.2;
+  const score = new Float64Array(frames).fill(-Infinity);
+  const back = new Int32Array(frames).fill(-1);
+  let bestEnd = -1, bestScore = -Infinity;
+  for (let i = 0; i < frames; i++) {
+    let carry = 0, carryIndex = -1;
+    for (let p = Math.max(0, i - maxGap); p <= i - minGap; p++) {
+      if (score[p] === -Infinity) continue;
+      const value = score[p] - tightness * Math.log((i - p) / periodFrames) ** 2;
+      if (value > carry) { carry = value; carryIndex = p; }
+    }
+    score[i] = onset[i] + (carryIndex >= 0 ? carry : 0);
+    back[i] = carryIndex;
+    if (score[i] > bestScore) { bestScore = score[i]; bestEnd = i; }
+  }
+  if (bestEnd < 0) return null;
+  const indexes = [];
+  for (let i = bestEnd; i >= 0; i = back[i]) { indexes.push(i); if (back[i] < 0) break; }
+  indexes.reverse();
+  if (indexes.length < 4) return null;
+  const times = [], strengths = [];
+  for (const index of indexes) {
+    const time = index / fps;
+    if (time > duration) continue;
+    times.push(round(time, 4));
+    strengths.push(round(clamp01(features.envelope[index] / peak), 3));
+  }
+  if (times.length < 4) return null;
+  const quarterTimes = [], quarterStrengths = [];
+  const nominalPeriod = 60 / primary.bpm;
+  for (let i = 0; i < times.length; i++) {
+    const next = times[i + 1];
+    let interval = next != null ? next - times[i] : nominalPeriod;
+    interval = Math.max(nominalPeriod * 0.7, Math.min(nominalPeriod * 1.4, interval));
+    for (let subdivision = 0; subdivision < 4; subdivision++) {
+      const time = times[i] + subdivision * interval / 4;
+      if (time >= duration) continue;
+      const last = quarterTimes[quarterTimes.length - 1];
+      if (last != null && time <= last) continue;
+      const index = Math.min(frames - 1, Math.max(0, Math.round(time * fps)));
+      quarterTimes.push(round(time, 4));
+      quarterStrengths.push(round(clamp01(features.envelope[index] / peak), 3));
+    }
+  }
+  const meter = 4;
+  let bestClass = 0, bestSum = -Infinity;
+  for (let offset = 0; offset < meter; offset++) {
+    let sum = 0;
+    for (let i = offset; i < times.length; i += meter) sum += strengths[i] || 0;
+    if (sum > bestSum) { bestSum = sum; bestClass = offset; }
+  }
+  const downbeats = [];
+  for (let i = bestClass; i < times.length; i += meter) downbeats.push(times[i]);
+  const confidence = clamp01(mean(strengths) * 1.2);
+  return { times, strengths, quarterTimes, quarterStrengths, downbeats, confidence };
+}
+
 function sectionLabel({ energy, density, nextEnergy }) {
   if (energy === 'high' && density === 'high') return '高能快节奏';
   if (energy === 'low' && density === 'low') return '慢速/舒展';
@@ -260,65 +338,88 @@ function sectionLabel({ energy, density, nextEnergy }) {
 }
 
 function buildSections(features, onsets, duration) {
-  const seconds = Math.max(1, Math.floor(duration));
-  const perSecond = [];
-  for (let t = 0; t < seconds; t++) {
-    const from = Math.floor(t * features.frameRate), to = Math.min(features.count, Math.floor((t + 1) * features.frameRate));
+  const STEP = 0.5;
+  const bins = Math.max(1, Math.floor(duration / STEP));
+  const perBin = [];
+  for (let i = 0; i < bins; i++) {
+    const from = Math.floor(i * STEP * features.frameRate);
+    const to = Math.min(features.count, Math.floor((i + 1) * STEP * features.frameRate));
     if (to <= from) continue;
-    const slice = (array) => array.slice(from, to).reduce((sum, value) => sum + value, 0) / (to - from);
-    perSecond.push({
-      t,
-      rms: slice(features.rms),
-      flux: slice(features.flux),
-      centroid: slice(features.centroid),
-      low: slice(features.low),
-      mid: slice(features.mid),
-      high: slice(features.high),
-      density: onsets.filter(item => item.time >= t && item.time < t + 1).length
+    let rms = 0, flux = 0, centroid = 0, low = 0, mid = 0, high = 0;
+    for (let k = from; k < to; k++) {
+      rms += features.rms[k]; flux += features.flux[k]; centroid += features.centroid[k];
+      low += features.low[k]; mid += features.mid[k]; high += features.high[k];
+    }
+    const n = to - from;
+    const start = i * STEP, stop = start + STEP;
+    perBin.push({
+      t: start,
+      rms: rms / n, flux: flux / n, centroid: centroid / n, low: low / n, mid: mid / n, high: high / n,
+      density: onsets.filter(item => item.time >= start && item.time < stop).length
     });
   }
-  if (perSecond.length < 8) return [{ start: 0, end: duration, label: '稳定中速', energy: 'medium', onset_density: round(onsets.length / Math.max(1, duration), 2), confidence: 0.5 }];
+  const fallback = [{ start: 0, end: duration, label: '稳定中速', energy: 'medium', onset_density: round(onsets.length / Math.max(1, duration), 2), confidence: 0.5 }];
+  if (perBin.length < 16) return fallback;
   const keys = ['rms', 'flux', 'centroid', 'low', 'mid', 'high', 'density'];
-  const scales = Object.fromEntries(keys.map(key => [key, std(perSecond.map(item => item[key])) || 1]));
-  const novelty = perSecond.map((_, index) => {
-    if (index < 4 || index > perSecond.length - 5) return 0;
+  const scales = Object.fromEntries(keys.map(key => [key, std(perBin.map(item => item[key])) || 1]));
+  const K = 4;
+  const novelty = perBin.map((_, index) => {
+    if (index < K || index > perBin.length - K - 1) return 0;
     let distance = 0;
-    for (let k = 1; k <= 4; k++) {
-      const before = perSecond[index - k], after = perSecond[index + k - 1];
+    for (let k = 1; k <= K; k++) {
+      const before = perBin[index - k], after = perBin[index + k - 1];
       for (const key of keys) distance += Math.abs(before[key] - after[key]) / scales[key];
     }
-    return distance / 4;
+    return distance / K;
   });
   const average = mean(novelty), deviation = std(novelty, average);
-  const cuts = [];
-  for (let i = 5; i < novelty.length - 5; i++) {
-    if (novelty[i] < average + deviation * 0.6 || novelty[i] < novelty[i - 1] || novelty[i] <= novelty[i + 1]) continue;
-    const time = perSecond[i].t;
-    if (!cuts.length || time - cuts[cuts.length - 1] >= MIN_SECTION_SECONDS) cuts.push(time);
+  const threshold = average + deviation * 0.6;
+  const peaks = [];
+  for (let i = 2; i < novelty.length - 2; i++) {
+    if (novelty[i] < threshold || novelty[i] < novelty[i - 1] || novelty[i] <= novelty[i + 1]) continue;
+    peaks.push({ index: i, score: novelty[i] });
   }
-  const boundaries = [0, ...cuts.slice(0, MAX_SECTIONS - 1), duration];
+  peaks.sort((a, b) => b.score - a.score);
+  const cuts = [];
+  for (const peak of peaks) {
+    let time = peak.index * STEP;
+    let nearest = null, nearestDistance = 0.75;
+    for (const onset of onsets) {
+      const distance = Math.abs(onset.time - time);
+      if (distance < nearestDistance) { nearestDistance = distance; nearest = onset; }
+    }
+    if (nearest) time = nearest.time;
+    if (time < MIN_SECTION_SECONDS || duration - time < MIN_SECTION_SECONDS) continue;
+    if (cuts.some(item => Math.abs(item - time) < MIN_SECTION_SECONDS)) continue;
+    cuts.push(round(time, 3));
+    if (cuts.length >= MAX_SECTIONS - 1) break;
+  }
+  cuts.sort((a, b) => a - b);
+  const allRms = perBin.map(item => item.rms);
+  const allDensity = perBin.map(item => item.density);
+  const highRms = percentile(allRms, 0.66), lowRms = percentile(allRms, 0.33);
+  const highDensity = percentile(allDensity, 0.66), lowDensity = percentile(allDensity, 0.33);
+  const boundaries = [0, ...cuts, duration];
   const sections = [];
   for (let i = 0; i < boundaries.length - 1; i++) {
     const start = boundaries[i], end = boundaries[i + 1];
     if (end - start < MIN_SECTION_SECONDS && sections.length) { sections[sections.length - 1].end = end; continue; }
-    const midpoint = Math.floor((start + end) / 2);
-    const stats = perSecond[Math.min(perSecond.length - 1, midpoint)] || perSecond[0];
-    const allRms = perSecond.map(item => item.rms);
-    const allDensity = perSecond.map(item => item.density);
-    const energy = stats.rms >= percentile(allRms, 0.66) ? 'high' : stats.rms <= percentile(allRms, 0.33) ? 'low' : 'medium';
-    const density = stats.density >= percentile(allDensity, 0.66) ? 'high' : stats.density <= percentile(allDensity, 0.33) ? 'low' : 'medium';
-    const next = perSecond[Math.min(perSecond.length - 1, Math.floor(end) + 2)] || stats;
+    if (end - start <= 0) continue;
+    const stats = perBin[Math.min(perBin.length - 1, Math.max(0, Math.round(((start + end) / 2) / STEP)))] || perBin[0];
+    const energy = stats.rms >= highRms ? 'high' : stats.rms <= lowRms ? 'low' : 'medium';
+    const density = stats.density >= highDensity ? 'high' : stats.density <= lowDensity ? 'low' : 'medium';
+    const next = perBin[Math.min(perBin.length - 1, Math.round(end / STEP) + 2)] || stats;
     sections.push({
       id: `sec_${i + 1}`,
       start: round(start, 3),
       end: round(end, 3),
-      label: sectionLabel({ energy, density, nextEnergy: next.rms >= percentile(allRms, 0.66) ? 'high' : 'medium' }),
+      label: sectionLabel({ energy, density, nextEnergy: next.rms >= highRms ? 'high' : 'medium' }),
       energy,
       onset_density: round(stats.density, 2),
       confidence: round(clamp01(0.45 + Math.min(0.4, (end - start) / 60)), 3)
     });
   }
-  return sections;
+  return sections.length ? sections : fallback;
 }
 
 function featureRaster(features, duration) {
@@ -388,6 +489,63 @@ function cutCandidates(beats, downbeats, onsets, sections) {
   return result;
 }
 
+// 编辑卡点不是均匀网格：只保留"真的发生了变化"的位置——段落切换、能量跃迁、强起音，
+// 并吸附到最近的拍点，方便对齐剪辑。
+function changePoints(features, onsets, sections, beats, duration) {
+  const fps = features.frameRate;
+  const rms = features.rms;
+  const prefix = new Float64Array(rms.length + 1);
+  for (let i = 0; i < rms.length; i++) prefix[i + 1] = prefix[i] + rms[i];
+  const meanRange = (from, to) => {
+    const a = Math.max(0, Math.min(rms.length - 1, Math.round(from * fps)));
+    const b = Math.max(a + 1, Math.min(rms.length, Math.round(to * fps)));
+    return (prefix[b] - prefix[a]) / (b - a);
+  };
+  const windowSeconds = 1.5;
+  const jumpAt = time => {
+    const before = meanRange(time - windowSeconds, time - 0.05);
+    const after = meanRange(time + 0.05, time + windowSeconds);
+    return Math.abs(after - before) / Math.max(1e-6, Math.max(before, after));
+  };
+  const candidates = [];
+  for (const section of sections) {
+    if (section.start > 0.5) candidates.push({ time: section.start, base: 1, reason: 'section' });
+  }
+  for (const onset of onsets) {
+    const jump = jumpAt(onset.time);
+    if (jump < 0.18 && onset.strength < 0.75) continue;
+    candidates.push({ time: onset.time, base: 0.4 + onset.strength * 0.35 + jump * 0.45, reason: 'onset' });
+  }
+  for (let time = 2; time < duration - 2; time += 0.5) {
+    const jump = jumpAt(time);
+    if (jump < 0.28) continue;
+    candidates.push({ time, base: 0.35 + jump * 0.65, reason: 'energy' });
+  }
+  const beatTimes = beats.times || [];
+  const snap = time => {
+    let best = time, bestDistance = 0.34;
+    for (const beat of beatTimes) {
+      const distance = Math.abs(beat - time);
+      if (distance < bestDistance) { bestDistance = distance; best = beat; }
+    }
+    return best;
+  };
+  const scored = candidates.map(item => ({
+    time: round(snap(item.time), 3),
+    score: round(clamp01(item.base * 0.65 + jumpAt(item.time) * 0.35), 3),
+    reason: item.reason
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  const kept = [];
+  for (const item of scored) {
+    if (item.time < 0.3 || item.time > duration - 0.3) continue;
+    if (kept.every(other => Math.abs(other.time - item.time) >= 1.2)) kept.push(item);
+    if (kept.length >= 80) break;
+  }
+  kept.sort((a, b) => a.time - b.time);
+  return kept;
+}
+
 function empty(status, extra = {}) {
   return {
     status, method: 'spectral-flux-autocorr-v2', analysis_version: MUSIC_ANALYSIS_VERSION,
@@ -415,7 +573,6 @@ export function analyzePcmMusicV2(samples, { sampleRate = SAMPLE_RATE, startSeco
   const globalTempo = preferTempoOctave(tempoCandidates(features, 0, duration)).slice(0, 4);
   const primary = globalTempo[0] || null;
   const maxTempoScore = Math.max(1e-9, ...globalTempo.map(item => item.score));
-  const grid = beatGrid(features, 0, duration, primary);
   const sectionTempos = [];
   for (const section of sections) {
     const local = preferTempoOctave(tempoCandidates(features, section.start, section.end))[0];
@@ -423,8 +580,10 @@ export function analyzePcmMusicV2(samples, { sampleRate = SAMPLE_RATE, startSeco
     section.bpm = tempo ? tempo.bpm : null;
     sectionTempos.push(tempo);
   }
-  const downbeats = [];
-  if (grid.times.length >= 4) {
+  const tracked = trackBeats(features, primary, duration);
+  const grid = tracked && tracked.times.length >= 4 ? tracked : beatGrid(features, 0, duration, primary);
+  let downbeats = Array.isArray(grid.downbeats) ? grid.downbeats.slice() : [];
+  if (!downbeats.length && grid.times.length >= 4) {
     const meter = 4;
     let bestOffset = 0, bestScore = -Infinity;
     for (let offset = 0; offset < meter; offset++) {
@@ -433,9 +592,15 @@ export function analyzePcmMusicV2(samples, { sampleRate = SAMPLE_RATE, startSeco
       if (score > bestScore) { bestScore = score; bestOffset = offset; }
     }
     for (let i = bestOffset; i < grid.times.length; i += meter) downbeats.push(grid.times[i]);
-    const meterConfidence = clamp01(bestScore / Math.max(1, grid.times.length / meter * 0.9));
-    const cuts = cutCandidates(grid, downbeats, onsets, sections);
-    for (const cut of cuts) cut.section_id = sections.find(section => cut.time >= section.start && cut.time < section.end)?.id || sections.at(-1)?.id || null;
+  }
+  if (grid.times.length >= 4) {
+    const meter = 4;
+    const meterConfidence = clamp01(downbeats.length / Math.max(1, grid.times.length / meter));
+    const baseCuts = cutCandidates(grid, downbeats, onsets, sections);
+    for (const cut of baseCuts) cut.section_id = sections.find(section => cut.time >= section.start && cut.time < section.end)?.id || sections.at(-1)?.id || null;
+    const changes = changePoints(features, onsets, sections, grid, duration);
+    const cuts = [...baseCuts, ...changes.map(point => ({ time: point.time, type: 'change', score: point.score, section_id: null }))]
+      .sort((a, b) => a.time - b.time || b.score - a.score);
     return {
       status: 'ok', method: 'spectral-flux-autocorr-v2', analysis_version: MUSIC_ANALYSIS_VERSION,
       analysis_window: { start_seconds: startSeconds, duration_seconds: duration },

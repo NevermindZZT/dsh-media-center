@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS video_audio (
 
 #### 5. 本地音乐资产与分析档案 (`local_music_catalog`, `music_analysis_v2`)
 
-音乐目录只引用用户本地音频；分析档案按版本保存并绑定源文件属性指纹。指纹只用于发现常见替换，不是内容哈希。旧的 `music_analysis_profiles`、图像模型解读、模型拍点和风格字段在首次启动 v2 时整体删除；分析缓存改为 `music-features/` 二进制特征文件，不再保存频谱图 PNG。
+音乐目录只引用用户本地音频；分析档案按版本保存并绑定源文件属性指纹。指纹只用于发现常见替换，不是内容哈希。本地盘要求 size/mtime/ctime/dev/ino 全部一致；SMB/NAS 网络盘在重新挂载后 ino、dev、ctime 会漂移，因此仅对 `\\server\share` 路径退化为 size + mtime（1ms 容差）判定，避免把未改动的网络盘音乐误判为已替换。旧的 `music_analysis_profiles`、图像模型解读、模型拍点和风格字段在首次启动 v2 时整体删除；分析缓存改为 `music-features/` 二进制特征文件，不再保存频谱图 PNG。
 
 ```sql
 local_music_catalog(
@@ -281,7 +281,7 @@ music_analysis_v2(
 )
 ```
 
-分析由本地 DSP 完成：STFT 谱通量、onset、分段 BPM、1/4 拍网格、小节强拍、能量/密度分段和切点候选。`bpm` 与段落是估计值，半速/倍速候选显式保留。`feature_file` 保存 20 fps × 64 频段的 `Uint8` 特征栅格和波形峰值，供 Canvas 时间轴绘制；不是图片，也不进入 Agent 上下文。
+分析由本地 DSP 完成：STFT 谱通量、onset、分段 BPM、动态规划节拍跟踪（带 tempo 惩罚与连续性约束，跟随局部变速）、1/4 拍网格、小节强拍、能量/密度分段和切点候选。`bpm` 与段落是估计值，半速/倍速候选显式保留。`feature_file` 保存 20 fps × 64 频段的 `Uint8` 特征栅格和波形峰值，供 Canvas 时间轴绘制；绘制使用 CSS 坐标（离屏 canvas + `drawImage`），缩放比例不影响频谱与拍点的对齐；不是图片，也不进入 Agent 上下文。
 
 #### 6. 全文与语义检索虚表 (`video_shots_fts`)
 使用 SQLite FTS5 引擎维护分镜文本的全文倒排索引：
@@ -363,7 +363,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 - **气口静音停顿检测**：
   执行 `silencedetect=noise=-30dB:d=0.5`，解析 stderr 输出中的 `silence_start` 与 `silence_end`，输出停顿区间数组，为解说类视频自动气口切除提供毫秒级坐标。
 - **历史全片音轨节奏状态**：旧版 `detectBpmAndBeats` 不执行真实节奏估计，其历史 `120 BPM` 和规则化节拍网格不能视为测量结果。当前该入口明确返回 unavailable/null，并在检测失败时保留已有人工数据。
-- **本地音乐工作台 DSP**：最多 600 秒音频解码为单声道 PCM，STFT 谱通量生成 onset，分段估计 BPM，生成 1/4 拍网格、4/4/3/4 小节强拍、能量/密度分段和按密度筛选的切点候选。结果全部是估计与建议，不伪造精确拍点，也不调用图像模型。Jamendo 仅搜曲目元数据，不下载、不授予使用权。
+- **本地音乐工作台 DSP**：最多 600 秒音频解码为单声道 PCM，STFT 谱通量生成 onset，分段估计 BPM，再用带速度惩罚的动态规划节拍跟踪器（局部 onset 决定每个拍点，tempo 惩罚约束相邻拍间隔）生成随音乐变速的拍点与 1/4 拍网格，而不是把单一 BPM 硬拉满全曲；段落按 0.5 秒粒度计算 novelty 并吸附到最近的 onset，最多 10 段；强拍按 4/4 相位择优，切点按密度筛选。时间轴把整曲频谱与波形预渲染成离屏条带（按频段分位数拉伸对比度），缩放/平移只做一次 `drawImage` 取样（CSS 坐标，任意 Windows 缩放比例都对得齐），滚轮事件按帧合并；默认只画带编号的"建议卡点"：候选来自段落切换、能量跃迁和强起音，按分数阈值（少/中/多/全部）过滤，并吸附到最近拍点，不再使用均匀小节网格，小节线与起音线作为可选叠加，避免把拍点网格堆成噪声。结果全部是估计与建议，不伪造精确拍点，也不调用图像模型。Jamendo 仅搜曲目元数据，不下载、不授予使用权。
 
 ### 5.3 工作台直驱 AI 多模态深度分析与审计闭环
 

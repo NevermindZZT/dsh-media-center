@@ -34,6 +34,19 @@ function identitiesMatch(left, right) {
   return !!left && !!right && ['size','mtimeMs','ctimeMs','dev','ino'].every(key =>
     typeof left[key] === 'number' && Number.isFinite(left[key]) && left[key] === right[key]);
 }
+// SMB/NAS 共享盘重新挂载后 ino/dev/ctime 会变化，而 size 与 mtime 保持稳定；
+// 因此仅对网络盘以 size + mtime（1ms 容差）判断内容是否变化，本地盘仍要求完整身份一致。
+function isRemotePath(filePath) {
+  return typeof filePath === 'string' && /^[\\/]{2}/.test(filePath);
+}
+function remoteIdentitiesMatch(left, right) {
+  if (!left || !right) return false;
+  if (!Number.isFinite(left.size) || left.size !== right.size) return false;
+  return Number.isFinite(left.mtimeMs) && Number.isFinite(right.mtimeMs) && Math.abs(left.mtimeMs - right.mtimeMs) <= 1;
+}
+function identityCurrent(imported, current, filePath) {
+  return isRemotePath(filePath) ? remoteIdentitiesMatch(imported, current) : identitiesMatch(imported, current);
+}
 function parseIdentity(value) {
   try { return value ? JSON.parse(value) : null; } catch { return null; }
 }
@@ -165,9 +178,9 @@ export class MusicCatalog {
     const { source_identity_json, license_identity_json, ...safe } = row;
     const imported = parseIdentity(source_identity_json);
     const current = readCurrentIdentity(row.file_path);
-    const source_status = !current ? 'unavailable' : !imported ? 'unverified' : identitiesMatch(imported, current) ? 'current' : 'mismatch';
+    const source_status = !current ? 'unavailable' : !imported ? 'unverified' : identityCurrent(imported, current, row.file_path) ? 'current' : 'mismatch';
     const licenseIdentity = parseIdentity(license_identity_json);
-    const licenseIsCurrent = source_status === 'current' && identitiesMatch(licenseIdentity, current);
+    const licenseIsCurrent = source_status === 'current' && identityCurrent(licenseIdentity, current, row.file_path);
     const effectiveLicense = row.license_status === 'personal_confirmed' && licenseIsCurrent ? 'personal_confirmed' : 'unknown';
     return { ...safe, metadata_detail: JSON.parse(row.metadata_detail), source_status,
       license_status_recorded: row.license_status, license_status: effectiveLicense,

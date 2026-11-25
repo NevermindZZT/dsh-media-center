@@ -85,7 +85,7 @@
    - 分镜是既有文字标注，不代表本轮 AI 已观看原片；请在会话中如实标明未核验的内容。
 2. **音乐与测量**：
    - 使用 `media_center_edit_music_list` 检索本地音乐，`media_center_edit_music_analyze` 分析整首音频（最多600秒）。返回 `bpm`、`tempo_candidates`、`beats.quarter_times`（1/4 拍网格）、`beats.downbeats`、`sections` 和 `cut_candidates`。
-   - BPM、拍点、小节和段落都是 DSP 估计值；半速/倍速候选必须如实展示，不能声称是乐谱真值。`cut_candidates` 只是建议，不得自动写入项目时间线。
+   - BPM、拍点、小节和段落都是 DSP 估计值；半速/倍速候选必须如实展示，不能声称是乐谱真值。拍点由动态规划节拍跟踪给出，会跟随局部变速，因此相邻拍间隔不是固定值；不要把它描述成恒定节拍的刚性网格。`cut_candidates` 只是建议，不得自动写入项目时间线。
    - 不再有 `media_center_edit_music_confirm_beats`、`media_center_edit_music_set_styles` 或 `media_center_edit_music_spectrogram_interpret`。不要调用图像模型分析音乐，也不要再引用频谱图图片。
    - Jamendo 只搜索元数据；它不是授权验证或自动下载。只有用户明确确认个人用途后，才能用 `media_center_edit_music_confirm_personal` 记录其声明。
 3. **会话内反复编排**：

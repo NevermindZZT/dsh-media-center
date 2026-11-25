@@ -63,7 +63,7 @@ function normalizeTimeArray(value, label, window, { max = MAX_ARRAY, allowEmpty 
   });
 }
 function normalizeSections(value, window) {
-  if (!Array.isArray(value) || value.length > 8) throw new Error('Invalid sections');
+  if (!Array.isArray(value) || value.length > 10) throw new Error('Invalid sections');
   const start = window.start_seconds, end = start + window.duration_seconds;
   let previous = start - 1e-6;
   return value.map((section, index) => {
@@ -92,7 +92,7 @@ function normalizeTempo(value) {
   });
 }
 function normalizeCutCandidates(value, window) {
-  if (!Array.isArray(value) || value.length > 1000) throw new Error('Invalid cut candidates');
+  if (!Array.isArray(value) || value.length > 6000) throw new Error('Invalid cut candidates');
   const end = window.start_seconds + window.duration_seconds;
   return value.map(item => {
     if (!plainObject(item)) throw new Error('Invalid cut candidate');
@@ -100,7 +100,7 @@ function normalizeCutCandidates(value, window) {
     if (time < window.start_seconds - 1e-6 || time > end + 1e-6) throw new Error('Cut candidate outside window');
     return {
       time,
-      type: ['downbeat', 'beat', 'onset', 'section_boundary'].includes(item.type) ? item.type : 'beat',
+      type: ['downbeat', 'beat', 'onset', 'section_boundary', 'change'].includes(item.type) ? item.type : 'beat',
       score: number(item.score ?? 0.5, 'cut score', 0, 1),
       section_id: item.section_id == null ? null : boundedText(item.section_id, 'cut section id', 40)
     };
