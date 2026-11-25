@@ -305,7 +305,7 @@ export class MediaEngine {
       storyboards:this.db.storyboardsDir,
       previews:this.db.previewsDir,
       keyframes:this.db.keyframesDir,
-      music_spectrograms:path.join(this.db.cacheDir,'music-spectrograms')
+      music_features:path.join(this.db.cacheDir,'music-features')
     };
   }
 

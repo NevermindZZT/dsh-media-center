@@ -121,8 +121,8 @@ test('source or shot annotation changes between project preview and save invalid
 test('source is preflighted, analyzed read-only, and result disclaims content hashing',{skip:!hasFfmpeg},async t=>{
  const f=fixture(t),{music,project}=await projectFixture(f);
  const before=fs.readFileSync(f.audioPath);
- const result=await f.workflow.analyzeMusic(music.id,{startSeconds:0,durationSeconds:5});
- assert.equal(result.status,'low_confidence');assert.equal('onsets' in result,false);assert.equal('transient_onsets' in result,false);assert.deepEqual(result.beats,[]);assert.ok(result.analysis_id);
+ const result=await f.workflow.analyzeMusic(music.id,{durationSeconds:5});
+ assert.equal(result.status,'ok');assert.equal('onsets' in result,false);assert.equal('transient_onsets' in result,false);assert.ok(result.beats.times.length>0);assert.ok(result.beats.quarter_times.length>=result.beats.times.length);assert.ok(result.analysis_id);
  assert.match(result.source_check.note,/非密码学内容校验/);assert.deepEqual(fs.readFileSync(f.audioPath),before);
  const preview=f.workflow.previewProject(project);
  const later=new Date(Date.now()+10000);fs.utimesSync(f.audioPath,later,later);

@@ -85,7 +85,7 @@ test('stream request uses normalized image reference, exact route, deltas and us
   assert.equal(f.writes.find(item=>item[0] === 'video')[1].summary, 'ok');
 });
 
-test('spectrogram interpretation uses the configured image model and does not update video annotations',async t=>{
+test('image prompt analysis uses the configured image model and does not update video annotations',async t=>{
   const f=fixture(t,{ai_mode:'dsh',ai_provider:'p1',ai_dsh_model:'vision'});
   fs.writeFileSync(f.imagePath,Buffer.from([137,80,78,71,13,10,26,10,0]));
   f.llm.stream=async function* (options){
@@ -94,10 +94,10 @@ test('spectrogram interpretation uses the configured image model and does not up
     yield {type:'usage',usage:{inputTokens:12,outputTokens:30,totalTokens:42}};
     yield {type:'finish',reason:{kind:'stop'}};
   };
-  const result=await f.analyzer.analyzeImagePrompt({imagePath:f.imagePath,promptText:'Analyze this log-frequency spectrogram; do not invent exact beat timestamps.'});
+  const result=await f.analyzer.analyzeImagePrompt({imagePath:f.imagePath,promptText:'Describe this storyboard image; do not invent exact beat timestamps.'});
   assert.equal(f.calls[0][0],'image');assert.equal(f.calls[0][1].mediaType,'image/png');
   const options=f.calls[1][1];assert.equal(options.provider,'p1');assert.equal(options.model,'vision');
-  assert.match(options.messages[0].content[0].text,/spectrogram/i);assert.deepEqual(result.interpretation.scene_suggestions[0].scene,'山地日出延时');
+  assert.match(options.messages[0].content[0].text,/storyboard/i);assert.deepEqual(result.interpretation.scene_suggestions[0].scene,'山地日出延时');
   assert.equal(result.audit.total_tokens,42);assert.equal(f.writes.length,0);
 });
 

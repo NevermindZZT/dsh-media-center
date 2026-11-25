@@ -40,6 +40,16 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
     });
     res.end(body);
   };
+  const binaryResponse = (res, body, contentType, headers = {}) => {
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': body.length,
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      ...headers
+    });
+    res.end(body);
+  };
 
   const parseJsonBody = (req) => {
     return new Promise((resolve, reject) => {
@@ -178,7 +188,6 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
             const result = editingWorkflow.listMusicCatalog({ query:parsedUrl.searchParams.get('query') || '',
               ...(parsedUrl.searchParams.has('license_status') ? {license_status:parsedUrl.searchParams.get('license_status')} : {}),
               ...(parsedUrl.searchParams.has('analysis_status') ? {analysis_status:parsedUrl.searchParams.get('analysis_status')} : {}),
-              ...(parsedUrl.searchParams.has('style_tag') ? {style_tag:parsedUrl.searchParams.get('style_tag')} : {}),
               limit:integer(parsedUrl.searchParams.get('limit'),25,100), offset:integer(parsedUrl.searchParams.get('offset'),0,1000000) });
             return jsonResponse(res,{success:true,...result});
           }
@@ -191,38 +200,26 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
               license_note:body.license_note,license_confirmed:body.license_confirmed});
             return jsonResponse(res,{success:true,...result});
           }
-          const musicInterpretEditMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/interpret\/edits$/);
-          if(musicInterpretEditMatch&&method==='PUT'){
-            const body=await parseJsonBody(req);
-            if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户明确确认频谱解读编辑和模型节奏点'},400);
-            const profile=editingWorkflow.saveMusicInterpretationEdits(musicInterpretEditMatch[1],{analysisId:body.analysis_id,edits:body.edits});
-            return jsonResponse(res,{success:true,model_interpretation:profile.model_interpretation,model_interpretation_edits:profile.model_interpretation_edits,model_interpretation_edits_provenance:profile.model_interpretation_edits_provenance});
+          const musicAnalysisMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/analysis(?:\/features)?$/);
+          if(musicAnalysisMatch&&method==='GET'&&pathname.endsWith('/features')){
+            try{
+              const result=editingWorkflow.getMusicFeatures(musicAnalysisMatch[1],parsedUrl.searchParams.get('analysis_id'));
+              if(!result)return jsonResponse(res,{success:false,error:'音乐特征数据不可用'},404);
+              const payload=Buffer.concat([Buffer.from(result.data),Buffer.from(result.waveform)]);
+              return binaryResponse(res,payload,'application/octet-stream',{
+                'Cache-Control':'private, max-age=3600',
+                'X-Feature-Fps':String(result.meta.fps),
+                'X-Feature-Bands':String(result.meta.bands),
+                'X-Feature-Columns':String(result.meta.columns),
+                'X-Waveform-Buckets':String(result.meta.waveform_buckets)
+              });
+            }catch(error){
+              return jsonResponse(res,{success:false,error:'无法读取音乐特征数据'},404);
+            }
           }
-          const musicInterpretMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/interpret$/);
-          if(musicInterpretMatch&&method==='POST'){
-            const body=await parseJsonBody(req);
-            const result=await editingWorkflow.interpretMusicSpectrogram(musicInterpretMatch[1],{analysisId:body.analysis_id});
-            return jsonResponse(res,{success:true,...result});
-          }
-          const musicAnalysisMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/analysis(?:\/(confirm-beats|styles))?$/);
-          if(musicAnalysisMatch&&method==='GET'&&!musicAnalysisMatch[2]){
+          if(musicAnalysisMatch&&method==='GET'){
             const analysis=editingWorkflow.getMusicAnalysis(musicAnalysisMatch[1]);
             return jsonResponse(res,{success:true,analysis:analysis||null});
-          }
-          if(musicAnalysisMatch&&method==='POST'&&musicAnalysisMatch[2]==='confirm-beats'){
-            const body=await parseJsonBody(req);
-            if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户试听后明确确认候选拍点'},400);
-            return jsonResponse(res,{success:true,analysis:editingWorkflow.confirmMusicBeats(musicAnalysisMatch[1],{analysisId:body.analysis_id,beats:body.beats,confirmed:true})});
-          }
-          if(musicAnalysisMatch&&method==='POST'&&musicAnalysisMatch[2]==='styles'){
-            const body=await parseJsonBody(req);
-            if(body.confirmed!==true)return jsonResponse(res,{success:false,error:'须由用户明确确认 Agent 风格建议后保存'},400);
-            return jsonResponse(res,{success:true,analysis:editingWorkflow.saveMusicStyleSuggestions(musicAnalysisMatch[1],{analysisId:body.analysis_id,styleTags:body.style_tags,rationale:body.rationale,confirmed:true})});
-          }
-          const musicSpectrogramMatch=pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/spectrogram$/);
-          if(musicSpectrogramMatch&&method==='GET'){
-            try{return streamImageFile(res,await editingWorkflow.getMusicSpectrogramPath(musicSpectrogramMatch[1]));}
-            catch{return jsonResponse(res,{success:false,error:'无法生成或读取音乐频谱图'},404);}
           }
           const musicStreamMatch = pathname.match(/^\/api\/media-center\/editing\/music\/(mus_[0-9a-f]{32})\/stream$/);
           if (musicStreamMatch && method === 'GET') {
@@ -242,7 +239,7 @@ export function createMediaCenterApiHandler({ db, mediaEngine, projectExporter, 
           }
           if (musicMatch && method === 'POST' && musicMatch[2] === 'analyze') {
             const body=await parseJsonBody(req);
-            const analysis=await editingWorkflow.analyzeMusic(musicMatch[1],{startSeconds:body.startSeconds,durationSeconds:body.durationSeconds});
+            const analysis=await editingWorkflow.analyzeMusic(musicMatch[1],{durationSeconds:body.durationSeconds});
             return jsonResponse(res,{success:true,analysis});
           }
           if (pathname === `${base}/jamendo/search` && method === 'POST') {

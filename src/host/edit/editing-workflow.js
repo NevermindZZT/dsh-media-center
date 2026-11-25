@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { MusicCatalog } from '../music/music-catalog.js';
 import { JamendoSearch } from '../music/jamendo.js';
-import { analyzeMusicBeats, MAX_MUSIC_ANALYSIS_SECONDS } from '../music/beat-analysis.js';
+import { analyzeMusicV2, MAX_MUSIC_ANALYSIS_SECONDS } from '../music/music-analysis-v2.js';
 import { MusicAnalysisStore } from '../music/music-analysis-store.js';
 import { EditProjectStore } from './edit-project-store.js';
 import { validateEditProject } from './edit-project.js';
@@ -32,15 +32,6 @@ function statFingerprint(filePath,kind){
 }
 function sameFingerprint(a,b){return !!a&&!!b&&['canonical','dev','ino','size','mtimeNs'].every(k=>a[k]===b[k]);}
 function analysisIdentity(fingerprint){return {dev:fingerprint.dev,ino:fingerprint.ino,size:fingerprint.size,mtimeNs:fingerprint.mtimeNs};}
-const PNG_SIGNATURE=Buffer.from([137,80,78,71,13,10,26,10]);
-async function generateMusicSpectrogram({ffmpeg,filePath,startSeconds,durationSeconds,outputPath,width,height}){
-  const filter=`showspectrumpic=s=${width}x${height}:legend=1:scale=log:fscale=log:color=viridis`;
-  await execFileAsync(ffmpeg,['-v','error','-nostdin','-ss',String(startSeconds),'-i',filePath,'-t',String(durationSeconds),
-    '-filter_complex',filter,'-frames:v','1','-y',outputPath],{timeout:120000,maxBuffer:2*1024*1024,windowsHide:true});
-  const stat=fs.statSync(outputPath);
-  if(!stat.isFile()||stat.size<24||stat.size>8*1024*1024||!fs.readFileSync(outputPath).subarray(0,8).equals(PNG_SIGNATURE))throw new Error('频谱图文件格式无效或过大');
-  return stat;
-}
 
 /** Asset and project service. The DSH conversation Agent authors project data; this service validates and stores it. */
 export class EditingWorkflow {
@@ -50,7 +41,7 @@ export class EditingWorkflow {
       const {ffprobe}=await mediaEngine.getBinaries();if(!ffprobe)throw new Error('FFprobe unavailable');
       const {stdout}=await execFileAsync(ffprobe,['-v','error','-print_format','json','-show_format','-show_streams',filePath],{timeout:15000,maxBuffer:2*1024*1024,windowsHide:true});return JSON.parse(stdout);
     }});
-    this.projects=new EditProjectStore(db);this.musicAnalyses=new MusicAnalysisStore(db);this.previews=new Map();this.spectrogramJobs=new Map();
+    this.projects=new EditProjectStore(db);this.musicAnalyses=new MusicAnalysisStore(db);this.previews=new Map();
   }
   searchJamendo({clientId,query,limit,offset,signal}){return new JamendoSearch({clientId}).search({query,limit,offset,signal});}
   removeMusic(id){
@@ -64,23 +55,32 @@ export class EditingWorkflow {
       return removed;
     }catch(error){try{this.db.db.exec('ROLLBACK');}catch{}throw error;}
   }
-  async analyzeMusic(id,{startSeconds=0,durationSeconds}={}){
+  async analyzeMusic(id,{durationSeconds}={}){
     const music=this.catalog.get(id);if(!music)throw new Error('音乐记录不存在');
     if(music.source_status!=='current')throw new Error(`音乐源文件不可用或已变化：${sourceName(music.file_path)}`);
     const before=statFingerprint(music.file_path,'音乐'),bins=await this.mediaEngine.getBinaries();
-    const duration=durationSeconds===undefined?Math.min(Number(music.duration)||60,MAX_MUSIC_ANALYSIS_SECONDS):durationSeconds;
+    const duration=Math.max(0.1,Math.min(Number(durationSeconds)||Number(music.duration)||60,MAX_MUSIC_ANALYSIS_SECONDS));
     const result=!bins.ffmpeg||!bins.ffprobe
-      ?{status:'error',source:'measured',method:'tools-unavailable',analysis_version:'1',bpm:null,confidence:null,tempo_candidates:[],onsets:[],beat_candidates:[],beats:[],feature_summary:{},analysis_window:{start_seconds:startSeconds,duration_seconds:duration},error_code:'TOOLS_UNAVAILABLE'}
-      :await analyzeMusicBeats({filePath:music.file_path,ffmpeg:bins.ffmpeg,ffprobe:bins.ffprobe,startSeconds,durationSeconds:duration});
+      ?{status:'error',method:'spectral-flux-autocorr-v2',analysis_version:'2',bpm:null,bpm_confidence:null,tempo_candidates:[],meter:{beats_per_bar:4,confidence:0,first_downbeat:null},beats:{subdivision:4,times:[],strengths:[],quarter_times:[],quarter_strengths:[],downbeats:[]},sections:[],cut_candidates:[],features:null,waveform:null,analysis_window:{start_seconds:0,duration_seconds:duration},error_code:'TOOLS_UNAVAILABLE'}
+      :await analyzeMusicV2({filePath:music.file_path,ffmpeg:bins.ffmpeg,ffprobe:bins.ffprobe,startSeconds:0,durationSeconds:duration});
     if(!sameFingerprint(before,statFingerprint(music.file_path,'音乐'))||this.catalog.get(id)?.source_status!=='current')throw new Error(`音乐源文件已变化：${sourceName(music.file_path)}`);
-    const storageResult={...result,onsets:[],transient_onsets:[],beat_candidates:Array.isArray(result.beat_candidates)?result.beat_candidates.map(item=>typeof item==='number'?item:item?.source_seconds).filter(Number.isFinite):[]};
-    const saved=this.musicAnalyses.save(id,analysisIdentity(before),storageResult);
-    const {onsets,transient_onsets,...publicResult}=result;
-    if(publicResult.feature_summary&&typeof publicResult.feature_summary==='object'){
-      const {transient_density_per_minute:_internalTransientDensity,...publicFeatures}=publicResult.feature_summary;
-      publicResult.feature_summary=publicFeatures;
-    }
-    return {...publicResult,analysis_id:saved.analysis_id,source_check:{status:'current',note:SOURCE_CHECK_NOTICE}};
+    const saved=this.musicAnalyses.save(id,analysisIdentity(before),result);
+    return {...saved,source_check:{status:'current',note:SOURCE_CHECK_NOTICE}};
+  }
+  getMusicAnalysis(id){
+    const music=this.catalog.get(id);if(!music)throw new Error('音乐记录不存在');
+    if(music.source_status!=='current')throw new Error(`音乐源文件不可用或已变化：${sourceName(music.file_path)}`);
+    const profile=this.musicAnalyses.latest(id,analysisIdentity(statFingerprint(music.file_path,'音乐')));
+    if(!profile)return null;
+    const {source_identity,...safe}=profile;
+    return safe;
+  }
+  getMusicFeatures(id,analysisId){
+    const music=this.catalog.get(id);if(!music)throw new Error('音乐记录不存在');
+    if(music.source_status!=='current')throw new Error(`音乐源文件不可用或已变化：${sourceName(music.file_path)}`);
+    const profile=this.musicAnalyses.get(analysisId);
+    if(!profile||profile.music_id!==id||JSON.stringify(profile.source_identity)!==JSON.stringify(analysisIdentity(statFingerprint(music.file_path,'音乐'))))throw new Error('音乐分析档案已过期或与当前音乐不匹配');
+    return this.musicAnalyses.getFeatures(analysisId);
   }
   listMusicCatalog(options={}){
     const page=this.catalog.list(options);
@@ -93,112 +93,8 @@ export class EditingWorkflow {
         return {...music,analysis_summary:summary};
       }catch{return {...music,analysis_summary:{status:'stale'}};}
     });
-    const filtered=items.filter(music=>
-      (options.analysis_status===undefined||music.analysis_summary?.status===options.analysis_status)&&
-      (!options.style_tag||(music.analysis_summary?.style_tags||[]).includes(options.style_tag)));
+    const filtered=items.filter(music=>(options.analysis_status===undefined||music.analysis_summary?.status===options.analysis_status));
     return {...page,items:filtered};
-  }
-  async getMusicSpectrogramPath(id){
-    const music=this.catalog.get(id);if(!music)throw new Error('音乐记录不存在');
-    if(music.source_status!=='current')throw new Error('音乐源文件不可用或已变化');
-    const before=statFingerprint(music.file_path,'音乐'),identity=analysisIdentity(before);
-    const duration=Math.max(0.1,Math.min(Number(music.duration)||60,MAX_MUSIC_ANALYSIS_SECONDS));
-    fs.mkdirSync(this.db.cacheDir,{recursive:true});
-    const cacheRoot=fs.realpathSync(this.db.cacheDir),cacheDir=path.join(cacheRoot,'music-spectrograms');
-    fs.mkdirSync(cacheDir,{recursive:true});
-    const actualCache=fs.realpathSync(cacheDir),relative=path.relative(cacheRoot,actualCache);
-    if(!relative||relative==='..'||relative.startsWith(`..${path.sep}`)||path.isAbsolute(relative))throw new Error('频谱图缓存路径无效');
-    const digest=crypto.createHash('sha256').update(JSON.stringify({id,identity,start:0,duration,width:1280,height:720,scale:'log-v1'})).digest('hex');
-    const cachePath=path.join(actualCache,`${id}-${digest}.png`);
-    if(fs.existsSync(cachePath)){
-      const stat=fs.statSync(cachePath);
-      if(stat.isFile()&&stat.size>=24&&stat.size<=8*1024*1024&&fs.readFileSync(cachePath).subarray(0,8).equals(PNG_SIGNATURE))return cachePath;
-      try{fs.rmSync(cachePath,{force:true});}catch{}
-    }
-    const existing=this.spectrogramJobs.get(cachePath);if(existing)return existing;
-    const job=(async()=>{
-      const bins=await this.mediaEngine.getBinaries();if(!bins.ffmpeg)throw new Error('FFmpeg unavailable');
-      const tempDir=fs.mkdtempSync(path.join(actualCache,'music-spectrogram-'));
-      try{
-        const spectrogramPath=path.join(tempDir,'spectrogram.png');
-        await generateMusicSpectrogram({ffmpeg:bins.ffmpeg,filePath:music.file_path,startSeconds:0,durationSeconds:duration,outputPath:spectrogramPath,width:1280,height:720});
-        if(!sameFingerprint(before,statFingerprint(music.file_path,'音乐'))||this.catalog.get(id)?.source_status!=='current')throw new Error('音乐源文件已变化');
-        fs.renameSync(spectrogramPath,cachePath);
-        return cachePath;
-      }finally{try{fs.rmSync(tempDir,{recursive:true,force:true});}catch{}}
-    })();
-    this.spectrogramJobs.set(cachePath,job);
-    try{return await job;}finally{this.spectrogramJobs.delete(cachePath);}
-  }
-  getMusicAnalysis(id){
-    const music=this.catalog.get(id);if(!music)throw new Error('音乐记录不存在');
-    if(music.source_status!=='current')throw new Error(`音乐源文件不可用或已变化：${sourceName(music.file_path)}`);
-    const profile=this.musicAnalyses.latest(id,analysisIdentity(statFingerprint(music.file_path,'音乐')));
-    if(!profile)return null;
-    const {source_identity,...safe}=profile;
-    return safe;
-  }
-  async interpretMusicSpectrogram(id,{analysisId}={}){
-    if(!this.videoAiAnalyzer||typeof this.videoAiAnalyzer.analyzeImagePrompt!=='function')throw new Error('频谱图大模型分析不可用');
-    if(typeof analysisId!=='string'||!analysisId)throw new Error('请先运行本地节奏分析');
-    const music=this.catalog.get(id);if(!music)throw new Error('音乐记录不存在');
-    if(music.source_status!=='current')throw new Error(`音乐源文件不可用或已变化：${sourceName(music.file_path)}`);
-    const before=statFingerprint(music.file_path,'音乐'),identity=analysisIdentity(before),profile=this.musicAnalyses.get(analysisId);
-    if(!profile||profile.music_id!==id||JSON.stringify(profile.source_identity)!==JSON.stringify(identity))throw new Error('请先分析当前音乐窗口；分析档案已过期或与当前音乐不匹配');
-    const startSeconds=profile.analysis_window.start_seconds,durationSeconds=profile.analysis_window.duration_seconds;
-    if(!Number.isFinite(durationSeconds)||durationSeconds<=0||durationSeconds>MAX_MUSIC_ANALYSIS_SECONDS)throw new Error('音乐分析窗口长度无效');
-    const binaries=await this.mediaEngine.getBinaries();if(!binaries.ffmpeg)throw new Error('频谱图生成失败，请检查 FFmpeg 配置');
-    const cacheRoot=fs.realpathSync(this.db.cacheDir),tempDir=fs.mkdtempSync(path.join(cacheRoot,'music-spectrogram-'));
-    try{
-      const actualDir=fs.realpathSync(tempDir),relative=path.relative(cacheRoot,actualDir);
-      if(!relative||relative==='..'||relative.startsWith(`..${path.sep}`)||path.isAbsolute(relative))throw new Error('频谱图缓存路径无效');
-      const spectrogramPath=path.join(actualDir,'spectrogram.png');
-      const filter='showspectrumpic=s=2048x768:legend=1:scale=log:fscale=log:color=viridis';
-      try{
-        await execFileAsync(binaries.ffmpeg,['-v','error','-nostdin','-ss',String(startSeconds),'-i',music.file_path,'-t',String(durationSeconds),
-          '-filter_complex',filter,'-frames:v','1','-y',spectrogramPath],{timeout:120000,maxBuffer:2*1024*1024,windowsHide:true});
-      }catch{throw new Error('无法生成音频频谱图，请检查源文件和 FFmpeg');}
-      const imageStat=fs.statSync(spectrogramPath);
-      if(!imageStat.isFile()||imageStat.size<24||imageStat.size>8*1024*1024)throw new Error('生成的频谱图文件无效或过大');
-      if(!sameFingerprint(before,statFingerprint(music.file_path,'音乐')))throw new Error(`音乐源文件已变化：${sourceName(music.file_path)}`);
-      const promptText=[
-        '你是一位谨慎的音乐声学与影视场景顾问。请只根据附带的对数频率声谱图做定性判断。',
-        `该图覆盖源音频 ${startSeconds.toFixed(2)} 秒至 ${(startSeconds+durationSeconds).toFixed(2)} 秒（窗口 ${durationSeconds.toFixed(2)} 秒）；横轴表示此窗口内时间，纵轴为对数频率。`,
-        '请分析：总体听感/情绪线索、节奏质感、能量变化、可能的速度假设、适合的画面场景和简短风格标签。',
-        '声谱图是压缩视觉表示，不等同于原始音频。可给最多 6 个宽泛 BPM 假设，必须标注 confidence=low/medium/high；如果从图上无法判断就返回空数组。可给最多 64 个大致节奏脉冲位置 time_fraction（0 到 1，表示横轴在所选窗口内的相对位置），只在重复能量脉冲清晰可见时填写，并标注为 approximate、给出低/中/高置信度和原因；这些点是模型视觉估计，不是精确拍点或测量值，不得生成规则网格。',
-        '请只输出合法 JSON，不要 Markdown，结构为：',
-        '{"summary":"...","rhythm_character":"...","energy_arc":"...","tempo_hypotheses":[{"bpm":96,"confidence":"low","reason":"..."}],"beat_time_hypotheses":[{"time_fraction":0.25,"confidence":"low","reason":"..."}],"scene_suggestions":[{"scene":"...","reason":"...","fit":"medium"}],"style_tags":["..."],"uncertainties":["..."]}',
-        'scene_suggestions 最多 6 条；style_tags 最多 12 个简短标签；fit/confidence 只允许 low、medium 或 high；没有可靠依据时返回空数组。'
-      ].join('\n');
-      const result=await this.videoAiAnalyzer.analyzeImagePrompt({imagePath:spectrogramPath,promptText,temperature:0.2});
-      if(!sameFingerprint(before,statFingerprint(music.file_path,'音乐')))throw new Error(`音乐源文件已变化：${sourceName(music.file_path)}`);
-      const saved=this.musicAnalyses.saveModelInterpretation(analysisId,identity,result.interpretation,result.audit);
-      return {analysis_id:analysisId,model_interpretation:saved.model_interpretation,model_interpretation_provenance:saved.model_interpretation_provenance,
-        spectrogram:{scale:'log-frequency',window_start_seconds:startSeconds,window_duration_seconds:durationSeconds},
-        notice:'模型只分析了源音频频谱图的视觉表示；场景与节奏质感是主观建议，不是测得的拍点。'};
-    }finally{
-      try{fs.rmSync(tempDir,{recursive:true,force:true});}catch{}
-    }
-  }
-  saveMusicInterpretationEdits(id,{analysisId,edits}={}){
-    const music=this.catalog.get(id);if(!music||music.source_status!=='current')throw new Error('音乐源文件不可用或已变化');
-    const identity=analysisIdentity(statFingerprint(music.file_path,'音乐')),profile=this.musicAnalyses.get(analysisId);
-    if(!profile||profile.music_id!==id||JSON.stringify(profile.source_identity)!==JSON.stringify(identity))throw new Error('音乐分析档案已过期或与当前音乐不匹配');
-    return this.musicAnalyses.saveModelInterpretationEdits(analysisId,identity,edits);
-  }
-  confirmMusicBeats(id,{analysisId,beats,confirmed}={}){
-    if(confirmed!==true)throw new Error('须由用户试听后明确确认候选拍点');
-    const music=this.catalog.get(id);if(!music||music.source_status!=='current')throw new Error('音乐源文件不可用或已变化');
-    const identity=analysisIdentity(statFingerprint(music.file_path,'音乐')),profile=this.musicAnalyses.get(analysisId);
-    if(!profile||profile.music_id!==id||JSON.stringify(profile.source_identity)!==JSON.stringify(identity))throw new Error('音乐分析已过期或与当前音乐不匹配');
-    return this.musicAnalyses.confirmBeats(analysisId,identity,beats,{confirmed:true});
-  }
-  saveMusicStyleSuggestions(id,{analysisId,styleTags,rationale,confirmed}={}){
-    if(confirmed!==true)throw new Error('须由用户明确确认 Agent 风格建议后保存');
-    const music=this.catalog.get(id);if(!music||music.source_status!=='current')throw new Error('音乐源文件不可用或已变化');
-    const identity=analysisIdentity(statFingerprint(music.file_path,'音乐')),profile=this.musicAnalyses.get(analysisId);
-    if(!profile||profile.music_id!==id||JSON.stringify(profile.source_identity)!==JSON.stringify(identity))throw new Error('音乐分析已过期或与当前音乐不匹配');
-    return this.musicAnalyses.saveStyleSuggestions(analysisId,styleTags,rationale,{confirmed:true});
   }
   #projectFailure(code, path, message, warnings = []) {
     throw new ProjectValidationError(message, [{ code, path, message }], warnings);

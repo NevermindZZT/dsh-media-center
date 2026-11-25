@@ -24,13 +24,9 @@ function fixture() {
     listMusicCatalog:args=>({items:[{id:MUSIC,license_status:'unknown',analysis_summary:{status:'not_analyzed'}}],limit:args.limit,offset:args.offset,has_more:false}),
     removeMusic:id=>{calls.push(['remove',id]);return true;},
     projects:{list:args=>{calls.push(['projects',args]);return [{id:PROJECT,title:'x'}];},get:id=>{calls.push(['get',id]);return id===PROJECT?{id,project:{title:'x'}}:null;}},
-    analyzeMusic:async(id,args)=>{calls.push(['analyze',id,args]);return {analysis_id:'ma_0123456789abcdef0123456789abcdef',status:'low_confidence',source:'measured',bpm:null,beats:[],beat_candidates:[1.1]};},
-         getMusicAnalysis:id=>{calls.push(['analysis_detail',id]);return {analysis_id:'ma_0123456789abcdef0123456789abcdef',music_id:id,status:'low_confidence',beat_candidates:[1.1],user_confirmed_beats:[],style_tags:[],model_interpretation:{summary:'节奏渐进',tempo_hypotheses:[{bpm:100,confidence:'low'}],beat_time_hypotheses:[{source_seconds:2.1,approximate:true}],style_tags:['夜景慢剪']},model_interpretation_edits:{summary:'用户修订',style_tags:['夜景'],user_confirmed_model_beats:[2.1]}};},
-     interpretMusicSpectrogram:(id,args)=>{calls.push(['spectrogram_interpretation',id,args]);return {analysis_id:args.analysisId,model_interpretation:{summary:'音乐逐步展开',rhythm_character:'中速稳定',energy_arc:'逐步增强',scene_suggestions:[],tempo_hypotheses:[],beat_time_hypotheses:[],style_tags:[],uncertainties:[]}};},
-     saveMusicInterpretationEdits:(id,args)=>{calls.push(['interpretation_edits',id,args]);return {model_interpretation:{summary:'音乐逐步展开'},model_interpretation_edits:{...args.edits},model_interpretation_edits_provenance:{edited_at:'now'}};},
-
-              confirmMusicBeats:(id,args)=>{calls.push(['confirm_beats',id,args]);return {analysis_id:args.analysisId,user_confirmed_beats:args.beats};},
-    saveMusicStyleSuggestions:(id,args)=>{calls.push(['style_suggestions',id,args]);return {analysis_id:args.analysisId,style_tags:args.styleTags};},
+    analyzeMusic:async(id,args)=>{calls.push(['analyze',id,args]);return {analysis_id:'ma_0123456789abcdef0123456789abcdef',status:'ok',method:'spectral-flux-autocorr-v2',bpm:120,bpm_confidence:0.8,tempo_candidates:[{bpm:120,confidence:0.8}],analysis_window:{start_seconds:0,duration_seconds:10},meter:{beats_per_bar:4,confidence:0.7,first_downbeat:0.1},beats:{subdivision:4,times:[0.1,0.6],strengths:[1,0.5],quarter_times:[0.1,0.225,0.35,0.475],quarter_strengths:[1,0.5,0.4,0.3],downbeats:[0.1]},sections:[{id:'sec_1',start:0,end:10,label:'稳定中速',energy:'medium',onset_density:2,bpm:120,confidence:0.8}],cut_candidates:[{time:0.1,type:'downbeat',score:0.9,section_id:'sec_1'}]};},
+    getMusicAnalysis:id=>{calls.push(['analysis_detail',id]);return {analysis_id:'ma_0123456789abcdef0123456789abcdef',music_id:id,status:'ok',method:'spectral-flux-autocorr-v2',bpm:120,bpm_confidence:0.8,tempo_candidates:[{bpm:120,confidence:0.8}],analysis_window:{start_seconds:0,duration_seconds:10},meter:{beats_per_bar:4,confidence:0.7,first_downbeat:0.1},beats:{subdivision:4,times:[0.1,0.6],strengths:[1,0.5],quarter_times:[0.1,0.225,0.35,0.475],quarter_strengths:[1,0.5,0.4,0.3],downbeats:[0.1]},sections:[{id:'sec_1',start:0,end:10,label:'稳定中速',energy:'medium',onset_density:2,bpm:120,confidence:0.8}],cut_candidates:[{time:0.1,type:'downbeat',score:0.9,section_id:'sec_1'}],feature_meta:{fps:20,bands:64,columns:2,waveform_buckets:2}};},
+    getMusicFeatures:(id,aid)=>{calls.push(['features',id,aid]);return {data:Buffer.from([0,1,2,3,4,5,6,7]),waveform:Buffer.from([0,1,2,3]),meta:{fps:20,bands:4,columns:2,waveform_buckets:2}};},
     searchJamendo:async args=>{calls.push(['jamendo',args]);return {items:[{source:'jamendo',rights_status:'unverified'}],has_more:false};},
     previewProject:input=>{const project=input?.project??input;if(project?.schema_version!==1)throw new Error('invalid project');calls.push(['preview_project',project]);return {success:true,preview_id:PREVIEW,project:{...project,title:'canonical'}};},
     commitPreview:args=>{calls.push(['commit',args]);return {success:true,record:{id:PROJECT}};}
@@ -43,7 +39,7 @@ function fixture() {
   });
   const mediaEngine={scanAndImportDirectories:async(paths,parentPath,parentId)=>{calls.push(['scan_subfolders',paths,parentPath,parentId]);return {scanned_count:paths.length,imported_count:3,failed_count:0,folders:[]};}};
   const defs=[];registerMediaCenterTools({tools:{register:def=>{defs.push(def);return()=>{};}}},{editingWorkflow:service,mediaEngine});
-  return {service,calls,request,defs,tool:name=>defs.find(d=>d.name===name)};
+  return {service,calls,request,handler,defs,tool:name=>defs.find(d=>d.name===name)};
 }
 const base='/api/media-center/editing';
 
@@ -60,35 +56,27 @@ test('music CRUD and license confirmation use the shared catalog and reject unco
   assert.equal((await f.request('DELETE',`${base}/music/${MUSIC}`)).body.removed,true);
 });
 
-test('versioned music analysis detail and user-confirmed beat/style updates',async()=>{
+test('music analysis returns v2 sections, beats and cut candidates',async()=>{
   const f=fixture();
-  const measured=await f.request('POST',`${base}/music/${MUSIC}/analyze`,{startSeconds:0,durationSeconds:6});
+  const measured=await f.request('POST',`${base}/music/${MUSIC}/analyze`,{durationSeconds:6});
   assert.equal(measured.body.analysis.analysis_id,'ma_0123456789abcdef0123456789abcdef');
+  assert.equal(measured.body.analysis.beats.quarter_times.length,4);
+  assert.equal(measured.body.analysis.sections[0].label,'稳定中速');
   const detail=await f.request('GET',`${base}/music/${MUSIC}/analysis`);
-  assert.equal(detail.body.analysis.analysis_id,'ma_0123456789abcdef0123456789abcdef');
-  assert.equal((await f.request('POST',`${base}/music/${MUSIC}/analysis/confirm-beats`,{analysis_id:detail.body.analysis.analysis_id,beats:[1.1],confirmed:false})).status,400);
-  const confirmed=await f.request('POST',`${base}/music/${MUSIC}/analysis/confirm-beats`,{analysis_id:detail.body.analysis.analysis_id,beats:[1.1],confirmed:true});
-  assert.equal(confirmed.body.analysis.user_confirmed_beats[0],1.1);
-  assert.equal((await f.request('POST',`${base}/music/${MUSIC}/analysis/styles`,{analysis_id:detail.body.analysis.analysis_id,style_tags:['mountain landscape'],rationale:'风格适配建议',confirmed:false})).status,400);
-  const saved=await f.request('POST',`${base}/music/${MUSIC}/analysis/styles`,{analysis_id:detail.body.analysis.analysis_id,style_tags:['mountain landscape'],rationale:'风格适配建议',confirmed:true});
-  assert.equal(saved.body.analysis.style_tags[0],'mountain landscape');
-  assert.deepEqual(f.calls.filter(call=>['confirm_beats','style_suggestions'].includes(call[0])).map(call=>call[0]),['confirm_beats','style_suggestions']);
+  assert.equal(detail.body.analysis.cut_candidates[0].type,'downbeat');
+  assert.equal(f.calls.find(call=>call[0]==='analyze')[2].durationSeconds,6);
 });
 
-test('spectrogram interpretation endpoint uses the selected analysis profile',async()=>{
-  const f=fixture(),analysisId='ma_0123456789abcdef0123456789abcdef';
-  const result=await f.request('POST',`${base}/music/${MUSIC}/interpret`,{analysis_id:analysisId});
-  assert.equal(result.status,200);assert.equal(result.body.model_interpretation.summary,'音乐逐步展开');
-  assert.deepEqual(f.calls.find(call=>call[0]==='spectrogram_interpretation'),['spectrogram_interpretation',MUSIC,{analysisId}]);
-});
-
-test('spectrogram interpretation edits require explicit confirmation',async()=>{
-  const f=fixture(),analysisId='ma_0123456789abcdef0123456789abcdef',edits={summary:'人工修订',rhythm_character:'中速',energy_arc:'渐强',style_tags:['城市慢剪'],user_confirmed_model_beats:[2.4]};
-  const url=`${base}/music/${MUSIC}/interpret/edits`;
-  assert.equal((await f.request('PUT',url,{analysis_id:analysisId,edits,confirmed:false})).status,400);
-  const result=await f.request('PUT',url,{analysis_id:analysisId,edits,confirmed:true});
-  assert.equal(result.status,200);assert.deepEqual(result.body.model_interpretation_edits,edits);
-  assert.deepEqual(f.calls.find(call=>call[0]==='interpretation_edits'),['interpretation_edits',MUSIC,{analysisId,edits}]);
+test('music feature raster is served as binary data with metadata headers',async()=>{
+  const f=fixture();
+  const result=await new Promise((resolve,reject)=>{
+    const req=Readable.from([]);req.method='GET';req.url=`${base}/music/${MUSIC}/analysis/features?analysis_id=ma_0123456789abcdef0123456789abcdef`;req.headers={};
+    const res={writeHead(status,headers){this.status=status;this.headers=headers;},end(buffer){resolve({status:this.status,headers:this.headers,body:buffer});}};
+    Promise.resolve(f.handler(req,res)).catch(reject);
+  });
+  assert.equal(result.status,200);assert.equal(result.headers['Content-Type'],'application/octet-stream');
+  assert.equal(result.headers['X-Feature-Columns'],'2');assert.equal(result.body.length,12);
+  assert.deepEqual(f.calls.find(call=>call[0]==='features'),['features',MUSIC,'ma_0123456789abcdef0123456789abcdef']);
 });
 
 test('multi-folder import tool uses selected parent and safe host service operation',async()=>{
@@ -100,18 +88,15 @@ test('multi-folder import tool uses selected parent and safe host service operat
   assert.equal(tool.parameters.properties.directory_paths.maxItems,50);
 });
 
-test('music analysis detail is bounded and user-only confirmation tools share the Host service',async()=>{
-  const f=fixture(),detail=f.tool('media_center_edit_music_analysis_detail'),confirm=f.tool('media_center_edit_music_confirm_beats'),styles=f.tool('media_center_edit_music_set_styles'),interpret=f.tool('media_center_edit_music_spectrogram_interpret');
-  const analysis=await detail.execute({music_id:MUSIC,limit:10});assert.equal(analysis.analysis.analysis_id,'ma_0123456789abcdef0123456789abcdef');
-  assert.equal(analysis.analysis.model_interpretation.tempo_hypotheses[0].bpm,100);assert.deepEqual(analysis.analysis.model_interpretation.style_tags,['夜景慢剪']);
-  assert.equal((await interpret.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,confirmed:false})).success,false);
-  const modelResult=await interpret.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,confirmed:true});assert.equal(modelResult.success,true);assert.equal(modelResult.model_interpretation.summary,'音乐逐步展开');
-  assert.deepEqual(analysis.analysis.model_interpretation_edits.user_confirmed_model_beats,[2.1]);assert.equal('transient_onsets' in analysis.analysis,false);
-  assert.equal((await confirm.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,beats:[1.1],confirmed:false})).success,false);
-  assert.equal((await styles.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,style_tags:['山地风光慢剪'],rationale:'依据音乐信号和视频需求',confirmed:false})).success,false);
-  assert.equal((await confirm.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,beats:[1.1],confirmed:true})).success,true);
-  assert.equal((await styles.execute({music_id:MUSIC,analysis_id:analysis.analysis.analysis_id,style_tags:['山地风光慢剪'],rationale:'依据音乐信号和视频需求',confirmed:true})).success,true);
-  assert.deepEqual(f.calls.filter(call=>['confirm_beats','style_suggestions'].includes(call[0])).map(call=>call[0]),['confirm_beats','style_suggestions']);
+test('music analysis detail tool returns bounded v2 structure',async()=>{
+  const f=fixture(),detail=f.tool('media_center_edit_music_analysis_detail');
+  const analysis=await detail.execute({music_id:MUSIC,limit:1});
+  assert.equal(analysis.analysis.bpm,120);
+  assert.equal(analysis.analysis.beats.quarter_times.length,1);
+  assert.equal(analysis.analysis.cut_candidates.length,1);
+  assert.equal(f.tool('media_center_edit_music_confirm_beats'),undefined);
+  assert.equal(f.tool('media_center_edit_music_spectrogram_interpret'),undefined);
+  assert.equal(f.tool('media_center_edit_music_set_styles'),undefined);
 });
 
 test('AI music recommendation is absent from plugin tools and API',async()=>{
@@ -123,8 +108,8 @@ test('AI music recommendation is absent from plugin tools and API',async()=>{
 
 test('music measurement and search do not accept arbitrary source paths, and Jamendo key is not returned',async()=>{
   const f=fixture(), key='secret-client-id';
-  const r=await f.request('POST',`${base}/music/${MUSIC}/analyze`,{startSeconds:2,durationSeconds:4,file_path:'forged'});
-  assert.equal(r.body.analysis.source,'measured'); assert.deepEqual(f.calls[0],['analyze',MUSIC,{startSeconds:2,durationSeconds:4}]);
+  const r=await f.request('POST',`${base}/music/${MUSIC}/analyze`,{durationSeconds:4,file_path:'forged'});
+  assert.equal(r.body.analysis.method,'spectral-flux-autocorr-v2'); assert.deepEqual(f.calls[0],['analyze',MUSIC,{durationSeconds:4}]);
   const search=await f.request('POST',`${base}/jamendo/search`,{clientId:key,query:'travel'});
   assert.equal(search.status,200); assert.doesNotMatch(JSON.stringify(search.body),/secret-client-id/);
   f.service.searchJamendo=async()=>({items:[{title:key}]});

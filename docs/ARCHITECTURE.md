@@ -263,27 +263,25 @@ CREATE TABLE IF NOT EXISTS video_audio (
 );
 ```
 
-#### 5. 本地音乐资产与分析档案 (`local_music_catalog`, `music_analysis_profiles`)
+#### 5. 本地音乐资产与分析档案 (`local_music_catalog`, `music_analysis_v2`)
 
-音乐目录只引用用户本地音频；分析档案按版本保存并绑定源文件属性指纹。指纹只用于发现常见替换，不是内容哈希。DSP 拍点候选和用户确认点分开保存；模型节奏提示及用户试听后确认的模型点另存于模型解读/编辑字段，不并入DSP确认点。瞬态检测只保留为本地算法内部中间量，旧版原始 onset 列表在迁移时清空且不再输出。
+音乐目录只引用用户本地音频；分析档案按版本保存并绑定源文件属性指纹。指纹只用于发现常见替换，不是内容哈希。旧的 `music_analysis_profiles`、图像模型解读、模型拍点和风格字段在首次启动 v2 时整体删除；分析缓存改为 `music-features/` 二进制特征文件，不再保存频谱图 PNG。
 
 ```sql
 local_music_catalog(
   id, file_path UNIQUE, file_size, title, artist, duration, codec, sample_rate, channels,
   source_identity_json, license_status, license_note, license_identity_json
 )
-music_analysis_profiles(
+music_analysis_v2(
   analysis_id, music_id, source_identity_json, analysis_version, method,
-  window_start_seconds, window_duration_seconds, status, bpm, confidence,
-  tempo_candidates_json, transient_onsets_json, beat_candidates_json,
-  user_confirmed_beats_json, feature_summary_json,
-  style_suggestions_json, style_rationale, style_provenance, style_confirmed_at,
-  model_interpretation_json, model_provider, model_name, model_reasoning_effort, model_interpreted_at,
-  model_interpretation_edits_json, model_interpretation_edited_at, created_at
+  window_start_seconds, window_duration_seconds, status, bpm, bpm_confidence,
+  tempo_candidates_json, meter_json,
+  beat_times_json, beat_strengths_json, quarter_times_json, quarter_strengths_json, downbeats_json,
+  sections_json, cut_candidates_json, feature_meta_json, feature_file, created_at
 )
 ```
 
-`beat_candidates` 只来自本地 DSP 瞬态分析，不能保证是真正拍点；`user_confirmed_beats` 仅在用户试听后逐项确认时写入。可选的 `model_interpretation_json` 保存模型对对数频率频谱图的速度假设、按相对横轴位置映射的近似节奏提示、主观情绪/场景建议、风格标签与不确定性，并记录 provider/model。模型提示不是精确 BPM/拍点或DSP证据。`model_interpretation_edits_json` 单独保存用户编辑的解读/标签及用户试听确认的模型提示；`user_confirmed_model_beats` 与 `user_confirmed_beats` 保持不同来源。
+分析由本地 DSP 完成：STFT 谱通量、onset、分段 BPM、1/4 拍网格、小节强拍、能量/密度分段和切点候选。`bpm` 与段落是估计值，半速/倍速候选显式保留。`feature_file` 保存 20 fps × 64 频段的 `Uint8` 特征栅格和波形峰值，供 Canvas 时间轴绘制；不是图片，也不进入 Agent 上下文。
 
 #### 6. 全文与语义检索虚表 (`video_shots_fts`)
 使用 SQLite FTS5 引擎维护分镜文本的全文倒排索引：
@@ -332,7 +330,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 - **重复不是失败**：同一请求内重复路径、不同路径指向同一文件和库内已有记录都会跳过；`inserted` 只统计本次新增行，`duplicates` 与 `failed` 分开。POST 旧入口兼容返回 `imported_count:0`，调用方应以 `job`/`job_id` 跟踪结果。Agent 的旧导入工具仍同步等待任务与故事板完成并返回旧汇总结构。
 - **中断与继续**：`POST /import-jobs/:id` 请求中断，后台在扫描、入库和故事板队列间检查取消标记并转为 `cancelled`。客户端保留原始导入请求，可在悬浮进度中一键重发；去重使已入库项跳过，因此继续是安全的。任务过期或服务重启后也可从本地保留的请求重新开始。
 - **兼容预览**：浏览器通过完整 HEVC codec 串探测硬解能力；Main10 / 4:2:0 等硬件支持的档次直接播放原视频（不转码、不缓存），Rext / 4:2:2 / 4:4:4 等不支持档次显示“生成兼容预览”按钮，用户点击后才通过 FFmpeg 转码为 540p H.264/AAC 缓存（`cache/previews/`）。Host 首次检查时用 ffprobe 惰性补齐 `video_profile`、`pix_fmt` 并写入数据库。源文件只读；界面显示生成状态并在完成后自动切换播放地址。也可通过 `POST /videos/:id/open` 调用操作系统默认播放器打开原始文件，不转码、不复制。
-- **缓存管理**：`GET /cache` 统计故事板、兼容预览、关键帧和音乐频谱图占用；`POST /cache/clear` 支持只清理预览或一键清理全部衍生缓存。清理故事板目录时同步清空数据库中的故事板路径并重置状态，源视频不受影响。
+- **缓存管理**：`GET /cache` 统计故事板、兼容预览、关键帧和音乐特征占用；`POST /cache/clear` 支持只清理预览或一键清理全部衍生缓存。清理故事板目录时同步清空数据库中的故事板路径并重置状态，源视频不受影响。
 - **故事板超时与重试**：生成超时随视频时长放宽（最多 15 分钟），超时与 FFmpeg 失败分开记录；视频卡片菜单可强制重新生成。
 - **导入中断恢复**：服务重启后重试 `pending/generating` 故事板；`not_started` 表示迁移前的旧记录，不会全库重算。`ready` 但缓存文件已丢失的记录会重新生成。
 - **前端防止重复提交**：导入期间全局锁阻止再次发起；进度面板支持从会话内恢复未完成任务，任务过期或服务重启后会清除恢复令牌。
@@ -365,7 +363,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 - **气口静音停顿检测**：
   执行 `silencedetect=noise=-30dB:d=0.5`，解析 stderr 输出中的 `silence_start` 与 `silence_end`，输出停顿区间数组，为解说类视频自动气口切除提供毫秒级坐标。
 - **历史全片音轨节奏状态**：旧版 `detectBpmAndBeats` 不执行真实节奏估计，其历史 `120 BPM` 和规则化节拍网格不能视为测量结果。当前该入口明确返回 unavailable/null，并在检测失败时保留已有人工数据。
-- **本地音乐工作台节奏估计**：独立模块将最多 600 秒音频解码为有界 PCM，做能量瞬态候选与自相关 BPM 估计；不生成假拍点。瞬态不一定是节拍/强拍，结果需试听校正。Jamendo 目前仅搜曲目元数据，不下载、不授予使用权。
+- **本地音乐工作台 DSP**：最多 600 秒音频解码为单声道 PCM，STFT 谱通量生成 onset，分段估计 BPM，生成 1/4 拍网格、4/4/3/4 小节强拍、能量/密度分段和按密度筛选的切点候选。结果全部是估计与建议，不伪造精确拍点，也不调用图像模型。Jamendo 仅搜曲目元数据，不下载、不授予使用权。
 
 ### 5.3 工作台直驱 AI 多模态深度分析与审计闭环
 
@@ -417,7 +415,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 
 ### 5.5 DSH 会话 Agent 剪辑项目流程
 
-创意讨论、选曲、叙事结构和反复编排均发生在 DSH 会话中。Agent 可按需调用素材检索、已有分镜详情、本地音乐目录、BPM 估算与瞬态候选等工具；可先展示计划、接受反馈、再提交新版结构化候选。
+创意讨论、选曲、叙事结构和反复编排均发生在 DSH 会话中。Agent 可按需调用素材检索、已有分镜详情、本地音乐目录、BPM/1/4 拍网格、段落与切点候选等工具；可先展示计划、接受反馈、再提交新版结构化候选。
 
 1. `media_center_edit_preview_project` 接收 Agent 生成的 EditProject v1。插件不调用模型，只核验项目结构、素材库 ID、音乐库成员、范围/时长、剪辑轨、源文件可读性和授权状态；客户端路径不被接受或写入项目。
 2. 音乐通过本地引用目录试听和有界 PCM 测量；Jamendo 仅搜索元数据，不下载或核发许可。瞬态不等于节拍/强拍，插件会将节奏关系标注为未核验；自由文本也不能当作证据。
@@ -434,7 +432,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS video_shots_fts USING fts5(
 ## 5.6 DSH 会话 Agent：资产发现到项目保存
 
 1. Agent 在 DSH 对话中理解需求，调用 `media_center_search_videos` / `media_center_search_shots` 找素材，用 `media_center_get_video` 查看现有分镜与范围；必要时触发故事板或精读。
-2. Agent 调用音乐库 list/analyze/detail 工具读取完整音轨（最多600秒）的BPM估计与DSP拍点候选；原始 onset 列表不保存、不返回。用户可在音乐库 UI 主动请求当前配置的图像模型解读派生频谱图；`media_center_edit_music_analysis_detail` 返回近似速度/相对节奏提示、场景与风格标签、模型来源及用户编辑/确认。模型时间提示是粗略视觉估计，不能冒充DSP测量或精确节拍；用户确认模型点会与DSP `user_confirmed_beats` 分开。选曲和最终剪辑编排仍由 DSH 会话 Agent 负责。
+2. Agent 调用音乐库 list/analyze/detail 工具读取完整音轨（最多600秒）的 BPM、1/4 拍网格、小节强拍、段落和切点候选；特征栅格只供 UI 绘制，不进入 Agent 上下文。分析由本地 DSP 生成，不使用图像模型，不保存频谱图。选曲和最终剪辑编排仍由 DSH 会话 Agent 负责。
 3. Agent 在会话中提出并迭代 EditProject v1；调用 `media_center_edit_preview_project` 后向用户展示规范化项目及警告。插件只校验素材 ID、分镜边界、时长、轨道、文件属性和权利声明。
 4. 用户明确要求保存后，Agent 调用 `media_center_edit_save_project`；保存项目会出现在项目库，可通过 `media_center_edit_projects` 查询、`media_center_edit_update_project` 修订，或 `media_center_export_project` 按项目 ID 导出工程。
 
@@ -522,7 +520,7 @@ Host 端在 `/api/media-center` 前缀下注册以下 HTTP 接口：
 | `POST` | `/videos/:id/open` | 用操作系统默认播放器打开原视频（不转码） | - |
 | `GET/POST` | `/videos/:id/preview` | 查询或启动 HEVC 等编码的 H.264 兼容预览转码 | - |
 | `DELETE` | `/videos/:id/preview` | 删除该视频的兼容预览缓存 | - |
-| `GET` | `/cache` | 统计故事板、预览、关键帧、音乐频谱缓存占用 | - |
+| `GET` | `/cache` | 统计故事板、预览、关键帧、音乐特征缓存占用 | - |
 | `POST` | `/cache/clear` | 清理衍生缓存（`scope: previews|all`） | `{ scope? }` |
 | `GET` | `/fs/browse` | 跨磁盘驱动器浏览本地目录/文件 | `dir_path` |
 | `GET` | `/stream/:id` | HTTP 206 视频分片流式播放；`?preview=1` 使用兼容转码缓存 | 支持 `Range: bytes=start-end` |
@@ -537,7 +535,7 @@ Host 端在 `/api/media-center` 前缀下注册以下 HTTP 接口：
 
 ### 7.2 Model-Facing Agent Tools 契约一览
 
-向 DSH 运行时注册的 31 个工具，均遵循输入参数严谨、输出紧凑原则。核心工程工具包括：
+向 DSH 运行时注册的 28 个工具，均遵循输入参数严谨、输出紧凑原则。核心工程工具包括：
 
 1. `media_center_list_folders`：列出资产库多级目录树与统计。
 2. `media_center_scan_directory`：扫描本地物理文件夹镜像导入。

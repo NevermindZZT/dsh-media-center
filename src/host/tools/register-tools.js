@@ -1,5 +1,5 @@
 import { SHOT_ANALYSIS_FIELDS } from '../db/shot-analysis-store.js';
-import { MAX_MUSIC_ANALYSIS_SECONDS } from '../music/beat-analysis.js';
+import { MAX_MUSIC_ANALYSIS_SECONDS } from '../music/music-analysis-v2.js';
 
 export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter, shotSearchService, shotAnalysisService, editingWorkflow }) {
   if (!ctx.tools || typeof ctx.tools.register !== 'function') {
@@ -39,10 +39,9 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
     }
   });
   const musicId = {type:'string',description:'本地音乐库记录 ID（mus_…）。'};
-  const musicProfileSummary=profile=>profile?{analysis_id:profile.analysis_id,music_id:profile.music_id,analysis_version:profile.analysis_version,method:profile.method,status:profile.status,bpm:profile.bpm,confidence:profile.confidence,analysis_window:profile.analysis_window,tempo_candidates:profile.tempo_candidates,confirmed_beat_count:profile.user_confirmed_beats?.length||0,user_confirmed_beats:profile.user_confirmed_beats,style_tags:profile.style_tags,style_rationale:profile.style_rationale,style_provenance:profile.style_provenance}:null;
   const pageFields = {limit:{type:'integer',minimum:1,maximum:100,description:'最多返回数量，默认 25。'},offset:{type:'integer',minimum:0,maximum:1000000,description:'分页偏移，默认 0。'}};
-  editTool('media_center_edit_music_list','列出本地音乐资产，可按标题、作者、文件名和分析状态筛选；返回最新分析摘要，授权状态是用户声明而非版权验证。',
-    {query:{type:'string',description:'按标题、艺术家或文件名搜索。'},license_status:{type:'string',enum:['unknown','personal_confirmed']},analysis_status:{type:'string',description:'按分析状态筛选，例如 not_analyzed、ok、low_confidence、stale。'},style_tag:{type:'string',description:'按用户已确认的 Agent 风格标签筛选。'},...pageFields}, [],
+  editTool('media_center_edit_music_list','列出本地音乐资产，可按标题、作者、文件名和分析状态筛选；返回最新 BPM、段落和切点摘要，授权状态是用户声明而非版权验证。',
+    {query:{type:'string',description:'按标题、艺术家或文件名搜索。'},license_status:{type:'string',enum:['unknown','personal_confirmed']},analysis_status:{type:'string',description:'按分析状态筛选，例如 not_analyzed、ok、low_confidence、stale。'},...pageFields}, [],
     args => ({success:true,...editingWorkflow.listMusicCatalog(args)}));
   editTool('media_center_edit_music_import','导入本地音乐引用，不复制、修改或删除源文件。',
     {file_path:{type:'string',description:'用户明确指定的本地音频绝对路径。'},title:{type:'string'},artist:{type:'string'},source_name:{type:'string'},source_url:{type:'string'},license_note:{type:'string'}}, ['file_path'],
@@ -53,35 +52,21 @@ export function registerMediaCenterTools(ctx, { db, mediaEngine, projectExporter
     {music_id:musicId,license_note:{type:'string',description:'用户提供的授权说明。'},confirmed:{type:'boolean',description:'仅在用户明确确认此音乐可用于个人分享时设为 true。'}}, ['music_id','confirmed'],
     args => args.confirmed !== true ? {success:false,error:'须先由用户明确确认个人分享使用权限'} :
       ({success:true,music:editingWorkflow.catalog.confirmPersonalUse(args.music_id,{confirmed:true,license_note:args.license_note})}));
-  editTool('media_center_edit_music_analyze','对本地音乐窗口进行只读DSP测量，返回BPM估计与拍点候选；原始瞬态时间列表不保存/不返回，候选仍需试听确认。',
-    {music_id:musicId,start_seconds:{type:'number',minimum:0,description:'分析窗口的源音频起点（秒），默认 0。'},duration_seconds:{type:'number',minimum:0.1,maximum:MAX_MUSIC_ANALYSIS_SECONDS,description:'分析窗口时长（秒，最多10分钟/600秒）；省略时默认完整音频时长。'}}, ['music_id'],
-    async args => {
-      const analysis=await editingWorkflow.analyzeMusic(args.music_id,{startSeconds:args.start_seconds,durationSeconds:args.duration_seconds});
-      const result={...analysis};delete result.onsets;delete result.transient_onsets;
-      const candidates=Array.isArray(analysis.beat_candidates)?analysis.beat_candidates:[];result.beat_candidates=candidates.slice(0,200);result.beat_candidates_omitted=Math.max(0,candidates.length-200);
-      return {success:true,analysis:result};
-    });
-  editTool('media_center_edit_music_analysis_detail','读取版本化音乐分析档案；若已执行频谱图模型分析，也返回速度与近似节奏提示、场景/风格标签、用户编辑和确认记录。模型提示与DSP候选分开，不能当作精确节拍。',
-    {music_id:musicId,limit:{type:'integer',minimum:1,maximum:500,description:'DSP拍点候选与用户确认点每类最多返回数量，默认100；原始瞬态列表不返回。'}}, ['music_id'],
+  editTool('media_center_edit_music_analyze','对本地音乐做只读 DSP 分析，返回 BPM/半速倍速候选、1/4 拍网格、小节强拍、段落结构和切点候选；不使用图像模型，不修改源音频。',
+    {music_id:musicId,duration_seconds:{type:'number',minimum:0.1,maximum:MAX_MUSIC_ANALYSIS_SECONDS,description:'分析时长（秒，最多10分钟/600秒）；省略时使用完整音频时长。'}}, ['music_id'],
+    async args => ({success:true,analysis:await editingWorkflow.analyzeMusic(args.music_id,{durationSeconds:args.duration_seconds})}));
+  editTool('media_center_edit_music_analysis_detail','读取版本化音乐分析档案，返回 BPM、拍点网格、强拍、段落和切点候选；可限制返回数量。',
+    {music_id:musicId,limit:{type:'integer',minimum:1,maximum:2000,description:'拍点/切点/段落每类最多返回数量，默认 200。'}}, ['music_id'],
     args=>{
       const analysis=editingWorkflow.getMusicAnalysis(args.music_id);
       if(!analysis)return {success:false,error:'该音乐尚未分析'};
-      const limit=args.limit??100,result={...analysis};delete result.onsets;delete result.transient_onsets;
-      for(const field of ['beat_candidates','user_confirmed_beats']){
-        const values=Array.isArray(analysis[field])?analysis[field]:[];
-        result[field]=values.slice(0,limit);result[`${field}_omitted`]=Math.max(0,values.length-limit);
-      }
-      return {success:true,analysis:result};
+      const limit=args.limit??200;
+      const topCuts=[...analysis.cut_candidates].sort((a,b)=>b.score-a.score).slice(0,limit).sort((a,b)=>a.time-b.time);
+      return {success:true,analysis:{...analysis,
+        sections:analysis.sections.slice(0,Math.min(limit,8)),
+        cut_candidates:topCuts,
+        beats:{...analysis.beats,times:analysis.beats.times.slice(0,limit),quarter_times:analysis.beats.quarter_times.slice(0,limit)}}};
     });
-  editTool('media_center_edit_music_spectrogram_interpret','使用已配置图像模型解读指定音乐分析窗口的频谱图。返回带来源的近似速度/节奏点、场景与风格建议；模型提示不是DSP测量或精确拍点。',
-    {music_id:musicId,analysis_id:{type:'string',description:'本地节奏分析返回的 analysis_id；模型解读使用该版本的源文件和窗口。'},confirmed:{type:'boolean',description:'仅当用户明确要求对该音频调用大模型解读时设为 true。'}}, ['music_id','analysis_id','confirmed'],
-    async args=>args.confirmed!==true?{success:false,error:'须先获得用户对频谱模型解读的明确请求'}:{success:true,...await editingWorkflow.interpretMusicSpectrogram(args.music_id,{analysisId:args.analysis_id})});
-  editTool('media_center_edit_music_confirm_beats','仅在用户试听并明确确认一组拍点候选后保存；每个确认点必须对应实测音频中的节奏拍点候选。',
-    {music_id:musicId,analysis_id:{type:'string',description:'media_center_edit_music_analyze 返回的 analysis_id。'},beats:{type:'array',minItems:1,maxItems:2000,items:{type:'number',minimum:0},description:'用户听审后确认的源音频秒数，必须从 beat_candidates 中选择。'},confirmed:{type:'boolean',description:'仅当用户明确批准保存这些拍点时为 true。'}}, ['music_id','analysis_id','beats','confirmed'],
-    args=>args.confirmed!==true?{success:false,error:'须先获得用户对拍点候选的明确确认'}:{success:true,analysis:musicProfileSummary(editingWorkflow.confirmMusicBeats(args.music_id,{analysisId:args.analysis_id,beats:args.beats,confirmed:true}))});
-  editTool('media_center_edit_music_set_styles','保存 DSH 会话 Agent 基于音乐测量与视频素材给出的风格建议；每项是主观建议而非声学测量，须用户明确确认。',
-    {music_id:musicId,analysis_id:{type:'string',description:'对应音乐分析记录的 analysis_id。'},style_tags:{type:'array',minItems:1,maxItems:30,items:{type:'string',maxLength:100},description:'如山地风光慢剪、城市夜景、快速蒙太奇等建议标签。'},rationale:{type:'string',maxLength:2000,description:'建议依据和不确定性。'},confirmed:{type:'boolean',description:'仅当用户明确要求保存这些风格建议时为 true。'}}, ['music_id','analysis_id','style_tags','rationale','confirmed'],
-    args=>args.confirmed!==true?{success:false,error:'须先获得用户对风格建议的明确确认'}:{success:true,analysis:editingWorkflow.saveMusicStyleSuggestions(args.music_id,{analysisId:args.analysis_id,styleTags:args.style_tags,rationale:args.rationale,confirmed:true})});
   editTool('media_center_edit_jamendo_search','搜索 Jamendo 曲目元数据；结果不代表已获授权，不能直接导入。使用主机环境变量 JAMENDO_CLIENT_ID。',
     {query:{type:'string',description:'曲目、作者或风格关键词。'},limit:{type:'integer',minimum:1,maximum:20},offset:{type:'integer',minimum:0,maximum:1000}}, ['query'],
     async (args,context) => {
