@@ -41,7 +41,9 @@ jobs:
         run: node --test
 
       - name: Pack tarball
-        run: npm pack --pack-destination dist
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
 
       - name: Publish to npm
         run: npm publish --access public --provenance
