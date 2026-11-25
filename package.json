@@ -1,6 +1,6 @@
 {
   "name": "dsh-media-center",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "DSH 媒体中心：面向 DeepSeek Harness 的本地视频 / 音乐 / 剪辑项目管理插件，含故事板分镜、本地 DSP 音乐卡点与工程导出",
   "keywords": [
