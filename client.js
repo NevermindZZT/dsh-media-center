@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-media-center',
+  id: 'dsh-media-center',
   factory(require) {
     const React = require('react');
     const { useState, useEffect, useRef, useMemo, createElement: h } = React;

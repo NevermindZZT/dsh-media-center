@@ -1,4 +1,4 @@
 - insert:
     - id: dsh-media-center
-      name: '@local/dsh-media-center'
+      name: 'dsh-media-center'
       config: {}

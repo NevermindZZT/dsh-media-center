@@ -1,14 +1,29 @@
 # DSH 媒体中心 (dsh-media-center)
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](package.json)
+[![npm version](https://img.shields.io/npm/v/dsh-media-center?color=blue&label=npm)](https://www.npmjs.com/package/dsh-media-center)
 [![Platform](https://img.shields.io/badge/platform-DeepSeek%20Harness-0066FF.svg)](https://github.com/deepseek-ai)
 [![Node.js](https://img.shields.io/badge/node.js-%3E%3D24.0.0-green.svg)](https://nodejs.org/)
 [![Database](https://img.shields.io/badge/database-node%3Asqlite-orange.svg)](https://nodejs.org/api/sqlite.html)
 [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/NevermindZZT/dsh-media-center?style=social)](https://github.com/NevermindZZT/dsh-media-center)
 
 专为 **DSH 媒体工作流** 打造的本地媒体资源管理插件，覆盖视频、音乐及后续可扩展的其他媒体资产。
 
 建立 **“本地媒体资产 ➔ 结构化特征库 ➔ 人机协同标注 ➔ DSH 会话 Agent 工作流”** 的核心枢纽，当前覆盖视频组织与分镜信息、音乐引用及只读音频测量，并可扩展至其他媒体资产。
+
+仓库：<https://github.com/NevermindZZT/dsh-media-center> · npm：<https://www.npmjs.com/package/dsh-media-center>
+
+---
+
+## 快速安装
+
+在 DeepSeek Harness 会话中执行：
+
+```javascript
+plugin_manager({ action: "install_bundle", target: "dsh-media-center" })
+```
+
+安装后刷新 Web GUI，左侧导航即出现 **“媒体中心”**。本地开发（直接链接本仓库）见 [插件安装方法](#插件安装方法)。
 
 ---
 
@@ -34,7 +49,7 @@
 - 🖼️ **4x4 故事板大图 (Contact Sheet) 自动生成**：
   视频导入或分析时自动通过 FFmpeg 抽取 16 个代表性关键画面拼合成单张轻量雪碧图。长视频按最大 15 分钟的超时生成；失败后可从视频卡片菜单重新生成。AI Agent **仅需“看”一张图片** 即可纵览全片镜头节奏与视觉走向，**节约 90% 以上视觉 Token 开销**。
 - **本地音乐库与音乐分析**：
-  统一标题栏中央的媒体库页签切换到全屏【音乐库】页面；本地音频通过与视频导入共用弹窗框架的流程加入只读引用目录，图形浏览支持一次最多 50 个文件的多选导入，可试听并登记许可声明。音乐分析完全由本地 DSP 完成（最长 600 秒）：输出 BPM 与半速/倍速候选、1/4 拍网格、4/4 或 3/4 小节强拍、能量分段和可切点候选；前端使用 Canvas 长条时间轴绘制真实波形/频段特征、段落色带、拍线与切点，不使用频谱图图片，也不再调用图像模型分析音乐。
+  统一标题栏中央的媒体库页签切换到全屏【音乐库】页面；本地音频通过与视频导入共用弹窗框架的流程加入只读引用目录，图形浏览支持一次最多 50 个文件的多选导入，可试听并登记许可声明。音乐分析完全由本地 DSP 完成（最长 600 秒）：输出 BPM 与半速/倍速候选、动态规划节拍跟踪得到的拍点与 1/4 拍网格、4/4 小节强拍、能量分段；前端用 Canvas 时间轴绘制真实波形/频段特征与段落色带，并按“段落切换 / 能量跃迁 / 强起音”推导**带编号的建议卡点**（已吸附拍点，密度可调，小节与起音可按需叠加）；不使用频谱图图片，也不调用图像模型分析音乐。
 - 📝 **全流程结构化人机协同编辑**：
   保持专业生产力软件克制美感，**默认呈现舒适的正常阅读浏览模式**。点击【✏️ 编辑】即可就地调整分镜秒数、景别（大远景至大特写）、运镜（推拉摇移跟俯冲）、画面描述、语音字幕与标签，并支持一键保存。
 - **单片段 AI 精读**：
@@ -83,8 +98,8 @@
 | `media_center_edit_music_import` | 将用户指定音频加入音乐资产目录（只引用，不复制） | `{ file_path, title?, artist?, source_name? }` |
 | `media_center_edit_music_remove` | 移除音乐目录记录，不删除磁盘文件 | `{ music_id }` |
 | `media_center_edit_music_confirm_personal` | 用户明确确认后记录个人分享声明 | `{ music_id, confirmed: true, license_note? }` |
-| `media_center_edit_music_analyze` | 本地 DSP 分析：BPM 与候选、1/4 拍网格、小节强拍、段落和切点 | `{ music_id, duration_seconds? }` |
-| `media_center_edit_music_analysis_detail` | 读取版本化分析档案；返回段落、拍点、切点和特征元数据 | `{ music_id, limit? }` |
+| `media_center_edit_music_analyze` | 本地 DSP 分析：BPM 与候选、动态规划拍点、1/4 拍网格、小节强拍、段落和变化卡点 | `{ music_id, duration_seconds? }` |
+| `media_center_edit_music_analysis_detail` | 读取版本化分析档案；返回段落、拍点、变化卡点与特征元数据 | `{ music_id, limit? }` |
 | `media_center_edit_jamendo_search` | 搜索 Jamendo 曲目元数据；不下载、不验证使用许可 | `{ query, limit?, offset? }` |
 | `media_center_edit_compose_project` | 按有序分镜引用自动查询边界、计算帧时间线、截取音乐并返回项目预览 | `{ title, rationale, shot_refs[], music_id, canvas?, fps? }` |
 | `media_center_edit_preview_project` | 校验 DSH Agent 在会话中迭代形成的结构化时间线；不调用第二个模型或保存 | `{ project: EditProjectV1 }` |
@@ -172,16 +187,26 @@
 
 ## 插件安装方法
 
-在 DeepSeek Harness 会话中，通过内置工具执行安装：
+### 从 npm 安装（推荐）
+
+在 DeepSeek Harness 会话中：
+
+```javascript
+plugin_manager({ action: "install_bundle", target: "dsh-media-center" })
+```
+
+安装完成后刷新 Web GUI，在左侧导航栏即可看到 **“媒体中心”** 入口。
+
+### 本地开发（链接本仓库）
 
 ```javascript
 plugin_manager({
   action: "install_bundle",
-  target: "D:\\code\\dsh-media-center" // 项目绝对路径
+  target: "D:\\code\\dsh-video-manager" // 本仓库绝对路径
 })
 ```
 
-安装完成后刷新 Web GUI，在左侧导航栏即可看到全新的 **“媒体中心”** 入口！
+或在 DSH profile 的 `package.json` 中写入 `"dsh-media-center": "link:D:/code/dsh-video-manager"`，并把 `dsh-media-center` 加入 `dsh.profile.bundles`。
 
 ### 可选：启用原生 `.prproj` 导出
 
@@ -192,3 +217,35 @@ python -m pip install py-premiere
 ```
 
 未安装时 FCPXML / Premiere XML 仍可正常导出，`.prproj` 会返回明确的安装提示。
+
+---
+
+## 开发与发布
+
+- 运行测试：`npm test`（等价于 `node --test`，178 个用例，全部基于 Node 内置能力，无第三方依赖）。
+- 纯 ESM 插件，**没有编译步骤**；发布的产物就是仓库内容（`index.js`、`client.js`、`src/`、`cordis.patch.yml` 等，见 `package.json` 的 `files`）。
+
+发布由 tag 触发：
+
+```bash
+npm version patch --no-git-tag-version   # 修改版本号（不自动打 tag）
+git commit -am "chore: release x.y.z"
+git tag vX.Y.Z
+git push origin main --tags
+```
+
+`.github/workflows/release.yml` 会依次执行：
+
+1. 校验 tag（`vX.Y.Z`）与 `package.json` 的 `version` 一致，不一致直接失败；
+2. `node --test` 跑完整测试；
+3. `npm pack` 生成 tarball；
+4. `npm publish --access public --provenance` 发布到 npm；
+5. 创建 GitHub Release，自动生成 release notes 并附加 `.tgz`。
+
+首次发布前需要在仓库配置 **`NPM_TOKEN`** Secret（npm → Access Tokens → *Automation* 类型），并保持仓库为 **public**，否则 `--provenance` 会失败。
+
+---
+
+## 许可
+
+[MIT](LICENSE) © NevermindZZT

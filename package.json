@@ -1,9 +1,38 @@
 {
-  "name": "@local/dsh-media-center",
+  "name": "dsh-media-center",
   "version": "1.1.0",
-  "private": true,
   "type": "module",
-  "description": "AI 媒体工作流的本地视频、音乐与其他媒体资产管理插件",
+  "description": "DSH 媒体中心：面向 DeepSeek Harness 的本地视频 / 音乐 / 剪辑项目管理插件，含故事板分镜、本地 DSP 音乐卡点与工程导出",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "media",
+    "video",
+    "music",
+    "ffmpeg",
+    "bpm",
+    "storyboard"
+  ],
+  "license": "MIT",
+  "author": "NevermindZZT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NevermindZZT/dsh-media-center.git"
+  },
+  "homepage": "https://github.com/NevermindZZT/dsh-media-center#readme",
+  "bugs": {
+    "url": "https://github.com/NevermindZZT/dsh-media-center/issues"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -16,6 +45,7 @@
     "cordis.patch.yml",
     "icon.svg",
     "locale/*.json",
+    "docs/**/*.md",
     "src/**/*.js",
     "src/**/*.py"
   ],
